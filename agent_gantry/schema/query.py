@@ -140,6 +140,12 @@ class RetrievalResult(BaseModel):
     selector_fallback: bool = False
     #: Why the selector did not answer, when ``selector_fallback`` is set.
     selector_fallback_reason: str | None = None
+    #: ``model_name`` of the embedder that searched for ``tools``, e.g.
+    #: ``"all-MiniLM-L6-v2"``. ``"simple-hash-embedder"`` means the hash-based
+    #: test embedder answered, which matches tokens rather than meaning: the
+    #: usual cause is a deployment without sentence-transformers installed.
+    #: ``None`` when a selector answered, because no embedding was made.
+    embedder: str | None = None
 
     model_config = ConfigDict(validate_assignment=True)
 

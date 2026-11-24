@@ -20,6 +20,7 @@ from mcp.client.stdio import stdio_client
 from mcp.types import PaginatedRequestParams
 
 from agent_gantry.schema.config import MCPServerConfig
+from agent_gantry.schema.mcp import mcp_server_tag
 from agent_gantry.schema.tool import ToolDefinition, ToolSource
 
 # ``ToolDefinition.name`` must match ``^[a-z][a-z0-9_]*$``, but MCP tool names
@@ -547,6 +548,10 @@ class MCPClient:
             extended_description=extended,
             parameters_schema=parameters_schema,
             namespace=self.config.namespace,
+            # MCP supplies no tags of its own. This one puts the server's name
+            # in the tool's searchable text, makes the server filterable at
+            # the vector store, and tells a selector where the tool came from.
+            tags=[mcp_server_tag(self.config.name)],
             source=ToolSource.MCP_SERVER,
             source_uri=f"mcp://{self.config.name}",
             metadata=metadata,

@@ -37,6 +37,47 @@ changed containers.
 It is a manual diagnostic, with no timing gate in CI: runner load and Python
 versions affect these small measurements. Compare before and after on the same machine.
 
+## Retrieval eval
+
+The scripts above time retrieval or score it on 50 hand-picked tools. The eval
+is the one to use for a relevance change: a generated catalogue of 345 tools
+(most of them near-duplicates of each other, a sixth of them converted from
+three invented MCP servers), 20 skills and 12 MCP servers, with labelled
+queries for each and a `kind` on every query saying what it tests.
+
+```bash
+python scripts/eval_retrieval.py                                  # hash embedder, as CI runs it
+python scripts/eval_retrieval.py --check                          # fail if worse than the baseline
+python scripts/eval_retrieval.py --embedder sentence-transformers --by-kind --misses
+```
+
+`--check` compares against `tests/retrieval/baseline.json`, and the test suite
+runs the same comparison. That baseline is measured with `SimpleEmbedder`
+because it is deterministic; it catches a pipeline that broke, not an embedding
+that got worse. A change meant to move the numbers rewrites it with
+`--update-baseline` in the same commit. To score your own registry, build
+`RetrievalCase`s and call `agent_gantry.evaluation.evaluate_retrieval`.
+
+`all-MiniLM-L6-v2`, in-memory store, `k=5`, `score_threshold=0.0`, as of the
+commit that added the eval:
+
+| Modality (cases) | recall@1 | recall@5 | declined when nothing fits |
+|---|---|---|---|
+| tools (59) | 0.725 | 0.833 | 0.000 |
+| skills (14) | 0.750 | 1.000 | 0.000 |
+| MCP servers (13) | 0.636 | 0.818 | 0.000 |
+
+Tools by kind of query, top-1: paraphrase 21/30, identifier 8/8, parameter name
+3/6, MCP server name 5/5, and 0/2 where the answer sits past character 2000 of
+a long MCP description, which is never embedded. Skills whose answer is only in
+the body: 2/4. MCP servers described vaguely, where only their tools say what
+they do: 1/3. Nothing declines at a threshold of 0.0; pass `--score-threshold`
+to see what yours does.
+
+These are one synthetic catalogue and a few dozen queries per modality. They
+are for comparing a change with what came before it, not for quoting as the
+library's accuracy.
+
 ## Reference results
 
 `sentence-transformers/all-MiniLM-L6-v2`, in-memory store, `score_threshold=0.0`:

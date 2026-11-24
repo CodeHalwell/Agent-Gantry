@@ -7,6 +7,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+The first tranche of the retrieval roadmap: a way to measure retrieval, and the
+three changes that needed nothing else first. Upgrading re-embeds every tool
+once, on the next `sync()`, because the text a tool is embedded from changed.
+
+Measured on the new eval (345 tools, 59 labelled queries, `all-MiniLM-L6-v2`,
+`k=5`): tool recall@1 went from 0.549 to 0.725 and recall@5 from 0.765 to
+0.833. By kind of query, top-1 went from 0/5 to 5/5 where only the MCP
+server's name tells the answer from its twins, from 0/6 to 3/6 where the
+query names a parameter, and from 20/30 to 21/30 on paraphrases. Skills and
+MCP-server routing are unchanged, as nothing here touches them. It is one
+synthetic catalogue and a small labelled set: read the direction, not the
+decimals.
+
+### Added
+
+- **A retrieval eval.** `agent_gantry.evaluation` scores any retriever against
+  labelled queries: `RetrievalCase(query, expected_ids)` or
+  `RetrievalCase(query, expect_decline=True)`, then
+  `await evaluate_retrieval(tool_retriever(gantry), cases, k=5)` for
+  recall@1, recall@k, decline-correctness and latency, split by a per-case
+  `kind`. `skill_retriever` and `mcp_server_retriever` cover the other two
+  modalities, and the backend measured is whatever the gantry was built with.
+  `python scripts/eval_retrieval.py` runs it over a generated catalogue
+  (`tests/retrieval/`), and `--check` fails on a regression against the
+  committed baseline; the same gate runs in the test suite. See
+  `benchmarks/README.md` for the numbers.
+- **`RetrievalResult.embedder`**, also on `RetrievalDecision` and its span
+  attributes: the `model_name` of the embedder that searched, or `None` when a
+  selector answered. `"simple-hash-embedder"` means the hash-based test
+  embedder is in use.
+- **`EmbedderConfig(on_unavailable="raise")`** raises `ImportError` when
+  sentence-transformers is not installed, instead of falling back to
+  `SimpleEmbedder`. The default, `"simple"`, still falls back.
+- **`mcp_server_tag(name)`** in `agent_gantry.schema.mcp`: the tag every tool
+  discovered from that MCP server carries (`"mcp:<name>"`). A store search
+  with `filters={"tags": [mcp_server_tag("datadog")]}` returns only that
+  server's tools.
+
+### Changed
+
+- **Falling back to `SimpleEmbedder` is logged at `WARNING`, once per
+  process**, naming the extra to install. It was `DEBUG`, so a deployment
+  missing sentence-transformers retrieved tools, skills and MCP servers on a
+  hash of tokens with nothing to say so. Passing `embedder=SimpleEmbedder()`
+  yourself is a choice, not a fallback, and logs nothing.
+- **Tools discovered from an MCP server are tagged `mcp:<server>`.** MCP
+  supplies no tags, and the server's name was recorded in `metadata` where no
+  retriever read it. The tag puts the name in the tool's searchable text and
+  makes it filterable. Tags you set yourself are untouched; code that assumed
+  an MCP tool has no tags will see one.
+- **A selector groups MCP tools by server**, not by namespace. Every server's
+  tools usually share the `default` namespace, which left the two-stage path
+  one group and so nothing to narrow.
+- **`ToolDefinition.to_searchable_text()`** now reads
+  `name namespace tags parameter-names description examples`. Parameter names
+  are new: up to 16, top-level only, skipping names every API has (`query`,
+  `limit`, `page`), which measurably cost accuracy. Tags moved ahead of the
+  description because an embedder truncates its input (256 word-pieces for
+  the default model) and what follows a long description is cut off.
+  Parameter descriptions are not indexed. The fingerprint version is now
+  `v1.2`, which is what triggers the one-off re-embed.
+
+### Fixed
+
+- **`retrieve()` no longer returns MCP-server placeholders as tools.** A
+  server registered with `register_mcp_server()` is indexed beside the tools
+  under the `__mcp_servers__` namespace, and nothing kept it out of tool
+  results: on the eval, with the filter switched off, 19 of 59 tool queries
+  have such an entry in their top five and 4 have one ranked first, as a "tool"
+  no executor can run. Reserved namespaces are now filtered out, and the
+  candidate pool is widened when they crowd real tools out of it.
+
 ## [0.25.0] - 2026-11-23
 
 A selector that cannot answer still fails open to semantic routing, but no

@@ -20,7 +20,15 @@ embedders implement the `EmbeddingAdapter` protocol defined in `base.py`.
 |----------------|------------------------------------|-------------------------------------------|
 | `OpenAIEmbedder` / `AzureOpenAIEmbedder` | Hosted, low-latency, high-quality embeddings | `EmbedderConfig(type=\"openai\", ...)` |
 | `NomicEmbedder`| Local or cost-optimized accuracy   | `EmbedderConfig(type=\"nomic\")`           |
-| `SimpleEmbedder`| Tests, offline demos, reproducibility | `EmbedderConfig(type=\"sentence_transformers\")` (default) |
+| `SentenceTransformersEmbedder` | Local, no API key; the default | `EmbedderConfig(type=\"sentence_transformers\")` (default; needs the `embeddings` extra) |
+| `SimpleEmbedder`| Tests, offline demos, reproducibility | `AgentGantry(embedder=SimpleEmbedder())` |
+
+The default needs sentence-transformers. Without it the factory falls back to
+`SimpleEmbedder`, which hashes tokens and understands no meaning, and logs a
+`WARNING` once per process naming the extra to install. Every result says which
+embedder searched (`RetrievalResult.embedder`; `"simple-hash-embedder"` is the
+fallback), and `EmbedderConfig(on_unavailable="raise")` raises `ImportError`
+instead of falling back.
 
 ## Example
 

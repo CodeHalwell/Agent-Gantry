@@ -16,7 +16,7 @@ import re
 from typing import TYPE_CHECKING
 
 from agent_gantry.schema.mcp import MCPServerDefinition
-from agent_gantry.schema.tool import ToolDefinition
+from agent_gantry.schema.tool import MCP_SERVER_NAMESPACE, ToolDefinition
 
 if TYPE_CHECKING:
     from agent_gantry.adapters.embedders.base import EmbeddingAdapter
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 #: Namespace of the pseudo-tools that stand in for MCP servers in the store.
-PSEUDO_NAMESPACE = "__mcp_servers__"
+PSEUDO_NAMESPACE = MCP_SERVER_NAMESPACE
 
 
 def _pseudo_tool_name(server: MCPServerDefinition) -> str:

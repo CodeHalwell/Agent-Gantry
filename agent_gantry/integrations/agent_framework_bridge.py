@@ -110,6 +110,9 @@ class RetrievalDecision:
             to work with. An eval that configures a selector should assert
             this is ``False``.
         selector_fallback_reason: Why, when ``selector_fallback`` is set.
+        embedder: ``model_name`` of the embedder that searched, or ``None``
+            when a selector answered. ``"simple-hash-embedder"`` means the
+            hash-based test embedder is in use.
     """
 
     query: str = ""
@@ -121,6 +124,7 @@ class RetrievalDecision:
     backend: str = "semantic"
     selector_fallback: bool = False
     selector_fallback_reason: str | None = None
+    embedder: str | None = None
 
     @property
     def kept(self) -> list[RetrievalCandidate]:
@@ -156,6 +160,7 @@ class RetrievalDecision:
             "backend": self.backend,
             "selector_fallback": self.selector_fallback,
             "selector_fallback_reason": self.selector_fallback_reason,
+            "embedder": self.embedder,
         }
 
 
@@ -945,6 +950,7 @@ class GantryToolBridge:
             decision.backend = getattr(result, "backend", "semantic")
             decision.selector_fallback = bool(getattr(result, "selector_fallback", False))
             decision.selector_fallback_reason = getattr(result, "selector_fallback_reason", None)
+            decision.embedder = getattr(result, "embedder", None)
             tools = self.wrap_tools([st.tool for st in kept_top], cache=cache)
             decision.injected = [getattr(t, "name", None) or t.__name__ for t in tools]
 

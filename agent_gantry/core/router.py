@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from agent_gantry.adapters.embedders.base import embed_query
+from agent_gantry.schema.tool import RESERVED_NAMESPACES
 
 _logger = logging.getLogger(__name__)
 
@@ -139,6 +140,10 @@ class RoutingSignals:
 #: two covers the cosine spread a few-hundred-tool catalogue shows in practice;
 #: fetching them costs a top-k over the same vectors either way.
 MIN_CANDIDATE_POOL = 32
+
+#: How many times :meth:`SemanticRouter.route` may search again for a wider
+#: pool when reserved pseudo-entries crowded real tools out of the first one.
+_MAX_POOL_WIDENINGS = 2
 
 
 @dataclass
@@ -321,15 +326,28 @@ class SemanticRouter:
             include_embeddings = query.diversity_factor > 0
 
             search_start = perf_counter()
-            candidates = await self._vector_store.search(
-                query_vector=query_embedding,
-                # Wide enough for re-scoring to change the answer; see
-                # MIN_CANDIDATE_POOL for why ``limit * 4`` alone was not.
-                limit=max(query.limit * 4, MIN_CANDIDATE_POOL),
-                filters=filters,
-                score_threshold=query.score_threshold,
-                include_embeddings=include_embeddings,
-            )
+            # Wide enough for re-scoring to change the answer; see
+            # MIN_CANDIDATE_POOL for why ``limit * 4`` alone was not.
+            pool = requested = max(query.limit * 4, MIN_CANDIDATE_POOL)
+            for _ in range(_MAX_POOL_WIDENINGS + 1):
+                candidates = await self._vector_store.search(
+                    query_vector=query_embedding,
+                    limit=requested,
+                    filters=filters,
+                    score_threshold=query.score_threshold,
+                    include_embeddings=include_embeddings,
+                )
+                # MCP servers are indexed beside the tools as pseudo-entries
+                # that can never be returned. Each one that ranks takes a real
+                # tool's place in the pool, so ask again for that many more.
+                reserved = sum(1 for c in candidates if c[0].namespace in RESERVED_NAMESPACES)
+                if (
+                    not reserved
+                    or len(candidates) < requested  # the store has no more to give
+                    or requested >= pool + reserved
+                ):
+                    break
+                requested = pool + reserved
             vector_search_time_ms = (perf_counter() - search_start) * 1000
         except BaseException:
             # Cancel AND await the intent task so it never outlives route()
@@ -459,6 +477,11 @@ class SemanticRouter:
         exc_caps: set[str] | None = None,
     ) -> bool:
         """Filter candidates based on query constraints."""
+        # Index bookkeeping, not a tool: the pseudo-entry an MCP server is
+        # embedded as shares this index, and used to be handed back as a tool
+        # that no executor can run whenever it out-scored the real ones.
+        if tool.namespace in RESERVED_NAMESPACES:
+            return False
         if query.exclude_deprecated and tool.deprecated:
             return False
         if query.namespaces and tool.namespace not in query.namespaces:

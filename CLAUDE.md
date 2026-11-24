@@ -63,6 +63,7 @@ Everything funnels through one facade: **`AgentGantry`** in `agent_gantry/core/g
 - `providers/` — import tools from external sources.
 - `servers/` — MCP and A2A server implementations (`serve_mcp`, `serve_a2a`).
 - `observability/` — telemetry, metrics, console logging (`enable_console_logging`).
+- `evaluation/` — the retrieval eval (`RetrievalCase`, `evaluate_retrieval`): recall@1, recall@k and decline-correctness for any retriever. `scripts/eval_retrieval.py` runs it over the labelled catalogue in `tests/retrieval/`; `--check` gates on `baseline.json`, as does the test suite. Relevance changes quote their before/after from it.
 - `skills/agent-gantry/` — the bundled Claude Skill (`SKILL.md` + `references/`), shipped in the wheel via hatch `shared-data` to `share/claude/skills/`.
 
 ## Conventions

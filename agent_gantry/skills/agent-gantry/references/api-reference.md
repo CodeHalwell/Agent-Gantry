@@ -33,12 +33,23 @@ from agent_gantry import (
 #       .selector_fallback / .selector_fallback_reason -> the router answered for the selector, and why
 #   AgentGantry(selector=..., on_selector_fallback="raise") -> SelectorFallbackError instead of failing open
 #   also importable from agent_gantry: SystemOneClient, SelectorFallbackError
+#   (await gantry.retrieve(...)).embedder -> model_name of the embedder that searched; None on the
+#       selector path. "simple-hash-embedder" = sentence-transformers is missing and retrieval is
+#       matching tokens, not meaning (logged once at WARNING). EmbedderConfig(on_unavailable="raise")
+#       raises ImportError instead of falling back.
+# Measuring retrieval: from agent_gantry.evaluation import RetrievalCase, evaluate_retrieval,
+#       tool_retriever, skill_retriever, mcp_server_retriever
+#   report = await evaluate_retrieval(tool_retriever(gantry), [RetrievalCase("q", {"ns.tool"}),
+#       RetrievalCase("nothing fits", expect_decline=True)], k=5)
+#   report.recall_at_1 / .recall_at_k / .decline_correctness / .by_kind() / .misses()
 # MCP:    gantry.serve_mcp(transport="stdio"|"http"|"sse", mode=..., expose=[...])
 #         reset_sse_shutdown_latch()  -> release sse_starlette's process-global
 #           shutdown latch between servers in one process; without it a second
 #           EventSourceResponse is cancelled between headers and body (hangs).
 #           Needs the `mcp` extra; raises AttributeError without it.
 #         gantry.add_mcp_server(MCPServerConfig(command=[...] | url="https://...", headers=...))
+#         tools discovered from a server are tagged "mcp:<server>" (mcp_server_tag(name) in
+#           agent_gantry.schema.mcp): the server name is searchable, and a selector groups by it
 #         gantry.register_mcp_server(name, command=None, *, url=None, description=...)
 #         gantry.sync(prune=True) drops stored tools that are no longer registered
 # Observability built-ins (0.8.0+):

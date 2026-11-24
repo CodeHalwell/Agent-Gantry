@@ -151,6 +151,7 @@ class ConsoleTelemetryAdapter:
                 "backend": result.backend,
                 "selector_fallback": result.selector_fallback,
                 "selector_fallback_reason": result.selector_fallback_reason,
+                "embedder": result.embedder,
             },
         )
 

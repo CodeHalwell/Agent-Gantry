@@ -51,6 +51,15 @@ class EmbedderConfig(BaseModel):
         default=None, description="Output dimension (for Matryoshka truncation)"
     )
     task_type: str | None = Field(default=None, description="Task type for embeddings (for Nomic)")
+    on_unavailable: Literal["simple", "raise"] = Field(
+        default="simple",
+        description=(
+            "What to do when type is 'sentence_transformers' and that package is not "
+            "installed. 'simple' falls back to the hash-based SimpleEmbedder, which "
+            "matches tokens rather than meaning, and logs a WARNING. 'raise' raises "
+            "ImportError instead, for deployments that must not retrieve on it."
+        ),
+    )
 
 
 def _system_one_type(value: Any) -> Any:

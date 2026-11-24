@@ -57,7 +57,10 @@ class SelectionCandidate(BaseModel):
             id=tool.qualified_name,
             name=f"{tool.namespace}.{tool.name}",
             description=tool.description,
-            group=tool.namespace,
+            # An MCP tool groups by the server it came from. Its namespace is
+            # usually ``"default"`` for every server at once, which gave the
+            # two-stage path a single group and so nothing to narrow.
+            group=(getattr(tool, "metadata", None) or {}).get("mcp_server") or tool.namespace,
             tags=list(tool.tags),
             examples=list(tool.examples),
         )

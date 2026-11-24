@@ -1264,6 +1264,15 @@ class AgentGantry:
             if candidate_id in by_id and result.scores.get(candidate_id, 0.0) >= threshold
         ]
 
+    def _embedder_name(self) -> str | None:
+        """``model_name`` of the embedder in use, for result provenance.
+
+        ``None`` for a duck-typed embedder that does not name itself: this is
+        reporting, and must not be what makes a retrieval fail.
+        """
+        name = getattr(self._embedder, "model_name", None)
+        return name if isinstance(name, str) and name else None
+
     async def retrieve(self, query: ToolQuery) -> RetrievalResult:
         """
         Core semantic routing function.
@@ -1387,6 +1396,7 @@ class AgentGantry:
             # say so, so a caller can tell which backend it is looking at.
             selector_fallback=fell_back is not None,
             selector_fallback_reason=fell_back.reason if fell_back is not None else None,
+            embedder=self._embedder_name(),
         )
         await self._telemetry.record_retrieval(query, retrieval)
         return retrieval

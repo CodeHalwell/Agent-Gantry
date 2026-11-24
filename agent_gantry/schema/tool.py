@@ -78,6 +78,34 @@ class ToolHealth(HealthMetrics):
     circuit_breaker_open: bool = Field(default=False)
 
 
+#: Bounds on the parameter names :meth:`ToolDefinition.to_searchable_text`
+#: indexes, so a tool with a very wide schema cannot crowd out its own
+#: description.
+_MAX_INDEXED_PARAMETERS = 16
+_MAX_INDEXED_PARAMETER_CHARS = 240
+
+#: Parameter names too common to tell one tool from another. They are left out
+#: of the searchable text for the reason stop words are left out of an index:
+#: on the retrieval eval, indexing them cost paraphrase accuracy (a tool with a
+#: ``text`` parameter is no likelier to be about text) and bought nothing.
+_GENERIC_PARAMETER_NAMES = frozenset(
+    {
+        "a", "args", "b", "body", "changes", "content", "count", "cursor", "data",
+        "details", "end", "fields", "filter", "filters", "format", "from", "id", "ids",
+        "input", "key", "kwargs", "limit", "name", "names", "offset", "options", "order",
+        "page", "page_size", "params", "path", "per_page", "q", "query", "since", "size",
+        "sort", "start", "text", "to", "type", "until", "url", "value", "values", "x", "y",
+    }
+)  # fmt: skip
+
+#: Namespace of the pseudo-tools that stand in for MCP servers in the tools
+#: index, so that one vector store can route to servers as well as to tools.
+MCP_SERVER_NAMESPACE = "__mcp_servers__"
+
+#: Namespaces whose entries are index bookkeeping, not tools. Tool retrieval
+#: never returns them.
+RESERVED_NAMESPACES = frozenset({MCP_SERVER_NAMESPACE})
+
 class ToolDefinition(BaseModel):
     """
     Universal representation of a tool.
@@ -171,8 +199,15 @@ class ToolDefinition(BaseModel):
         """
         Convert tool metadata to searchable text for embedding.
 
-        Combines name, namespace, description, tags, and examples into a
-        single text representation optimized for semantic search.
+        Combines name, namespace, tags, parameter names, description and
+        examples into a single text representation for semantic search.
+
+        The short fields come first on purpose. An embedder reads a bounded
+        number of tokens (256 word-pieces for the default
+        ``all-MiniLM-L6-v2``, which a 2000-character description alone
+        overruns), and whatever sits after a long description is cut off. Tags
+        and parameter names are a few tokens each and often the most exact
+        signal a tool has, so they go where they cannot be truncated away.
 
         Returns:
             Concatenated string of tool metadata for embedding
@@ -192,4 +227,35 @@ class ToolDefinition(BaseModel):
         """
         tags = " ".join(self.tags)
         examples = " ".join(self.examples)
-        return f"{self.name} {self.namespace} {self.description} {tags} {examples}"
+        parts = (
+            self.name,
+            self.namespace,
+            tags,
+            self._parameter_names(),
+            self.description,
+            examples,
+        )
+        return " ".join(part for part in parts if part)
+
+    def _parameter_names(self) -> str:
+        """Top-level parameter names, bounded, for :meth:`to_searchable_text`.
+
+        Names only: a parameter's description is prose that competes with the
+        tool's own for the embedder's token budget, while its name is often the
+        one exact token a query and a tool share (``facet_query``,
+        ``resource_group``). Names every API has (``query``, ``limit``,
+        ``page``) are skipped; see ``_GENERIC_PARAMETER_NAMES``.
+        """
+        properties = self.parameters_schema.get("properties")
+        if not isinstance(properties, dict):
+            return ""
+        names: list[str] = []
+        length = 0
+        for name in properties:
+            if not isinstance(name, str) or name.lower() in _GENERIC_PARAMETER_NAMES:
+                continue
+            length += len(name) + 1
+            if len(names) >= _MAX_INDEXED_PARAMETERS or length > _MAX_INDEXED_PARAMETER_CHARS:
+                break
+            names.append(name)
+        return " ".join(names)
