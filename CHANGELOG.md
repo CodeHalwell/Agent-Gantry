@@ -326,6 +326,13 @@ signal, but not as an equal partner in a rank fusion.
   validation error. The text is now cut to fit, with as much of it as the
   model allows (10,000 characters) kept beside it. `register_mcp_server()` takes no extended description, so this
   was only reachable by setting one on the definition.
+- **A tool or skill cannot be registered where it would never be found.**
+  The index keeps three kinds of namespace for its own entries
+  (`__mcp_servers__`, `__a2a_agents__` and anything starting `__chunks__`),
+  and retrieval returns nothing from them. Registering a tool or adding a
+  skill in one, by decorator, `add_tool()`, `add_skills()` or as the target
+  namespace of MCP or A2A discovery, now raises `ValueError` at the call
+  instead of storing an entry no search will return.
 - **`retrieve_mcp_servers(namespaces=[...])` finds a server among other
   namespaces' servers.** The namespace was applied to what the store
   returned, and the store was asked for `limit * 2` rows: with `limit=1`,

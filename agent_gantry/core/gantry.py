@@ -38,7 +38,7 @@ from agent_gantry.core.factories import (
     build_telemetry,
     build_vector_store,
 )
-from agent_gantry.core.registry import ToolRegistry
+from agent_gantry.core.registry import ToolRegistry, reject_reserved_namespace
 from agent_gantry.core.router import (
     UNAVAILABLE_SERVER_PENALTY,
     RoutingWeights,
@@ -630,7 +630,7 @@ class AgentGantry:
                 examples=examples or [],
             )
 
-            self._pending_tools.append(tool)
+            self._enqueue([tool])
             # Definition and handler go into the registry right away, so the
             # tool is executable before the next sync().
             self._registry.register_tool(tool, underlying)
@@ -669,7 +669,7 @@ class AgentGantry:
                 registry-held handler (MCP/A2A discovery already do this, and
                 keep working unchanged since ``handler`` defaults to ``None``).
         """
-        self._pending_tools.append(tool)
+        self._enqueue([tool])
         if handler is not None:
             # Mirror register(): the definition goes into the registry right
             # away (not just _pending_tools) so the tool is executable before
@@ -809,6 +809,16 @@ class AgentGantry:
         # finds in the registry and the next sync would store that instead.
         for tool in self._pending_tools:
             self._registry.register_tool(tool)
+
+    def _enqueue(self, tools: Sequence[ToolDefinition]) -> None:
+        """Queue ``tools`` for the next sync, refusing any in a reserved namespace.
+
+        All are checked before any is queued: a tool that would never be found
+        must not be left in the queue to fail every later sync.
+        """
+        for tool in tools:
+            reject_reserved_namespace(tool.namespace, f"tool '{tool.name}'")
+        self._pending_tools.extend(tools)
 
     async def prune_stale_tools(self, keep: Sequence[ToolDefinition] | None = None) -> int:
         """
@@ -1000,7 +1010,7 @@ class AgentGantry:
             # pending as well, so the first retrieval embeds them.
             for tool in tools_to_add:
                 self._registry.register_tool(tool)
-            self._pending_tools.extend(tools_to_add)
+            self._enqueue(tools_to_add)
         elif tools_to_add:
             await self._ensure_initialized()
             await self._sync_manager.sync_batches(tools_to_add, batch_size=100)
@@ -2086,7 +2096,7 @@ class AgentGantry:
         # Add all tools first, then sync once — per-tool add_tool() would
         # trigger a full sync (and a size-1 embedding batch) per tool when
         # auto_sync is enabled.
-        self._pending_tools.extend(tools)
+        self._enqueue(tools)
         if self._config.auto_sync:
             await self.sync()
 
@@ -2570,7 +2580,7 @@ class AgentGantry:
 
         self._register_mcp_tool_handlers(client, tools, resolve_client=_current_client)
 
-        self._pending_tools.extend(tools)
+        self._enqueue(tools)
         if self._config.auto_sync:
             await self.sync()
 
@@ -2701,6 +2711,7 @@ class AgentGantry:
         """
         from agent_gantry.providers.a2a_client import A2AClient
 
+        reject_reserved_namespace(config.namespace, f"the skills of agent '{config.name}'")
         await self._ensure_initialized()
 
         # Discovery-only client: close it when done so its persistent HTTP
@@ -2737,7 +2748,7 @@ class AgentGantry:
             )
 
         # Add all tools first, then sync once (avoids per-tool full syncs)
-        self._pending_tools.extend(tools)
+        self._enqueue(tools)
         if self._config.auto_sync:
             await self.sync()
 
@@ -3342,9 +3353,15 @@ class AgentGantry:
 
         Returns:
             Number of skills stored
+
+        Raises:
+            ValueError: If a skill's namespace is one the index keeps for the
+                pieces of skill bodies; nothing there is ever retrieved.
         """
         if not skills:
             return 0
+        for skill in skills:
+            reject_reserved_namespace(skill.namespace, f"skill '{skill.name}'")
         store = self._skills_store()
         await self._ensure_initialized()
         await self._ensure_skill_vectors_current(store)

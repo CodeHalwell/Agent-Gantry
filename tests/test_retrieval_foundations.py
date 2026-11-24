@@ -697,3 +697,50 @@ async def test_a_scope_that_names_nothing_does_not_search() -> None:
         assert searches == 1
     finally:
         await gantry.close()
+
+
+@pytest.mark.parametrize("namespace", ["__mcp_servers__", "__a2a_agents__", "__chunks__ops"])
+async def test_a_tool_cannot_be_registered_where_it_would_never_be_found(namespace: str) -> None:
+    """Retrieval returns nothing from the index's own namespaces, so say so up front."""
+    gantry = AgentGantry(embedder=SimpleEmbedder())
+    try:
+        with pytest.raises(ValueError, match="reserved"):
+
+            @gantry.register(namespace=namespace)
+            def ping_host(host: str) -> str:
+                """Check whether a host answers on the network."""
+                return host
+
+        with pytest.raises(ValueError, match="reserved"):
+            await gantry.add_tool(
+                ToolDefinition(
+                    name="ping_host",
+                    namespace=namespace,
+                    description="Check whether a host answers on the network.",
+                    parameters_schema={"type": "object", "properties": {}},
+                )
+            )
+        assert await gantry.list_tools() == []
+    finally:
+        await gantry.close()
+
+
+async def test_a_skill_cannot_be_added_where_it_would_never_be_found() -> None:
+    from agent_gantry.schema.skill import Skill
+
+    gantry = AgentGantry(embedder=SimpleEmbedder())
+    try:
+        with pytest.raises(ValueError, match="reserved"):
+            await gantry.add_skills(
+                [
+                    Skill(
+                        name="greeting",
+                        namespace="__chunks__default",
+                        description="How to greet a customer.",
+                        content="Say hello and use their name.",
+                    )
+                ]
+            )
+        assert await gantry.list_skills() == []
+    finally:
+        await gantry.close()
