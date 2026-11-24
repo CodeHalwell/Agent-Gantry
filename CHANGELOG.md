@@ -326,6 +326,12 @@ signal, but not as an equal partner in a rank fusion.
   validation error. The text is now cut to fit, with as much of it as the
   model allows (10,000 characters) kept beside it. `register_mcp_server()` takes no extended description, so this
   was only reachable by setting one on the definition.
+- **`retrieve_mcp_servers(namespaces=[...])` finds a server among other
+  namespaces' servers.** The namespace was applied to what the store
+  returned, and the store was asked for `limit * 2` rows: with `limit=1`,
+  two better-matching servers in another namespace were enough for the call
+  to return nothing. The search is now widened until enough servers in scope
+  are found or the store has no more rows.
 - **`retrieve()` no longer returns MCP-server placeholders as tools.** A
   server registered with `register_mcp_server()` is indexed beside the tools
   under the `__mcp_servers__` namespace, and nothing kept it out of tool

@@ -594,6 +594,29 @@ async def test_one_servers_many_pieces_do_not_crowd_the_others_out() -> None:
         await gantry.close()
 
 
+async def test_a_namespace_scope_is_not_lost_among_other_namespaces_servers() -> None:
+    """Seventy better-matching servers elsewhere; the one in scope is still found."""
+    pytest.importorskip("mcp")
+    gantry = AgentGantry(embedder=SimpleEmbedder())
+    try:
+        for i in range(70):
+            gantry.register_mcp_server(
+                f"backup_{i}",
+                url=f"https://backup-{i}.example/mcp",
+                description="Backup backup backup: restore the backup.",
+                namespace="infra",
+            )
+        gantry.register_mcp_server(
+            "vault", url="https://vault.example/mcp", description="Restores a backup.", namespace="ops"
+        )
+
+        servers = await gantry.retrieve_mcp_servers("backup", limit=1, namespaces=["ops"])
+        assert [s.name for s in servers] == ["vault"]
+        assert (await gantry.retrieve_mcp_servers("backup", limit=1))[0].namespace == "infra"
+    finally:
+        await gantry.close()
+
+
 async def test_catalogue_pieces_follow_the_listing_and_go_with_it() -> None:
     gantry = AgentGantry(embedder=SimpleEmbedder())
     try:

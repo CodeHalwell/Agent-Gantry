@@ -45,6 +45,13 @@ _DESCRIPTION_MAX = 2000
 #: Store metadata key recording which embedder the agent entries were made with.
 _EMBEDDER_KEY = "a2a_agents_embedder_id"
 
+#: How many times :meth:`A2AManager.route` may widen its search, four times
+#: wider each time, when rows that cannot be returned fill the window. It
+#: stops sooner, once enough agents are found or the store has no more rows;
+#: six steps reach 4,096 times the first window, past the end of any registry
+#: a process holds.
+_MAX_WIDENINGS = 6
+
 
 def _digest(agent: A2AAgentDefinition) -> str:
     return hashlib.sha256(agent.qualified_name.encode()).hexdigest()
@@ -196,13 +203,15 @@ class A2AManager:
 
         An agent is scored by the best of its own entry and the pieces of its
         skills. Results come back best first, so the first row seen for an
-        agent is that best, and the window is widened when one agent's pieces
-        crowd the others out of it.
+        agent is that best. The window is widened, four times wider each time,
+        while rows that cannot be returned fill it (more pieces of an agent
+        already seen, agents outside ``namespaces``), until ``limit`` agents
+        are found or the store has no more rows.
         """
         query_embedding = await embed_query(self._embedder, query)
         fetch = limit * 4
         found: list[tuple[A2AAgentDefinition, float]] = []
-        for _ in range(3):
+        for _ in range(_MAX_WIDENINGS + 1):
             candidates = await self._vector_store.search(
                 query_vector=query_embedding,
                 limit=fetch,

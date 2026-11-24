@@ -15,9 +15,13 @@ from agent_gantry.adapters.embedders.base import embed_query
 from agent_gantry.core.mcp_manager import CATALOGUE_ENTITY, PSEUDO_NAMESPACE, SERVER_ENTITY
 from agent_gantry.core.router import UNAVAILABLE_SERVER_PENALTY, mmr_order
 
-#: How many times a search may be widened when one server's catalogue pieces
-#: crowd the other servers out of the window.
-_MAX_WIDENINGS = 2
+#: How many times a search may be widened, four times wider each time, when
+#: rows that cannot be returned fill the window: more pieces of a catalogue
+#: already seen, or servers outside the namespaces asked for. Widening stops
+#: sooner, as soon as enough servers are found or the store has no more rows;
+#: six steps reach 4,096 times the first window, which is past the end of any
+#: registry a process holds, so a matching server is not lost to the limit.
+_MAX_WIDENINGS = 6
 
 if TYPE_CHECKING:
     from agent_gantry.adapters.embedders.base import EmbeddingAdapter

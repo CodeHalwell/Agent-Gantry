@@ -237,6 +237,33 @@ async def test_agents_join_the_combined_view(cards: dict[str, int]) -> None:
         await gantry.close()
 
 
+async def test_a_namespace_scope_is_not_lost_among_other_namespaces_agents() -> None:
+    """Seventy better-matching agents elsewhere; the one in scope is still found.
+
+    The scope is applied to what the store returns, and the search used to
+    stop at 64 rows for one agent asked for.
+    """
+    gantry = AgentGantry(embedder=SimpleEmbedder())
+    try:
+        for i in range(70):
+            gantry.register_a2a_agent(
+                f"payroll_{i}",
+                f"https://payroll-{i}.example",
+                description="Payroll payroll payroll queries about payroll.",
+                namespace="finance",
+            )
+        gantry.register_a2a_agent(
+            "wages", "https://wages.example", description="Answers payroll queries.", namespace="ops"
+        )
+
+        agents = await gantry.retrieve_a2a_agents("payroll", limit=1, namespaces=["ops"])
+        assert [a.name for a in agents] == ["wages"]
+        # Unscoped, one of the seventy is the better match: the scope did the work.
+        assert (await gantry.retrieve_a2a_agents("payroll", limit=1))[0].namespace == "finance"
+    finally:
+        await gantry.close()
+
+
 async def test_an_agent_registered_while_a_sync_is_in_flight_is_not_lost() -> None:
     """The sync's snapshot does not hold it, so the sync must not mark it synced."""
     gantry = AgentGantry(embedder=SimpleEmbedder())

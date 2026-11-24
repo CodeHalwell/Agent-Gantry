@@ -3468,12 +3468,14 @@ class AgentGantry:
 
         # A skill is scored by the best of its own vector and its content's
         # pieces. Pieces take places in the result, so more than ``limit`` are
-        # fetched, and fetched again wider if they crowded the skills out.
-        # Diversity chooses among more candidates than it returns.
+        # fetched, and fetched again four times wider while they crowd the
+        # skills out: until enough skills are found or the store has no more
+        # rows, within a bound no real table reaches (4,096 times the first
+        # window). Diversity chooses among more candidates than it returns.
         pool = limit * 4 if diversity_factor > 0 or reranker is not None else limit
         fetch = pool * 4
         best: dict[tuple[str, str], tuple[Skill | None, float]] = {}
-        for _ in range(3):
+        for _ in range(7):
             matches = await store.search_skills(
                 query_vector=query_embedding,
                 limit=fetch,
