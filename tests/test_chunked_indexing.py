@@ -19,6 +19,7 @@ from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 from agent_gantry.core.chunks import (
     CHUNK_AFTER,
     CHUNK_CHARS,
+    CHUNK_SCORE_WEIGHT,
     MAX_CHUNKS,
     chunk_parent,
     split_text,
@@ -543,6 +544,31 @@ async def test_a_tool_whose_chunks_failed_to_index_is_tried_again() -> None:
         assert len(await _chunk_rows(gantry)) >= 2
         result = await gantry.retrieve(_query("zebra quagga okapi striped ungulate", limit=1))
         assert _names(result) == ["search_archive"]
+    finally:
+        await gantry.close()
+
+
+async def test_a_match_on_a_piece_counts_for_less_than_a_match_on_a_tool() -> None:
+    """A long tool has many pieces, so many chances to match on incidental text."""
+    gantry = await _gantry([_long_tool(), _tool("ping_host", "Check whether a host answers.")])
+    try:
+        router = gantry._router
+        long_tool = await gantry.get_tool("search_archive")
+        short_tool = await gantry.get_tool("ping_host")
+        piece = tool_chunks(long_tool)[-1]
+
+        # The same raw score from the store: the tool matched whole comes first.
+        folded = await router._fold_chunks([(piece, 0.8), (short_tool, 0.8)], _query("anything"))
+        scores = {tool.name: score for tool, score, *_ in folded}
+        assert scores["ping_host"] == 0.8
+        assert scores["search_archive"] == pytest.approx(0.8 * CHUNK_SCORE_WEIGHT)
+
+        # A tool's own score is never lowered by a weaker piece of itself...
+        folded = await router._fold_chunks([(long_tool, 0.75), (piece, 0.8)], _query("anything"))
+        assert [(t.name, s) for t, s, *_ in folded] == [("search_archive", 0.75)]
+        # ...and is still raised by one that is better even after the weight.
+        folded = await router._fold_chunks([(long_tool, 0.5), (piece, 0.8)], _query("anything"))
+        assert folded[0][1] == pytest.approx(0.8 * CHUNK_SCORE_WEIGHT)
     finally:
         await gantry.close()
 

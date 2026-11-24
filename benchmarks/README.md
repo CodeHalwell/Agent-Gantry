@@ -84,6 +84,35 @@ paraphrases at top-1 (21/30 to 13/30) to gain two parameter-name queries in
 the top five. A lexical signal would have to be weighted well below the
 vector one to be worth adding.
 
+### Chunk weight
+
+A tool with a long description is scored by the best of its own vector and
+its pieces', and a long-winded tool has many pieces: many chances to match a
+query on one passage of incidental text. `python benchmarks/chunk_weight.py`
+measures what that costs. It appends sixteen sentences of ordinary API small
+print (authentication, paging, rate limits, currencies) to a share of the
+eval's tools that are not the answer to any query, then runs the 51
+answerable tool queries with chunking off and with a piece's score weighted
+from 1.0 down. `all-MiniLM-L6-v2`, recall@1 / recall@5:
+
+| Chunks | none lengthened | 103 lengthened | 191 lengthened |
+|---|---|---|---|
+| off | 0.725 / 0.833 | 0.765 / 0.833 | 0.804 / 0.833 |
+| weight 1.0 | 0.765 / 0.873 | 0.765 / 0.873 | 0.843 / 0.853 |
+| weight 0.95 | 0.765 / 0.873 | 0.784 / 0.873 | 0.843 / 0.873 |
+| **weight 0.9** | 0.765 / 0.873 | 0.804 / 0.873 | 0.843 / 0.873 |
+| weight 0.85 | 0.765 / 0.873 | 0.804 / 0.873 | 0.843 / 0.873 |
+| weight 0.8 | 0.745 / 0.873 | 0.804 / 0.873 | 0.843 / 0.873 |
+
+At full weight, with 103 long distractors, two short right answers lose first
+place to a long tool: "How many pounds is 80 dollars?" goes to a route
+calculator whose small print mentions currency. At 0.9 both are back and
+nothing found only through a piece is lost; at 0.8 one of those starts to
+slip. 0.9 is `CHUNK_SCORE_WEIGHT`. The small print is this script's own and
+two queries are a thin margin, so read it as the direction and a safe value,
+not an optimum. With the hash embedder, whose scores sit close together, the
+weight costs one parameter-name case in the top five of the CI baseline.
+
 These are one synthetic catalogue and a few dozen queries per modality. They
 are for comparing a change with what came before it, not for quoting as the
 library's accuracy.

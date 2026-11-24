@@ -11,7 +11,7 @@ tool must not be used for.
 So long text is indexed a second time, in pieces. Each piece is stored as a
 pseudo-entry in a reserved namespace, carrying a pointer to the entry it was
 cut from, and retrieval scores an entry by the best of its own vector and its
-pieces'. This is the pattern MCP servers already use to share the tools index
+pieces' (a tool's pieces at :data:`CHUNK_SCORE_WEIGHT`). This is the pattern MCP servers already use to share the tools index
 (see :mod:`agent_gantry.core.mcp_manager`): no new table, no change to the
 vector-store protocol, and one vector per row as every store expects.
 """
@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "CHUNK_AFTER",
     "CHUNK_CHARS",
+    "CHUNK_SCORE_WEIGHT",
     "MAX_CHUNKS",
     "MAX_SKILL_CHUNKS",
     "chunk_parent",
@@ -63,6 +64,14 @@ MAX_CHUNKS = 16
 #: Most chunks one skill may have: enough for the 50,000 characters a skill's
 #: content may hold.
 MAX_SKILL_CHUNKS = 72
+
+#: What a match on one of a tool's pieces counts for beside a match on a
+#: tool's own vector. A tool with a long description has many pieces and so
+#: many chances to match, and a piece matches on one passage where a tool's
+#: own vector answers for the whole of it; at full weight, long-winded tools
+#: took first place from the right short one. Measured, not guessed: see
+#: "Chunk weight" in ``benchmarks/README.md``.
+CHUNK_SCORE_WEIGHT = 0.9
 
 _SENTENCE_END = re.compile(r"(?<=[.!?;:])\s+")
 

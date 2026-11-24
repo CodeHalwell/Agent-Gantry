@@ -118,6 +118,16 @@ signal, but not as an equal partner in a rank fusion.
   `extended_description` when it runs past 2,000 characters and which was
   never embedded before. On the eval the two queries whose answer sits past
   character 2,000 go from 0/2 to 2/2, and nothing else moves.
+
+  A match on a piece counts for nine tenths of its score
+  (`CHUNK_SCORE_WEIGHT`). A long-winded tool has many pieces and so many
+  chances to match, each on one passage of incidental text; at full weight,
+  with a third of the eval's other tools given long descriptions, two short
+  right answers lost first place to one. `benchmarks/chunk_weight.py`
+  measures it, and the table is in `benchmarks/README.md`. With the hash
+  embedder, whose scores sit close together, the weight costs one
+  parameter-name case in the top five on the eval; with the real embedder it
+  costs none.
 - **A skill is searchable by its body.** A skill's vector is made from its
   name, description, tags and summary; the content, up to 50,000 characters,
   was never indexed, so a skill could only be found by what its one-line

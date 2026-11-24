@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from agent_gantry.adapters.embedders.base import embed_query
-from agent_gantry.core.chunks import chunk_parent
+from agent_gantry.core.chunks import CHUNK_SCORE_WEIGHT, chunk_parent
 from agent_gantry.schema.a2a import a2a_agent_tag
 from agent_gantry.schema.mcp import mcp_server_tag
 from agent_gantry.schema.tool import ToolDefinition, chunk_namespace, is_reserved_namespace
@@ -585,7 +585,8 @@ class SemanticRouter:
 
         A long description is indexed in pieces beside the tool's own entry
         (see :mod:`agent_gantry.core.chunks`). A tool's semantic score becomes
-        the best of its own and its pieces', and a tool that was found only
+        the best of its own and its pieces', a piece counting for
+        ``CHUNK_SCORE_WEIGHT`` of its score, and a tool that was found only
         through a piece, because the matching sentence sits past what one
         embedding carries, is fetched and joins the candidates.
         """
@@ -596,7 +597,7 @@ class SemanticRouter:
             if parent is None:
                 folded.append(candidate)
             elif not query.namespaces or parent[0] in query.namespaces:
-                best[parent] = max(best.get(parent, 0.0), float(candidate[1]))
+                best[parent] = max(best.get(parent, 0.0), float(candidate[1]) * CHUNK_SCORE_WEIGHT)
         if not best:
             return folded
 

@@ -6,7 +6,7 @@
       "k": 5,
       "cases": 59,
       "recall_at_1": 0.1373,
-      "recall_at_k": 0.2353,
+      "recall_at_k": 0.2157,
       "decline_correctness": 0.0
     },
     "tools/decline": {
@@ -27,7 +27,7 @@
       "k": 5,
       "cases": 6,
       "recall_at_1": 0.0,
-      "recall_at_k": 0.1667,
+      "recall_at_k": 0.0,
       "decline_correctness": null
     },
     "tools/paraphrase": {
