@@ -109,8 +109,11 @@ A selector *declines* when it answers with nothing (a result: `backend ==
 "selector"`, no tools); it *falls back* when it does not answer. The log line
 for a fallback is `Selector failed for tool selection (<reason>); using
 semantic routing`, at `WARNING` once per distinct reason. The reason to watch
-is `catalogue of N exceeds max_candidates=512`: a catalogue over the ceiling
-falls back on every call, so raise `max_candidates` or use the reranker.
+is `catalogue of N exceeds max_candidates=512`. Over the ceiling, a catalogue
+whose entries form more than one group (namespaces, or MCP servers: discovered
+tools group by server) is narrowed to its best groups first, at the cost of one
+extra request; one that is a single group falls back on every call, so raise
+`max_candidates`, namespace the tools, or use the reranker.
 `retrieve_tools()` and the adapters' `select()` return plain lists and cannot
 carry the flag; use `retrieve()` or strict mode there.
 

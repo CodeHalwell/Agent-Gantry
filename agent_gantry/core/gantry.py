@@ -1463,6 +1463,50 @@ class AgentGantry:
         result = await self.retrieve(tool_query)
         return result.to_dialect(dialect, **adapter_options)
 
+    async def retrieve_tools_from_server(
+        self,
+        server_name: str,
+        query: str,
+        limit: int = 5,
+        dialect: str = "openai",
+        score_threshold: float = 0.0,
+        dialect_options: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> list[dict[str, Any]]:
+        """
+        Retrieve tools from one MCP server only.
+
+        The search runs within that server's tools, not across the registry and
+        then narrowed, so the result is what searching that server on its own
+        would return however many other tools are registered. The tools must
+        already be discovered (``add_mcp_server`` or
+        ``discover_tools_from_server``).
+
+        Args:
+            server_name: The MCP server's name, as given in its
+                :class:`~agent_gantry.schema.config.MCPServerConfig`.
+            query: The natural language query
+            limit: Maximum number of tools to return
+            dialect: Target dialect/provider name (default: 'openai')
+            score_threshold: Minimum cosine score to keep a tool (default
+                ``0.0``, as for :meth:`retrieve_tools`)
+            dialect_options: Options forwarded to the dialect adapter
+            **kwargs: As for :meth:`retrieve_tools`. For several servers at
+                once, call that with ``mcp_servers=[...]`` instead.
+
+        Returns:
+            List of provider-specific tool schemas, all from ``server_name``
+        """
+        return await self.retrieve_tools(
+            query,
+            limit=limit,
+            dialect=dialect,
+            score_threshold=score_threshold,
+            dialect_options=dialect_options,
+            mcp_servers=[server_name],
+            **kwargs,
+        )
+
     async def execute(self, call: ToolCall) -> ToolResult:
         """
         Execute a tool call with full protections.

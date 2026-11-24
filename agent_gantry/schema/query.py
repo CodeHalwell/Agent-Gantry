@@ -84,6 +84,13 @@ class ToolQuery(BaseModel):
     required_capabilities: list[ToolCapability] | None = None
     excluded_capabilities: list[ToolCapability] | None = None
     sources: list[ToolSource] | None = None
+    #: Search only within the tools discovered from these MCP servers, by
+    #: server name. Unlike ``sources``, which can only say "any MCP server"
+    #: and is applied after the candidate pool is drawn, this is pushed down
+    #: to the vector store, so a server holding a few of a large registry's
+    #: tools is searched in full rather than through whatever part of it made
+    #: the pool.
+    mcp_servers: list[str] | None = None
     exclude_deprecated: bool = True
     exclude_unhealthy: bool = True
 

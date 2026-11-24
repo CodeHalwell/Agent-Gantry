@@ -134,9 +134,13 @@ catalogue and no entry served the query. That is a result (`backend == "selector
 
 - **Logging.** A fallback is logged at `WARNING` as `Selector failed for tool selection (<reason>);
   using semantic routing`, once per distinct reason and again if it recurs after the selector has
-  answered; repeats are at `DEBUG`. The case to watch is `max_candidates` (default 512): a larger
-  catalogue falls back on *every* call, permanently, because selecting over a prefix would hide the
-  rest. The library attaches no log handler; call `enable_console_logging()` to see these.
+  answered; repeats are at `DEBUG`. The case to watch is `max_candidates` (default 512). A larger
+  catalogue whose entries form more than one group (namespaces, or the MCP servers tools were
+  discovered from) is narrowed to its best groups first, with the ceiling applied to their members;
+  that costs one extra request and is logged once at `WARNING`. A larger catalogue that is a single
+  group falls back on *every* call, permanently, because selecting over a prefix would hide the
+  rest; so does one whose best group is itself over the ceiling. The library attaches no log
+  handler; call `enable_console_logging()` to see these.
 - **Strict mode.** Failing open is right in production and wrong in an eval, where it lets a run
   pass on a backend you did not configure. `AgentGantry(selector=..., on_selector_fallback="raise")`
   (or `SelectorConfig(on_fallback="raise")`) raises `SelectorFallbackError` instead of falling back,

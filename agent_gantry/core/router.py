@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from agent_gantry.adapters.embedders.base import embed_query
+from agent_gantry.schema.mcp import mcp_server_tag
 from agent_gantry.schema.tool import RESERVED_NAMESPACES
 
 _logger = logging.getLogger(__name__)
@@ -321,6 +322,13 @@ class SemanticRouter:
             filters: dict[str, list[str]] | None = None
             if query.namespaces:
                 filters = {"namespace": query.namespaces}
+            if query.mcp_servers is not None:
+                # Every discovered tool carries its server as a tag, and every
+                # store filters on tags, so the scope costs no protocol change.
+                filters = {
+                    **(filters or {}),
+                    "tags": [mcp_server_tag(server) for server in query.mcp_servers],
+                }
 
             # Request embeddings if MMR will be used (optimization to avoid re-embedding)
             include_embeddings = query.diversity_factor > 0
@@ -495,6 +503,14 @@ class SemanticRouter:
                 return False
 
         if query.sources and tool.source not in query.sources:
+            return False
+        # The tag does the pushdown; the metadata is the authority. A tag is
+        # free text anyone can put on a tool, and this filter must not be how a
+        # hand-tagged native tool gets returned as a server's.
+        if (
+            query.mcp_servers is not None
+            and tool.metadata.get("mcp_server") not in query.mcp_servers
+        ):
             return False
         if query.exclude_unhealthy and tool.health.circuit_breaker_open:
             return False

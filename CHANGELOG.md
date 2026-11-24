@@ -44,6 +44,16 @@ decimals.
   discovered from that MCP server carries (`"mcp:<name>"`). A store search
   with `filters={"tags": [mcp_server_tag("datadog")]}` returns only that
   server's tools.
+- **Search within one MCP server.**
+  `gantry.retrieve_tools_from_server("datadog", query)`, or
+  `ToolQuery(mcp_servers=[...])` / `retrieve_tools(query, mcp_servers=[...])`
+  for several. The scope is pushed down to the vector store, so the result is
+  what searching that server alone would return; `sources=[MCP_SERVER]` could
+  only say "any MCP server" and was applied after the candidate pool was
+  drawn. A selector is shown only the scoped servers' tools. LanceDB keeps
+  tags inside the stored tool, not in a column, so there the scope is found by
+  widening the search window rather than by a predicate: correct, but slower
+  on a very large table.
 
 ### Changed
 
@@ -60,6 +70,17 @@ decimals.
 - **A selector groups MCP tools by server**, not by namespace. Every server's
   tools usually share the `default` namespace, which left the two-stage path
   one group and so nothing to narrow.
+- **Above `max_candidates`, `SystemOneSelector` narrows by group instead of
+  falling back.** A catalogue over the ceiling used to fall back to semantic
+  routing on every call, so the selector stopped selecting exactly when a
+  catalogue was large enough to need it. Now, when its entries form more than
+  one group, the best groups are chosen first and the ceiling is applied to
+  their members: groups are taken best first until the next would not fit,
+  and never skipped. That is one extra request per call, logged once at
+  `WARNING`. It still falls back when there is a single group, or when the
+  best group alone is over the ceiling (`group 'x' holds N candidates, over
+  max_candidates=512`). Token cost was not measured against a real model: the
+  tests count requests and candidates with a stub.
 - **`ToolDefinition.to_searchable_text()`** now reads
   `name namespace tags parameter-names description examples`. Parameter names
   are new: up to 16, top-level only, skipping names every API has (`query`,
