@@ -548,6 +548,27 @@ async def test_a_tool_whose_chunks_failed_to_index_is_tried_again() -> None:
         await gantry.close()
 
 
+async def test_many_pieces_of_a_few_tools_do_not_leave_the_result_short() -> None:
+    """Fifteen tools match, each by sixteen pieces: ten are asked for and ten come back.
+
+    The pool was widened by a fixed number of rows per search, so 240 pieces
+    that all out-score their tools' own rows filled three searches with the
+    pieces of eight tools.
+    """
+    body = "Zebra quagga okapi striped ungulate notes for the keeper on duty today. " * 138
+    tools = [
+        _tool(f"ledger_{i}", "Posts a journal line to the ledger.", extended_description=body)
+        for i in range(15)
+    ]
+    assert all(len(tool_chunks(tool)) == MAX_CHUNKS for tool in tools)
+    gantry = await _gantry(tools)
+    try:
+        result = await gantry.retrieve(_query("zebra quagga okapi striped ungulate", limit=10))
+        assert len(result.tools) == 10
+    finally:
+        await gantry.close()
+
+
 async def test_a_match_on_a_piece_counts_for_less_than_a_match_on_a_tool() -> None:
     """A long tool has many pieces, so many chances to match on incidental text."""
     gantry = await _gantry([_long_tool(), _tool("ping_host", "Check whether a host answers.")])

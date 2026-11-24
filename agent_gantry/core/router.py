@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import re
 from dataclasses import dataclass
 from enum import Enum
@@ -18,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from agent_gantry.adapters.embedders.base import embed_query
-from agent_gantry.core.chunks import CHUNK_SCORE_WEIGHT, chunk_parent
+from agent_gantry.core.chunks import CHUNK_SCORE_WEIGHT, MAX_CHUNKS, chunk_parent
 from agent_gantry.schema.a2a import a2a_agent_tag
 from agent_gantry.schema.mcp import mcp_server_tag
 from agent_gantry.schema.tool import ToolDefinition, chunk_namespace, is_reserved_namespace
@@ -292,8 +293,27 @@ class RoutingSignals:
 MIN_CANDIDATE_POOL = 32
 
 #: How many times :meth:`SemanticRouter.route` may search again for a wider
-#: pool when reserved pseudo-entries crowded real tools out of the first one.
+#: pool when rows that are not tools of their own (server and agent entries,
+#: pieces of long descriptions) crowded tools out of the first one.
 _MAX_POOL_WIDENINGS = 2
+
+
+def _distinct_tools(candidates: Sequence[Any]) -> int:
+    """How many tools a page of search results amounts to.
+
+    A piece of a long description counts as the tool it was cut from, once
+    however many of its pieces are there; an MCP server's or A2A agent's entry
+    counts as none.
+    """
+    tools: set[tuple[str, str]] = set()
+    for candidate in candidates:
+        entry = candidate[0]
+        parent = chunk_parent(entry)
+        if parent is not None:
+            tools.add(parent)
+        elif not is_reserved_namespace(entry.namespace):
+            tools.add((entry.namespace, entry.name))
+    return len(tools)
 
 
 @dataclass
@@ -513,6 +533,9 @@ class SemanticRouter:
             # Wide enough for re-scoring to change the answer; see
             # MIN_CANDIDATE_POOL for why ``limit * 4`` alone was not.
             pool = requested = max(query.limit * 4, MIN_CANDIDATE_POOL)
+            # Every tool in the pool found by its own row and by every piece
+            # of the longest description there can be: no search need be wider.
+            ceiling = pool * (MAX_CHUNKS + 1)
             for _ in range(_MAX_POOL_WIDENINGS + 1):
                 candidates = await self._vector_store.search(
                     query_vector=query_embedding,
@@ -521,17 +544,23 @@ class SemanticRouter:
                     score_threshold=query.score_threshold,
                     include_embeddings=include_embeddings,
                 )
-                # MCP servers are indexed beside the tools as pseudo-entries
-                # that can never be returned. Each one that ranks takes a real
-                # tool's place in the pool, so ask again for that many more.
-                reserved = sum(1 for c in candidates if is_reserved_namespace(c[0].namespace))
+                # Not every row is a tool of its own. MCP servers and A2A
+                # agents are indexed beside the tools as entries that can
+                # never be returned, and a long description is indexed in
+                # pieces, several of which may be one tool's. What the pool
+                # needs is that many tools, so count those.
+                found = _distinct_tools(candidates)
                 if (
-                    not reserved
+                    found >= pool
                     or len(candidates) < requested  # the store has no more to give
-                    or requested >= pool + reserved
+                    or requested >= ceiling
                 ):
                     break
-                requested = pool + reserved
+                # Ask again for as many rows as the pool would take at the
+                # rate tools have turned up so far; with none yet, one more
+                # pool's worth.
+                wanted = math.ceil(requested * pool / found) if found else requested + pool
+                requested = min(ceiling, wanted)
             candidates = await self._fold_chunks(candidates, query)
             vector_search_time_ms = (perf_counter() - search_start) * 1000
         except BaseException:
