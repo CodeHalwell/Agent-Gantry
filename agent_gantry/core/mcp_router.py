@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from agent_gantry.adapters.embedders.base import embed_query
 from agent_gantry.core.mcp_manager import CATALOGUE_ENTITY, PSEUDO_NAMESPACE, SERVER_ENTITY
+from agent_gantry.core.router import UNAVAILABLE_SERVER_PENALTY
 
 #: How many times a search may be widened when one server's catalogue pieces
 #: crowd the other servers out of the window.
@@ -122,8 +123,6 @@ class MCPRouter:
             scored_servers = []
             seen: set[tuple[str, str]] = set()
             for pseudo_tool, score, *_ in candidates:
-                if len(scored_servers) >= limit:
-                    break
                 if (
                     pseudo_tool.metadata.get("entity_type") not in (SERVER_ENTITY, CATALOGUE_ENTITY)
                     or pseudo_tool.namespace != PSEUDO_NAMESPACE
@@ -139,10 +138,18 @@ class MCPRouter:
                 seen.add(key)
                 server = await self._get_server_from_registry(server_name, server_namespace)
                 if server:
-                    scored_servers.append(MCPServerScore(server=server, score=score))
+                    # A server whose last connection attempt failed is still
+                    # offered, but below a healthy one of similar relevance:
+                    # it used to route first however often it had failed.
+                    penalty = 0.0 if server.health.available else UNAVAILABLE_SERVER_PENALTY
+                    scored_servers.append(
+                        MCPServerScore(server=server, score=max(0.0, score - penalty))
+                    )
             if len(scored_servers) >= limit or len(candidates) < fetch:
                 break
             fetch *= 4
+        scored_servers.sort(key=lambda entry: entry.score, reverse=True)
+        scored_servers = scored_servers[:limit]
         search_time_ms = (perf_counter() - search_start) * 1000
 
         total_time_ms = (perf_counter() - start_time) * 1000

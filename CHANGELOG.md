@@ -180,6 +180,23 @@ decimals.
   Parameter descriptions are not indexed. The fingerprint version is now
   `v1.2`, which is what triggers the one-off re-embed.
 
+- **What the conversation knows reaches the selector path.** A tool already
+  called (0.1), one that failed in this conversation (0.3) and a deprecated
+  one (0.5) lose that much from their score. This ran only on the semantic
+  path; with a selector, a tool that had failed twice this turn ranked
+  exactly where its description put it. The same amounts now come off the
+  selector's probability. The selector is asked for as many extra results as
+  there are tools that could be demoted, so the next best can take a demoted
+  tool's place, and its own threshold still decides what is selected: a
+  penalty reorders, it does not unselect. `ScoredTool.semantic_score` on the
+  selector path is the probability less the penalty.
+- **An MCP server that cannot be reached routes below a healthy one.** Server
+  health was tracked and never read when ranking, so a server whose last five
+  connection attempts had failed still routed first. While a server's last
+  attempt failed, 0.3 comes off its score, on the semantic and selector paths
+  alike. It is still offered. The other signals the tool path blends (intent,
+  cost, a skill's usage count) are not applied to servers or skills: there is
+  nothing on the eval to say they would help.
 - **The intent signal no longer rewards long descriptions.** A tool used to
   get the full intent score (0.15 of the final score) if any of an intent's
   keywords appeared anywhere in its name, description or tags, and the longer

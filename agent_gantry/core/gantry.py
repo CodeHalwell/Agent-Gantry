@@ -37,7 +37,12 @@ from agent_gantry.core.factories import (
     build_vector_store,
 )
 from agent_gantry.core.registry import ToolRegistry
-from agent_gantry.core.router import RoutingWeights, SemanticRouter
+from agent_gantry.core.router import (
+    UNAVAILABLE_SERVER_PENALTY,
+    RoutingWeights,
+    SemanticRouter,
+    conversation_penalty,
+)
 from agent_gantry.core.security import SecurityPolicy
 from agent_gantry.schema.config import (
     A2AAgentConfig,
@@ -1116,8 +1121,21 @@ class AgentGantry:
         by_id = {tool.qualified_name: tool for tool in tools}
         candidates = [SelectionCandidate.from_tool(tool) for tool in tools]
 
+        # What the conversation knows about each tool: called already, failed,
+        # deprecated. The selector judges relevance and cannot see any of it,
+        # so a tool that failed twice this turn would rank exactly where its
+        # description put it. Ask for as many extra as could be demoted, so
+        # that demoting one lets the next best take its place.
+        used = set(query.context.tools_already_used)
+        failed = set(query.context.tools_failed)
+        penalties = {
+            tool.qualified_name: penalty
+            for tool in tools
+            if (penalty := conversation_penalty(tool, used, failed))
+        }
+
         start = perf_counter()
-        result = await self._selector.select(text, candidates, query.limit)
+        result = await self._selector.select(text, candidates, query.limit + len(penalties))
         elapsed_ms = (perf_counter() - start) * 1000
         if result.fallback:
             return self._selector_fell_back("tool", result.reason, failed=True)
@@ -1134,13 +1152,23 @@ class AgentGantry:
         scored = [
             ScoredTool(
                 tool=by_id[candidate_id],
-                semantic_score=result.scores.get(candidate_id, 0.0),
+                # The probability, less what the conversation holds against
+                # the tool. The threshold is applied to the probability
+                # itself: a penalty reorders, it does not make a relevant
+                # tool irrelevant.
+                semantic_score=max(
+                    0.0, result.scores.get(candidate_id, 0.0) - penalties.get(candidate_id, 0.0)
+                ),
                 rerank_score=None,
             )
             for candidate_id in result.selected
             if candidate_id in by_id and result.scores.get(candidate_id, 0.0) >= threshold
         ]
-        return scored, elapsed_ms, len(candidates)
+        if penalties:
+            # Stable: tools the conversation says nothing about keep the
+            # selector's own order among themselves.
+            scored.sort(key=lambda entry: entry.semantic_score, reverse=True)
+        return scored[: query.limit], elapsed_ms, len(candidates)
 
     async def _select_skills(
         self,
@@ -1279,11 +1307,20 @@ class AgentGantry:
         self._selector_answered("mcp_server")
 
         threshold = score_threshold or 0.0
-        return [
-            by_id[candidate_id]
+        chosen = [
+            candidate_id
             for candidate_id in result.selected
             if candidate_id in by_id and result.scores.get(candidate_id, 0.0) >= threshold
         ]
+        if any(not by_id[candidate_id].health.available for candidate_id in chosen):
+            # As on the semantic path: a server whose last connection attempt
+            # failed is still offered, below a healthy one of like relevance.
+            chosen.sort(
+                key=lambda candidate_id: result.scores.get(candidate_id, 0.0)
+                - (0.0 if by_id[candidate_id].health.available else UNAVAILABLE_SERVER_PENALTY),
+                reverse=True,
+            )
+        return [by_id[candidate_id] for candidate_id in chosen]
 
     def _embedder_name(self) -> str | None:
         """``model_name`` of the embedder in use, for result provenance.

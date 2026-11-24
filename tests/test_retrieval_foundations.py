@@ -410,3 +410,141 @@ async def test_a_verbose_tool_no_longer_outranks_the_concise_right_one(
 
     monkeypatch.setattr(router, "intent_match_score", anywhere)
     assert await top(question) == "archive_logs"
+
+
+# --------------------------------------------------------------------------- #
+# What the conversation knows reaches every path that ranks
+# --------------------------------------------------------------------------- #
+
+
+class _FixedSelector:
+    """A decision model with fixed opinions, which records how many it was asked for."""
+
+    def __init__(self, scores: dict[str, float], threshold: float = 0.3) -> None:
+        self.scores = scores
+        self.threshold = threshold
+        self.limits: list[int] = []
+
+    async def select(self, query: str, candidates: Any, limit: int, *, kind: str = "tool"):
+        self.limits.append(limit)
+        scores = {c.id: self.scores.get(c.name.rsplit(".", 1)[-1], 0.0) for c in candidates}
+        ranked = sorted(scores, key=lambda cid: scores[cid], reverse=True)
+        return SelectionResult(
+            selected=[cid for cid in ranked if scores[cid] >= self.threshold][:limit],
+            scores=scores,
+        )
+
+
+async def _selecting_gantry(selector: Any) -> AgentGantry:
+    gantry = AgentGantry(embedder=SimpleEmbedder(), selector=selector)
+    for name in ("send_email", "send_sms", "post_message", "print_letter"):
+        await gantry.add_tool(_tool(name, f"The {name} tool delivers a message."))
+    return gantry
+
+
+def _context_query(text: str, limit: int, **context: Any) -> ToolQuery:
+    return ToolQuery(
+        context=ConversationContext(query=text, **context), limit=limit, score_threshold=0.0
+    )
+
+
+async def test_a_tool_that_failed_is_demoted_on_the_selector_path() -> None:
+    selector = _FixedSelector({"send_email": 0.9, "send_sms": 0.7, "post_message": 0.5})
+    gantry = await _selecting_gantry(selector)
+    try:
+        fresh = await gantry.retrieve(_context_query("tell them", limit=3))
+        assert [t.tool.name for t in fresh.tools] == ["send_email", "send_sms", "post_message"]
+
+        after = await gantry.retrieve(
+            _context_query("tell them", limit=3, tools_failed=["send_email"])
+        )
+        assert after.backend == "selector"
+        assert [t.tool.name for t in after.tools] == ["send_sms", "send_email", "post_message"]
+        assert after.tools[1].semantic_score == pytest.approx(0.6)  # 0.9 less 0.3
+    finally:
+        await gantry.close()
+
+
+async def test_demoting_a_tool_lets_the_next_best_take_its_place() -> None:
+    """With ``limit=1`` the selector is asked for one more than that, so there is a next best."""
+    selector = _FixedSelector({"send_email": 0.9, "send_sms": 0.7})
+    gantry = await _selecting_gantry(selector)
+    try:
+        result = await gantry.retrieve(
+            _context_query("tell them", limit=1, tools_failed=["default.send_email"])
+        )
+        assert [t.tool.name for t in result.tools] == ["send_sms"]
+        assert selector.limits == [2]
+    finally:
+        await gantry.close()
+
+
+async def test_a_penalty_reorders_but_does_not_unselect() -> None:
+    """A tool the selector chose stays chosen, and nothing below its threshold gets in."""
+    selector = _FixedSelector({"send_email": 0.9, "send_sms": 0.2})
+    gantry = await _selecting_gantry(selector)
+    try:
+        result = await gantry.retrieve(
+            _context_query("tell them", limit=2, tools_failed=["send_email"])
+        )
+        assert [t.tool.name for t in result.tools] == ["send_email"]
+    finally:
+        await gantry.close()
+
+
+async def test_the_semantic_and_selector_paths_take_off_the_same_amounts() -> None:
+    from agent_gantry.core.router import conversation_penalty
+
+    tool = _tool("send_email", "Send an email message.")
+    assert conversation_penalty(tool, set(), set()) == 0.0
+    assert conversation_penalty(tool, {"send_email"}, set()) == pytest.approx(0.1)
+    assert conversation_penalty(tool, set(), {"default.send_email"}) == pytest.approx(0.3)
+    assert conversation_penalty(tool, {"send_email"}, {"send_email"}) == pytest.approx(0.4)
+    retired = _tool("send_fax", "Send a fax to a number.", deprecated=True)
+    assert conversation_penalty(retired, set(), set()) == pytest.approx(0.5)
+
+
+async def _two_servers(**kwargs: Any) -> AgentGantry:
+    pytest.importorskip("mcp")
+    gantry = AgentGantry(embedder=SimpleEmbedder(), **kwargs)
+    gantry.register_mcp_server(
+        "primary", url="https://primary.example/mcp", description="Search the application logs."
+    )
+    gantry.register_mcp_server(
+        "backup", url="https://backup.example/mcp", description="Search the logs archive."
+    )
+    return gantry
+
+
+async def test_a_server_that_cannot_be_reached_routes_below_a_healthy_one() -> None:
+    gantry = await _two_servers()
+    try:
+        names = [s.name for s in await gantry.retrieve_mcp_servers("search the application logs")]
+        assert names == ["primary", "backup"]
+
+        gantry._mcp_registry.update_health(
+            "primary", "default", available=False, consecutive_failures=5
+        )
+        names = [s.name for s in await gantry.retrieve_mcp_servers("search the application logs")]
+        assert names == ["backup", "primary"]  # still offered, no longer first
+
+        gantry._mcp_registry.update_health(
+            "primary", "default", available=True, consecutive_failures=0
+        )
+        names = [s.name for s in await gantry.retrieve_mcp_servers("search the application logs")]
+        assert names == ["primary", "backup"]
+    finally:
+        await gantry.close()
+
+
+async def test_a_selector_routes_an_unreachable_server_below_a_healthy_one_too() -> None:
+    selector = _FixedSelector({"primary": 0.9, "backup": 0.7})
+    gantry = await _two_servers(selector=selector)
+    try:
+        assert [s.name for s in await gantry.retrieve_mcp_servers("logs")] == ["primary", "backup"]
+        gantry._mcp_registry.update_health(
+            "primary", "default", available=False, consecutive_failures=1
+        )
+        assert [s.name for s in await gantry.retrieve_mcp_servers("logs")] == ["backup", "primary"]
+    finally:
+        await gantry.close()

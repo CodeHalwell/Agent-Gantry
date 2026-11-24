@@ -25,7 +25,7 @@ from agent_gantry.schema.tool import CHUNK_NAMESPACE, RESERVED_NAMESPACES, ToolD
 _logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Collection, Sequence
 
     from agent_gantry.adapters.embedders.base import EmbeddingAdapter
     from agent_gantry.adapters.llm_client import LLMClient
@@ -97,6 +97,48 @@ def _keyword_pattern(keywords: list[str]) -> re.Pattern[str]:
 INTENT_TAG_PATTERNS: dict[TaskIntent, re.Pattern[str]] = {
     intent: _keyword_pattern(keywords) for intent, keywords in INTENT_TAG_MAPPING.items()
 }
+
+#: What a tool loses for having been called already in this conversation, for
+#: having failed in it, and for being deprecated. Subtracted from a score in
+#: ``[0, 1]`` on every path that ranks tools.
+ALREADY_USED_PENALTY = 0.1
+ALREADY_FAILED_PENALTY = 0.3
+DEPRECATED_PENALTY = 0.5
+
+#: What an MCP server loses while its last connection attempt failed: the
+#: same as a tool that failed in this conversation.
+UNAVAILABLE_SERVER_PENALTY = ALREADY_FAILED_PENALTY
+
+
+def conversation_penalty(
+    tool: ToolDefinition, tools_used: Collection[str], tools_failed: Collection[str]
+) -> float:
+    """How much to take off ``tool``'s score for what the conversation knows.
+
+    Relevance says whether a tool fits the request. It cannot say that the
+    tool was just tried and failed, or has already been called: that is the
+    conversation's state, and it is orthogonal to relevance, so the penalty
+    is applied on top of whichever score a path ranks by (a blended score on
+    the semantic path, a probability on the selector path) and is the same
+    on both.
+
+    Args:
+        tool: The tool being ranked.
+        tools_used: Names (bare or ``namespace.name``) already called.
+        tools_failed: Names (bare or ``namespace.name``) that failed.
+
+    Returns:
+        The total penalty, ``0.0`` for a tool the conversation says nothing
+        about.
+    """
+    qualified = f"{tool.namespace}.{tool.name}"
+    penalty = DEPRECATED_PENALTY if tool.deprecated else 0.0
+    if tool.name in tools_used or qualified in tools_used:
+        penalty += ALREADY_USED_PENALTY
+    if tool.name in tools_failed or qualified in tools_failed:
+        penalty += ALREADY_FAILED_PENALTY
+    return penalty
+
 
 #: A keyword found only in a tool's description counts for this much at most,
 #: against 1.0 for one in its name or tags.
@@ -643,9 +685,9 @@ class SemanticRouter:
         cost_score = 1.0 - min(tool.cost.estimated_latency_ms / 10000, 1.0)
 
         # Penalties
-        already_used_penalty = 0.1 if was_used else 0.0
-        already_failed_penalty = 0.3 if previously_failed else 0.0
-        deprecated_penalty = 0.5 if tool.deprecated else 0.0
+        already_used_penalty = ALREADY_USED_PENALTY if was_used else 0.0
+        already_failed_penalty = ALREADY_FAILED_PENALTY if previously_failed else 0.0
+        deprecated_penalty = DEPRECATED_PENALTY if tool.deprecated else 0.0
 
         return RoutingSignals(
             semantic_similarity=semantic_score,
