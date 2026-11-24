@@ -11,8 +11,9 @@ tool must not be used for.
 So long text is indexed a second time, in pieces. Each piece is stored as a
 pseudo-entry in a reserved namespace, carrying a pointer to the entry it was
 cut from, and retrieval scores an entry by the best of its own vector and its
-pieces' (a tool's pieces at :data:`CHUNK_SCORE_WEIGHT`). This is the pattern MCP servers already use to share the tools index
-(see :mod:`agent_gantry.core.mcp_manager`): no new table, no change to the
+pieces' (a tool's pieces at :data:`CHUNK_SCORE_WEIGHT`). This is the pattern
+MCP servers already use to share the tools index (see
+:mod:`agent_gantry.core.mcp_manager`): no new table, no change to the
 vector-store protocol, and one vector per row as every store expects.
 """
 
