@@ -17,6 +17,13 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
+def _origin(tool: Any) -> str | None:
+    """The MCP server or A2A agent ``tool`` came from, if it came from one."""
+    metadata = getattr(tool, "metadata", None) or {}
+    origin = metadata.get("mcp_server") or metadata.get("a2a_agent")
+    return origin if isinstance(origin, str) and origin else None
+
+
 class SelectionCandidate(BaseModel):
     """One entry a selector may choose.
 
@@ -57,10 +64,11 @@ class SelectionCandidate(BaseModel):
             id=tool.qualified_name,
             name=f"{tool.namespace}.{tool.name}",
             description=tool.description,
-            # An MCP tool groups by the server it came from. Its namespace is
-            # usually ``"default"`` for every server at once, which gave the
-            # two-stage path a single group and so nothing to narrow.
-            group=(getattr(tool, "metadata", None) or {}).get("mcp_server") or tool.namespace,
+            # An MCP tool groups by the server it came from, and a tool
+            # converted from an A2A skill by its agent. Their namespace is
+            # usually ``"default"`` for every server and agent at once, which
+            # gave the two-stage path a single group and so nothing to narrow.
+            group=_origin(tool) or tool.namespace,
             tags=list(tool.tags),
             examples=list(tool.examples),
         )
@@ -102,6 +110,27 @@ class SelectionCandidate(BaseModel):
             group=server.namespace,
             tags=list(getattr(server, "tags", []) or []),
             examples=list(getattr(server, "examples", []) or []),
+        )
+
+
+    @classmethod
+    def from_a2a_agent(cls, agent: Any) -> SelectionCandidate:
+        """Build a candidate from an A2A agent definition.
+
+        The description is followed by the agent's skills when its card has
+        been read, because the skills are what a request is matched to.
+        """
+        skills = list(getattr(agent, "skills", []) or [])
+        description = agent.description
+        if skills:
+            description = f"{description} Skills: {'; '.join(skills)}"
+        return cls(
+            id=f"{agent.namespace}.{agent.name}",
+            name=f"{agent.namespace}.{agent.name}",
+            description=description[:4000],
+            group=agent.namespace,
+            tags=list(getattr(agent, "tags", []) or []),
+            examples=list(getattr(agent, "examples", []) or []),
         )
 
 

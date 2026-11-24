@@ -10,7 +10,13 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any
 
-from agent_gantry.schema.a2a import AgentCard, TaskMessage, TaskMessagePart, TaskRequest
+from agent_gantry.schema.a2a import (
+    AgentCard,
+    TaskMessage,
+    TaskMessagePart,
+    TaskRequest,
+    a2a_agent_tag,
+)
 from agent_gantry.schema.tool import ToolDefinition, ToolSource
 
 if TYPE_CHECKING:
@@ -176,6 +182,9 @@ class A2AClient:
             description=skill.description,
             parameters_schema=parameters_schema,
             namespace=self.config.namespace,
+            # The one thing that tells this tool from another agent's: every
+            # converted skill has the same single ``query`` parameter.
+            tags=[a2a_agent_tag(self.config.name)],
             source=ToolSource.A2A_AGENT,
             source_uri=f"a2a://{self.config.name}",
             metadata={

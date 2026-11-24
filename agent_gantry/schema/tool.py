@@ -106,9 +106,13 @@ MCP_SERVER_NAMESPACE = "__mcp_servers__"
 #: tool's own entry. See :mod:`agent_gantry.core.chunks`.
 CHUNK_NAMESPACE = "__chunks__"
 
+#: Namespace of the pseudo-tools that stand in for A2A agents in the tools
+#: index, as :data:`MCP_SERVER_NAMESPACE` does for MCP servers.
+A2A_AGENT_NAMESPACE = "__a2a_agents__"
+
 #: Namespaces whose entries are index bookkeeping, not tools. Tool retrieval
 #: never returns them.
-RESERVED_NAMESPACES = frozenset({MCP_SERVER_NAMESPACE, CHUNK_NAMESPACE})
+RESERVED_NAMESPACES = frozenset({MCP_SERVER_NAMESPACE, A2A_AGENT_NAMESPACE, CHUNK_NAMESPACE})
 
 class ToolDefinition(BaseModel):
     """

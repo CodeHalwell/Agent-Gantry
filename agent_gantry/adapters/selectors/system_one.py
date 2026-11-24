@@ -44,6 +44,10 @@ DEFAULT_QUESTIONS = {
         "Would this server provide tools useful for the request? "
         "Answer about this server only."
     ),
+    "a2a_agent": (
+        "Could this agent carry out the request, or part of it? "
+        "Answer about this agent only."
+    ),
 }
 
 DEFAULT_QUESTION = DEFAULT_QUESTIONS["tool"]
@@ -59,6 +63,10 @@ DEFAULT_GROUP_QUESTIONS = {
     ),
     "mcp_server": (
         "Could any server in this group provide tools useful for the request? "
+        "Answer about this group only."
+    ),
+    "a2a_agent": (
+        "Could any agent in this group carry out the request, or part of it? "
         "Answer about this group only."
     ),
 }

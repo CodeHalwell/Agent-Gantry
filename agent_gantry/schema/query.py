@@ -91,6 +91,10 @@ class ToolQuery(BaseModel):
     #: tools is searched in full rather than through whatever part of it made
     #: the pool.
     mcp_servers: list[str] | None = None
+    #: Search only within the tools converted from these A2A agents' skills,
+    #: by agent name. Pushed down like ``mcp_servers``; naming both searches
+    #: the tools of either.
+    a2a_agents: list[str] | None = None
     exclude_deprecated: bool = True
     exclude_unhealthy: bool = True
 
@@ -175,7 +179,7 @@ class RetrievalResult(BaseModel):
 
 
 class ContextEntry(BaseModel):
-    """One entry of a :class:`ContextResult`: a tool, a skill or an MCP server.
+    """One entry of a :class:`ContextResult`: a tool, a skill, an MCP server or an A2A agent.
 
     Attributes:
         kind: Which catalogue the entry came from.
@@ -185,10 +189,11 @@ class ContextEntry(BaseModel):
             retrieved it reports one. Scores of different kinds are not
             comparable: a tool's blends several signals or is a selector's
             probability, a skill's is a cosine.
-        entry: The ``ToolDefinition``, ``Skill`` or ``MCPServerDefinition``.
+        entry: The ``ToolDefinition``, ``Skill``, ``MCPServerDefinition`` or
+            ``A2AAgentDefinition``.
     """
 
-    kind: Literal["tool", "skill", "mcp_server"]
+    kind: Literal["tool", "skill", "mcp_server", "a2a_agent"]
     id: str
     rank: int = Field(ge=1)
     score: float | None = None
@@ -202,7 +207,7 @@ class ContextResult(BaseModel):
     kind's best match comes before any kind's second, and so on. The three
     catalogues are scored on different scales, so their scores cannot be
     merged without calibration; their ranks can. Within one rank the order is
-    tools, then skills, then MCP servers.
+    tools, then skills, then MCP servers, then A2A agents.
 
     Attributes:
         entries: The merged view.
@@ -239,3 +244,8 @@ class ContextResult(BaseModel):
     def mcp_servers(self) -> list[Any]:
         """The MCP servers, best first."""
         return self.of_kind("mcp_server")
+
+    @property
+    def a2a_agents(self) -> list[Any]:
+        """The A2A agents, best first."""
+        return self.of_kind("a2a_agent")

@@ -91,3 +91,70 @@ class TaskResponse(BaseModel):
     result: Any | None = Field(default=None, description="Task result")
     error: str | None = Field(default=None, description="Error message if failed")
     metadata: dict[str, Any] = Field(default_factory=dict, description="Response metadata")
+
+
+#: Prefix of the tag every tool converted from an A2A agent's skill carries.
+A2A_AGENT_TAG_PREFIX = "a2a:"
+
+
+def a2a_agent_tag(agent_name: str) -> str:
+    """The tag carried by every tool converted from a skill of ``agent_name``.
+
+    As :func:`agent_gantry.schema.mcp.mcp_server_tag` does for MCP servers: it
+    puts the agent's name in the tool's searchable text, makes the agent
+    filterable at the vector store, and tells a selector where the tool came
+    from. It matters more here than there: every tool converted from an A2A
+    skill has the same parameter schema, one ``query`` string, so the
+    description and this tag are all a retriever has to tell them apart.
+    """
+    return f"{A2A_AGENT_TAG_PREFIX}{agent_name}"
+
+
+class A2AAgentDefinition(BaseModel):
+    """An A2A agent as the gantry knows it, for routing a query to an agent.
+
+    The counterpart of :class:`~agent_gantry.schema.mcp.MCPServerDefinition`.
+    It can be registered by hand, before the agent has been contacted, or
+    filled from the agent's card when it is discovered.
+
+    Attributes:
+        name: The name the gantry knows the agent by.
+        namespace: Namespace for the agent and the tools its skills become.
+        url: Base URL of the agent.
+        description: What the agent does.
+        tags: Tags for categorising the agent.
+        examples: Example requests the agent handles.
+        skills: ``"name: description"`` of each skill on the agent's card,
+            when it has been discovered. Indexed in pieces beside the
+            description, so the agent is found by what it can do.
+        input_modes: Content types the agent accepts, from its card.
+        output_modes: Content types the agent produces, from its card.
+    """
+
+    name: str = Field(..., min_length=1, max_length=128)
+    namespace: str = Field(default="default")
+    url: str
+    description: str = Field(..., min_length=10, max_length=2000)
+    tags: list[str] = Field(default_factory=list)
+    examples: list[str] = Field(default_factory=list)
+    skills: list[str] = Field(default_factory=list)
+    input_modes: list[str] = Field(default_factory=list)
+    output_modes: list[str] = Field(default_factory=list)
+
+    @property
+    def qualified_name(self) -> str:
+        """``namespace.name``."""
+        return f"{self.namespace}.{self.name}"
+
+    def to_searchable_text(self) -> str:
+        """The agent's own text for embedding: description, tags and examples.
+
+        Its skills are indexed separately, in pieces; see
+        :mod:`agent_gantry.core.a2a_manager`.
+        """
+        parts = [f"Agent: {self.name}", f"Description: {self.description}"]
+        if self.tags:
+            parts.append(f"Tags: {', '.join(self.tags)}")
+        if self.examples:
+            parts.append(f"Examples: {', '.join(self.examples)}")
+        return " ".join(parts)

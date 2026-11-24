@@ -23,6 +23,7 @@ from agent_gantry.adapters.embedders.openai import OpenAIEmbedder
 from agent_gantry.adapters.embedders.simple import SimpleEmbedder
 from agent_gantry.adapters.rerankers.base import rerank_texts
 from agent_gantry.adapters.selectors.base import SelectorFallbackError
+from agent_gantry.core.a2a_manager import A2AManager
 from agent_gantry.core.chunks import (
     chunk_parent,
     delete_skill_chunks,
@@ -46,6 +47,7 @@ from agent_gantry.core.router import (
     mmr_order,
 )
 from agent_gantry.core.security import SecurityPolicy
+from agent_gantry.schema.a2a import A2AAgentDefinition
 from agent_gantry.schema.config import (
     A2AAgentConfig,
     AgentGantryConfig,
@@ -73,6 +75,7 @@ from agent_gantry.schema.query import (
 from agent_gantry.schema.selection import SelectionCandidate
 from agent_gantry.schema.skill import Skill, SkillSearchResult
 from agent_gantry.schema.tool import (
+    A2A_AGENT_NAMESPACE,
     CHUNK_NAMESPACE,
     MCP_SERVER_NAMESPACE,
     RESERVED_NAMESPACES,
@@ -231,6 +234,7 @@ class AgentGantry:
         )
 
         self._create_mcp_components()
+        self._a2a_manager = A2AManager(self._vector_store, self._embedder, self._sync_manager)
         self._llm_client = self._create_llm_client()
         self._router = self._create_router()
         self._rate_limiter = self._create_rate_limiter()
@@ -843,7 +847,8 @@ class AgentGantry:
         stored = await self._list_all_pages(self._vector_store.list_all)
         removed = 0
         for tool in stored:
-            if tool.namespace == MCP_SERVER_NAMESPACE:
+            if tool.namespace in (MCP_SERVER_NAMESPACE, A2A_AGENT_NAMESPACE):
+                # Routed by their own registries, which prune their own.
                 continue
             # A chunk lives and dies with the tool it was cut from.
             parent = chunk_parent(tool)
@@ -1293,6 +1298,37 @@ class AgentGantry:
             if candidate_id in by_id and result.scores.get(candidate_id, 0.0) >= threshold
         ]
 
+    async def _select_a2a_agents(
+        self,
+        query: str,
+        limit: int,
+        score_threshold: float | None,
+        namespaces: list[str] | None,
+    ) -> list[A2AAgentDefinition] | None:
+        """Choose A2A agents with the configured selector, or ``None`` to fall back."""
+        if self._selector is None:
+            return None
+        agents = self._a2a_manager.list()
+        if namespaces:
+            allowed = set(namespaces)
+            agents = [agent for agent in agents if agent.namespace in allowed]
+        if not agents:
+            return None
+
+        by_id = {agent.qualified_name: agent for agent in agents}
+        candidates = [SelectionCandidate.from_a2a_agent(agent) for agent in agents]
+        result = await self._selector.select(query, candidates, limit, kind="a2a_agent")
+        if result.fallback:
+            self._selector_fell_back("a2a_agent", result.reason, failed=True)
+            return None
+        self._selector_answered("a2a_agent")
+        threshold = score_threshold or 0.0
+        return [
+            by_id[candidate_id]
+            for candidate_id in result.selected
+            if candidate_id in by_id and result.scores.get(candidate_id, 0.0) >= threshold
+        ]
+
     async def _select_mcp_servers(
         self,
         query: str,
@@ -1554,14 +1590,15 @@ class AgentGantry:
         tools: int = 5,
         skills: int = 2,
         servers: int = 1,
+        agents: int = 1,
         score_threshold: float = 0.0,
         namespaces: list[str] | None = None,
     ) -> ContextResult:
         """
-        Retrieve tools, skills and MCP servers for one query, in one ranked view.
+        Retrieve tools, skills, MCP servers and A2A agents for one query, in one ranked view.
 
-        The three catalogues are otherwise three calls with three score scales
-        and nothing that ranks across them. This runs the three searches
+        The catalogues are otherwise separate calls with separate score scales
+        and nothing that ranks across them. This runs the searches
         concurrently and merges them by rank: every kind's best match first,
         then every kind's second, and so on. See
         :class:`~agent_gantry.schema.query.ContextResult` for why by rank and
@@ -1576,6 +1613,7 @@ class AgentGantry:
             tools: How many tools to retrieve; ``0`` for none
             skills: How many skills to retrieve; ``0`` for none
             servers: How many MCP servers to retrieve; ``0`` for none
+            agents: How many A2A agents to retrieve; ``0`` for none
             score_threshold: Minimum score for a tool. Defaults to ``0.0``
                 (no filtering), as for :meth:`retrieve_tools`. Skills and
                 servers are not thresholded here: their scales differ, and
@@ -1621,8 +1659,13 @@ class AgentGantry:
                 return []
             return await self.retrieve_mcp_servers(query, limit=servers, namespaces=namespaces)
 
-        tool_result, skill_results, server_results = await asyncio.gather(
-            find_tools(), find_skills(), find_servers()
+        async def find_agents() -> list[A2AAgentDefinition]:
+            if agents <= 0:
+                return []
+            return await self.retrieve_a2a_agents(query, limit=agents, namespaces=namespaces)
+
+        tool_result, skill_results, server_results, agent_results = await asyncio.gather(
+            find_tools(), find_skills(), find_servers(), find_agents()
         )
 
         ranked: list[list[ContextEntry]] = [
@@ -1654,6 +1697,10 @@ class AgentGantry:
                     entry=server,
                 )
                 for rank, server in enumerate(server_results, 1)
+            ],
+            [
+                ContextEntry(kind="a2a_agent", id=agent.qualified_name, rank=rank, entry=agent)
+                for rank, agent in enumerate(agent_results, 1)
             ],
         ]
         # By rank, then by kind in the order above. ``sorted`` is stable, so
@@ -2661,12 +2708,136 @@ class AgentGantry:
         finally:
             await client.close()
 
+        # The agent itself becomes routable, described by its own card. A
+        # registration made by hand keeps its wording and gains the card's
+        # skills.
+        card = client._agent_card
+        if card is not None:
+            known = self._a2a_manager.get(config.name, config.namespace)
+            description = (known.description if known else card.description).strip()
+            self._a2a_manager.register(
+                A2AAgentDefinition(
+                    name=config.name,
+                    namespace=config.namespace,
+                    url=config.url,
+                    description=(
+                        description if len(description) >= 10 else f"A2A agent {config.name}. {description}"
+                    )[:2000],
+                    tags=known.tags if known else [],
+                    examples=known.examples if known else [],
+                    skills=[f"{skill.name}: {skill.description}" for skill in card.skills],
+                    input_modes=sorted({m for skill in card.skills for m in skill.input_modes}),
+                    output_modes=sorted({m for skill in card.skills for m in skill.output_modes}),
+                )
+            )
+
         # Add all tools first, then sync once (avoids per-tool full syncs)
         self._pending_tools.extend(tools)
         if self._config.auto_sync:
             await self.sync()
 
         return len(tools)
+
+    def register_a2a_agent(
+        self,
+        name: str,
+        url: str,
+        *,
+        description: str,
+        namespace: str = "default",
+        tags: list[str] | None = None,
+        examples: list[str] | None = None,
+    ) -> None:
+        """
+        Register an A2A agent for routing, without contacting it.
+
+        The agent becomes findable with :meth:`retrieve_a2a_agents` by this
+        description. None of its skills is a tool until
+        :meth:`discover_skills_from_agent` (or :meth:`add_a2a_agent`) reads
+        its card, which also adds the card's skills to what the agent is
+        found by.
+
+        Args:
+            name: Name for the agent
+            url: Base URL of the agent
+            description: What the agent does (at least 10 characters)
+            namespace: Namespace for the agent and its skills' tools
+            tags: Tags for categorising the agent
+            examples: Example requests the agent handles
+        """
+        # Validates the URL exactly as a discovery would.
+        A2AAgentConfig(name=name, url=url, namespace=namespace)
+        self._a2a_manager.register(
+            A2AAgentDefinition(
+                name=name,
+                namespace=namespace,
+                url=url,
+                description=description,
+                tags=tags or [],
+                examples=examples or [],
+            )
+        )
+
+    async def discover_skills_from_agent(self, name: str, namespace: str = "default") -> int:
+        """
+        Read a registered A2A agent's card and register its skills as tools.
+
+        Args:
+            name: Name of the registered agent
+            namespace: Its namespace
+
+        Returns:
+            Number of skills discovered and registered as tools
+
+        Raises:
+            ValueError: If the agent is not registered
+        """
+        agent = self._a2a_manager.get(name, namespace)
+        if agent is None:
+            raise ValueError(
+                f"A2A agent '{namespace}.{name}' not found. "
+                f"Register it first with register_a2a_agent()."
+            )
+        return await self.add_a2a_agent(
+            A2AAgentConfig(name=agent.name, url=agent.url, namespace=agent.namespace)
+        )
+
+    async def retrieve_a2a_agents(
+        self,
+        query: str,
+        limit: int = 3,
+        score_threshold: float | None = None,
+        namespaces: list[str] | None = None,
+    ) -> list[A2AAgentDefinition]:
+        """
+        Retrieve the registered A2A agents most relevant to a query.
+
+        Args:
+            query: Natural language query describing what is needed
+            limit: Maximum number of agents to return
+            score_threshold: Minimum similarity score (0-1)
+            namespaces: Filter by agent namespaces
+
+        Returns:
+            Agent definitions, most relevant first
+        """
+        if not query.strip() or not self._a2a_manager.list():
+            return []
+        selected = await self._select_a2a_agents(query, limit, score_threshold, namespaces)
+        if selected is not None:
+            return selected
+
+        await self._ensure_initialized()
+        if self._a2a_manager.needs_sync:
+            await self._a2a_manager.sync()
+        routed = await self._a2a_manager.route(
+            query, limit=limit, score_threshold=score_threshold, namespaces=namespaces
+        )
+        return [agent for agent, _ in routed]
+
+    def list_a2a_agents(self, namespace: str | None = None) -> list[A2AAgentDefinition]:
+        """The registered A2A agents, optionally those of one namespace."""
+        return self._a2a_manager.list(namespace)
 
     def serve_a2a(self, host: str = "0.0.0.0", port: int = 8080) -> None:
         """

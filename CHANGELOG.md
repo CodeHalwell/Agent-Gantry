@@ -26,8 +26,9 @@ it adds public API and changes what a tool is embedded from.
   they were: by description only;
 - `list_tools()` no longer returns the entries registered MCP servers are
   indexed as, unless their namespace is asked for by name;
-- tools discovered from an MCP server now carry one tag, `mcp:<server>`. Code
-  that assumed an MCP tool has no tags will see it;
+- tools discovered from an MCP server now carry one tag, `mcp:<server>`, and
+  tools converted from an A2A agent's skills carry `a2a:<agent>`. Code that
+  assumed such a tool has no tags will see it;
 - if sentence-transformers is not installed, the fallback to the hash-based
   `SimpleEmbedder` is now a `WARNING`, not a `DEBUG` line. Install the
   `embeddings` extra, pass an embedder, or set
@@ -132,13 +133,37 @@ decimals.
   server with a catalogue has more vectors to match with than one without,
   and with the hash embedder that costs one paraphrase case on the eval; with
   the real embedder it costs none.
-- **One ranked view across tools, skills and MCP servers.**
-  `await gantry.retrieve_context(query, tools=5, skills=2, servers=1)` runs
-  the three searches concurrently and returns a `ContextResult`: `entries`
-  merged by rank (every kind's best match before any kind's second), each
-  with its kind, id, rank and own score, plus `.tools`, `.skills` and
-  `.mcp_servers`, and the tool search's full provenance in
-  `.tool_retrieval`. It merges by rank because the three are scored on
+- **A2A agents can be registered, routed to and searched within.** The only
+  way to bring an A2A agent in was `add_a2a_agent()`: fetch its card and turn
+  every skill into a tool. Nothing indexed the agent itself. Now, mirroring
+  MCP servers:
+  - `gantry.register_a2a_agent(name, url, description=...)` registers an
+    agent without contacting it, and
+    `await gantry.retrieve_a2a_agents(query)` routes a query to the agents
+    registered. `list_a2a_agents()` lists them.
+  - `await gantry.discover_skills_from_agent(name)` reads a registered
+    agent's card and registers its skills as tools. `add_a2a_agent()` still
+    does that in one step, and now also makes the agent routable from its
+    card.
+  - Once the card has been read, its skills are indexed in pieces beside the
+    agent's own entry, so the agent is found by what it can do.
+  - A tool converted from a skill is tagged `a2a:<agent>` (`a2a_agent_tag()`
+    in `agent_gantry.schema.a2a`) and a selector groups such tools by agent.
+    That matters more than it does for MCP: every converted skill has the
+    same single `query` parameter, so its description was all a retriever had.
+  - `ToolQuery(a2a_agents=[...])` scopes a search to those agents' tools.
+  - A selector chooses among agents (`kind="a2a_agent"`, with its own
+    question) and is shown their skills.
+
+  Tested against stand-in agent cards, not a live A2A agent. Agents are held
+  in memory, like MCP server registrations: register them at start-up.
+- **One ranked view across tools, skills, MCP servers and A2A agents.**
+  `await gantry.retrieve_context(query, tools=5, skills=2, servers=1,
+  agents=1)` runs the searches concurrently and returns a `ContextResult`:
+  `entries` merged by rank (every kind's best match before any kind's
+  second), each with its kind, id, rank and own score, plus `.tools`,
+  `.skills`, `.mcp_servers` and `.a2a_agents`, and the tool search's full
+  provenance in `.tool_retrieval`. It merges by rank because they are scored on
   different scales (a blend or a selector's probability for tools, a cosine
   for skills) and cannot be merged by score without calibration. That makes
   the order an interleaving, not a judgement that one kind's best beats

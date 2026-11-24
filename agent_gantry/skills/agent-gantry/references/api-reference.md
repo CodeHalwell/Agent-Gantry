@@ -37,7 +37,11 @@ from agent_gantry import (
 #       selector path. "simple-hash-embedder" = sentence-transformers is missing and retrieval is
 #       matching tokens, not meaning (logged once at WARNING). EmbedderConfig(on_unavailable="raise")
 #       raises ImportError instead of falling back.
-#   ctx = await gantry.retrieve_context(query, tools=5, skills=2, servers=1) -> ContextResult
+# A2A:    gantry.register_a2a_agent(name, url, description=...)   -> routable without contacting it
+#         await gantry.retrieve_a2a_agents(query, limit=3) / gantry.list_a2a_agents()
+#         await gantry.discover_skills_from_agent(name)  (or add_a2a_agent(A2AAgentConfig(...)) in one step)
+#         converted skills are tagged "a2a:<agent>"; ToolQuery(a2a_agents=[...]) scopes a search to them
+#   ctx = await gantry.retrieve_context(query, tools=5, skills=2, servers=1, agents=1) -> ContextResult
 #       ctx.entries (merged by rank; .kind/.id/.rank/.score/.entry), ctx.tools / .skills / .mcp_servers,
 #       ctx.tool_retrieval (backend, embedder, selector_fallback), ctx.skipped
 #   gantry.retrieve_skills(q, rerank=True, diversity_factor=0.4) / retrieve_mcp_servers(q, rerank=True, ...)

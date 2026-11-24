@@ -19,6 +19,7 @@ import numpy as np
 
 from agent_gantry.adapters.embedders.base import embed_query
 from agent_gantry.core.chunks import chunk_parent
+from agent_gantry.schema.a2a import a2a_agent_tag
 from agent_gantry.schema.mcp import mcp_server_tag
 from agent_gantry.schema.tool import CHUNK_NAMESPACE, RESERVED_NAMESPACES, ToolDefinition
 
@@ -475,12 +476,16 @@ class SemanticRouter:
                 # opening of its text. ``_fold_chunks`` checks each piece's
                 # parent against the namespaces asked for.
                 filters = {"namespace": [*query.namespaces, CHUNK_NAMESPACE]}
-            if query.mcp_servers is not None:
-                # Every discovered tool carries its server as a tag, and every
-                # store filters on tags, so the scope costs no protocol change.
+            if query.mcp_servers is not None or query.a2a_agents is not None:
+                # Every discovered tool carries its server or agent as a tag,
+                # and every store filters on tags (any-of), so the scope costs
+                # no protocol change.
                 filters = {
                     **(filters or {}),
-                    "tags": [mcp_server_tag(server) for server in query.mcp_servers],
+                    "tags": [
+                        *(mcp_server_tag(server) for server in query.mcp_servers or ()),
+                        *(a2a_agent_tag(agent) for agent in query.a2a_agents or ()),
+                    ],
                 }
 
             # Request embeddings if MMR will be used (optimization to avoid re-embedding)
@@ -697,11 +702,11 @@ class SemanticRouter:
         # The tag does the pushdown; the metadata is the authority. A tag is
         # free text anyone can put on a tool, and this filter must not be how a
         # hand-tagged native tool gets returned as a server's.
-        if (
-            query.mcp_servers is not None
-            and tool.metadata.get("mcp_server") not in query.mcp_servers
-        ):
-            return False
+        if query.mcp_servers is not None or query.a2a_agents is not None:
+            from_server = tool.metadata.get("mcp_server") in (query.mcp_servers or ())
+            from_agent = tool.metadata.get("a2a_agent") in (query.a2a_agents or ())
+            if not (from_server or from_agent):
+                return False
         if query.exclude_unhealthy and tool.health.circuit_breaker_open:
             return False
         return True
