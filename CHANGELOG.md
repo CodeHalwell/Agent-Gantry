@@ -97,7 +97,7 @@ signal, but not as an equal partner in a rank fusion.
 - **Search within one MCP server.**
   `gantry.retrieve_tools_from_server("datadog", query)`, or
   `ToolQuery(mcp_servers=[...])` / `retrieve_tools(query, mcp_servers=[...])`
-  for several. The scope is pushed down to the vector store, so the result is
+  for several; an empty list matches nothing, without searching. The scope is pushed down to the vector store, so the result is
   what searching that server alone would return; `sources=[MCP_SERVER]` could
   only say "any MCP server" and was applied after the candidate pool was
   drawn. A selector is shown only the scoped servers' tools. Several servers
@@ -153,7 +153,9 @@ signal, but not as an equal partner in a rank fusion.
   one vector over nineteen tools is too diffuse to match any of them. A
   server with a catalogue has more vectors to match with than one without,
   and with the hash embedder that costs one paraphrase case on the eval; with
-  the real embedder it costs none.
+  the real embedder it costs none. Listings are held in memory, like the
+  registrations themselves: after a restart a server is routed to by its
+  description alone until its tools are listed again.
 - **A2A agents can be registered, routed to and searched within.** The only
   way to bring an A2A agent in was `add_a2a_agent()`: fetch its card and turn
   every skill into a tool. Nothing indexed the agent itself. Now, mirroring
@@ -288,7 +290,8 @@ signal, but not as an equal partner in a rank fusion.
   health was tracked and never read when ranking, so a server whose last five
   connection attempts had failed still routed first. While a server's last
   attempt failed, 0.3 comes off its score, on the semantic and selector paths
-  alike. It is still offered. The other signals the tool path blends (intent,
+  alike; a selector is asked for one extra per such server, so a healthy one
+  can take its place. It is still offered. The other signals the tool path blends (intent,
   cost, a skill's usage count) are not applied to servers or skills: there is
   nothing on the eval to say they would help.
 - **The intent signal no longer rewards long descriptions.** A tool used to
