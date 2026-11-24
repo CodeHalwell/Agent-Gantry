@@ -132,6 +132,15 @@ decimals.
   server with a catalogue has more vectors to match with than one without,
   and with the hash embedder that costs one paraphrase case on the eval; with
   the real embedder it costs none.
+- **Diversity for skills and MCP servers.**
+  `retrieve_skills(..., diversity_factor=0.4)` and
+  `retrieve_mcp_servers(..., diversity_factor=0.4)` apply the maximal marginal
+  relevance the tool path already had, so three near-copies of one answer
+  give way to three different ones. `agent_gantry.core.router.mmr_order` is
+  the shared implementation. The default stays `0.0` on every path: the eval
+  has no measure of near-duplicates, so there is nothing to justify a change
+  of default. It is not applied when a selector answers, and it is not
+  group-aware (it does not prefer spreading across MCP servers).
 - **Catalogue an MCP server without committing its tools.**
   `await gantry.list_server_tools("datadog")` asks a registered server what
   it has and returns the definitions; nothing is registered, embedded or given

@@ -548,3 +548,80 @@ async def test_a_selector_routes_an_unreachable_server_below_a_healthy_one_too()
         assert [s.name for s in await gantry.retrieve_mcp_servers("logs")] == ["backup", "primary"]
     finally:
         await gantry.close()
+
+
+# --------------------------------------------------------------------------- #
+# Diversity is not only for tools
+# --------------------------------------------------------------------------- #
+
+
+def test_mmr_is_plain_ranking_at_zero_and_spreads_out_above_it() -> None:
+    from agent_gantry.core.router import mmr_order
+
+    relevance = [0.9, 0.89, 0.5]
+    embeddings = [[1.0, 0.0], [1.0, 0.01], [0.0, 1.0]]  # the first two are near-duplicates
+
+    assert mmr_order(relevance, embeddings, 0.0, 3) == [0, 1, 2]
+    assert mmr_order(relevance, embeddings, 0.5, 2) == [0, 2]
+    assert mmr_order(relevance, embeddings, 0.5, 5) == [0, 2, 1]
+    assert mmr_order([], [], 0.5, 3) == []
+
+
+async def test_diverse_skills_are_not_three_copies_of_one() -> None:
+    from agent_gantry.schema.skill import Skill
+
+    def skill(name: str, description: str) -> Skill:
+        return Skill(name=name, description=description, content=description)
+
+    gantry = AgentGantry(embedder=SimpleEmbedder())
+    try:
+        await gantry.add_skills(
+            [
+                skill("refund_policy_a", "Rules for approving a customer refund request."),
+                skill("refund_policy_b", "Rules for approving a customer refund request today."),
+                skill("refund_policy_c", "Rules for approving a customer refund request now."),
+                skill("refund_letter", "Template letter telling a customer about a refund."),
+                skill("unrelated", "How to rotate the service credentials each quarter."),
+            ]
+        )
+        plain = await gantry.retrieve_skills("approving a customer refund request", limit=2)
+        assert {r.skill.name for r in plain} <= {"refund_policy_a", "refund_policy_b", "refund_policy_c"}
+
+        diverse = await gantry.retrieve_skills(
+            "approving a customer refund request", limit=2, diversity_factor=0.45
+        )
+        assert diverse[0].skill.name == plain[0].skill.name  # the best match still leads
+        assert diverse[1].skill.name == "refund_letter"
+
+        with pytest.raises(ValueError, match="between 0 and 1"):
+            await gantry.retrieve_skills("refund", diversity_factor=1.5)
+    finally:
+        await gantry.close()
+
+
+async def test_diverse_servers_are_not_three_copies_of_one() -> None:
+    pytest.importorskip("mcp")
+    gantry = AgentGantry(embedder=SimpleEmbedder())
+    try:
+        for name, description in (
+            ("logs_eu", "Search the application logs in production."),
+            ("logs_us", "Search the application logs in production too."),
+            ("logs_ap", "Search the application logs in production also."),
+            ("traces", "Search the request traces for a slow application."),
+            ("billing", "Charge cards and issue refunds to customers."),
+        ):
+            gantry.register_mcp_server(name, url=f"https://{name}.example/mcp", description=description)
+
+        plain = await gantry.retrieve_mcp_servers("search the application logs", limit=2)
+        assert {s.name for s in plain} <= {"logs_eu", "logs_us", "logs_ap"}
+
+        diverse = await gantry.retrieve_mcp_servers(
+            "search the application logs", limit=2, diversity_factor=0.45
+        )
+        assert diverse[0].name == plain[0].name
+        assert diverse[1].name == "traces"
+
+        with pytest.raises(ValueError, match="between 0 and 1"):
+            await gantry.retrieve_mcp_servers("logs", diversity_factor=-0.1)
+    finally:
+        await gantry.close()

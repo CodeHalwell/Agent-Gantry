@@ -42,6 +42,7 @@ from agent_gantry.core.router import (
     RoutingWeights,
     SemanticRouter,
     conversation_penalty,
+    mmr_order,
 )
 from agent_gantry.core.security import SecurityPolicy
 from agent_gantry.schema.config import (
@@ -117,6 +118,12 @@ async def _close_adapter(adapter: Any) -> None:
         except Exception:
             logger.debug(f"Error closing {type(adapter).__name__}", exc_info=True)
         return
+
+
+def _check_diversity(diversity_factor: float) -> None:
+    """Reject a diversity factor outside ``[0, 1]``."""
+    if not 0.0 <= diversity_factor <= 1.0:
+        raise ValueError(f"diversity_factor must be between 0 and 1, got {diversity_factor!r}")
 
 
 class AgentGantry:
@@ -2126,6 +2133,8 @@ class AgentGantry:
         limit: int = 3,
         score_threshold: float | None = None,
         namespaces: list[str] | None = None,
+        *,
+        diversity_factor: float = 0.0,
     ) -> list[MCPServerDefinition]:
         """
         Retrieve relevant MCP servers based on a query using semantic search.
@@ -2135,6 +2144,10 @@ class AgentGantry:
             limit: Maximum number of servers to return
             score_threshold: Minimum similarity score (0-1)
             namespaces: Filter by server namespaces
+            diversity_factor: ``0`` ranks by relevance alone. Above it, a
+                server much like one already picked gives way to a different
+                one (maximal marginal relevance). Not applied when a selector
+                answers.
 
         Returns:
             List of relevant MCP server definitions
@@ -2148,6 +2161,7 @@ class AgentGantry:
             ...     print(f"Server: {server.name} - {server.description}")
         """
         self._require_mcp_manager()
+        _check_diversity(diversity_factor)
 
         # Before the sync, not after. ``register_server()`` puts the definition
         # straight into the registry that ``_select_mcp_servers`` reads; the
@@ -2167,6 +2181,7 @@ class AgentGantry:
             limit=limit,
             score_threshold=score_threshold,
             namespaces=namespaces,
+            diversity_factor=diversity_factor,
         )
 
         return [scored.server for scored in result.servers]
@@ -3056,6 +3071,8 @@ class AgentGantry:
         namespace: str | list[str] | None = None,
         category: str | None = None,
         score_threshold: float | None = None,
+        *,
+        diversity_factor: float = 0.0,
     ) -> list[SkillSearchResult]:
         """
         Retrieve the skills most relevant to a query.
@@ -3067,10 +3084,16 @@ class AgentGantry:
             category: Optional category filter as its string value, e.g.
                 ``"how_to"`` or ``SkillCategory.PATTERN.value``
             score_threshold: Minimum similarity score (0-1)
+            diversity_factor: ``0`` ranks by relevance alone. Above it, a
+                skill much like one already picked gives way to a different
+                one (maximal marginal relevance), up to ``1``, which ignores
+                relevance after the first pick. Not applied when a selector
+                answers. Costs one embedding per candidate considered.
 
         Returns:
             Scored skills, most relevant first
         """
+        _check_diversity(diversity_factor)
         # A blank query has no semantic signal: it embeds to a zero vector,
         # every skill ties at 0.0, and with no threshold the first `limit`
         # skills would be returned (and prompt-injected) arbitrarily.
@@ -3099,7 +3122,9 @@ class AgentGantry:
         # A skill is scored by the best of its own vector and its content's
         # pieces. Pieces take places in the result, so more than ``limit`` are
         # fetched, and fetched again wider if they crowded the skills out.
-        fetch = limit * 4
+        # Diversity chooses among more candidates than it returns.
+        pool = limit * 4 if diversity_factor > 0 else limit
+        fetch = pool * 4
         best: dict[tuple[str, str], tuple[Skill | None, float]] = {}
         for _ in range(3):
             matches = await store.search_skills(
@@ -3116,14 +3141,14 @@ class AgentGantry:
                     continue
                 known, top = best.get(key, (None, 0.0))
                 best[key] = (known if parent is not None else skill, max(top, float(score)))
-            if len(best) >= limit or len(matches) < fetch:
+            if len(best) >= pool or len(matches) < fetch:
                 break
             fetch *= 4
 
         results: list[SkillSearchResult] = []
         for (parent_namespace, name), (skill, score) in sorted(
             best.items(), key=lambda item: item[1][1], reverse=True
-        )[:limit]:
+        )[:pool]:
             if skill is None:
                 # Found only through its content: fetch the skill itself.
                 skill = await store.get_skill_by_name(name, parent_namespace)
@@ -3132,7 +3157,13 @@ class AgentGantry:
             # Clamp: float32 cosine can exceed 1.0 by rounding error, and the
             # schema bounds score to [0, 1].
             results.append(SkillSearchResult(skill=skill, score=min(1.0, max(0.0, score))))
-        return results
+        if diversity_factor > 0 and len(results) > 1:
+            embeddings = await self._embedder.embed_batch(
+                [result.skill.to_embedding_text() for result in results]
+            )
+            order = mmr_order([r.score for r in results], embeddings, diversity_factor, limit)
+            return [results[index] for index in order]
+        return results[:limit]
 
     async def retrieve_skills_as_prompt(
         self,

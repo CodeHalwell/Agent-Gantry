@@ -140,6 +140,77 @@ def conversation_penalty(
     return penalty
 
 
+def mmr_order(
+    relevance: Sequence[float],
+    embeddings: Sequence[Sequence[float]],
+    diversity_factor: float,
+    limit: int,
+) -> list[int]:
+    """Order candidates by maximal marginal relevance.
+
+    Each pick maximises ``(1 - d) * relevance - d * similarity to what is
+    already picked``, so with ``d = 0`` this is plain ranking and with a
+    larger ``d`` a near-duplicate of something already chosen gives way to
+    something different. It works on anything with a score and a vector:
+    tools, skills and MCP servers all use it.
+
+    Args:
+        relevance: One score per candidate.
+        embeddings: One vector per candidate, in the same order.
+        diversity_factor: ``d``, in ``[0, 1]``.
+        limit: How many to pick.
+
+    Returns:
+        Indices into the inputs, in pick order, at most ``limit`` of them.
+    """
+    if not relevance or limit <= 0:
+        return []
+    lambda_param = 1.0 - diversity_factor
+
+    # Convert to numpy matrix for vectorized cosine similarity
+    emb_matrix = np.array(embeddings, dtype=np.float64)
+    norms = np.linalg.norm(emb_matrix, axis=1)
+
+    # Pre-normalize embeddings to simplify cosine similarity to dot product
+    with np.errstate(divide="ignore", invalid="ignore"):
+        normed_emb = emb_matrix / norms[:, np.newaxis]
+        normed_emb[np.isnan(normed_emb)] = 0.0
+
+    selected: list[int] = []
+    candidates = list(range(len(relevance)))
+
+    first_idx = max(candidates, key=lambda i: relevance[i])
+    selected.append(first_idx)
+    candidates.remove(first_idx)
+
+    # Track maximum similarity to any selected item for each candidate
+    max_sims = {idx: 0.0 for idx in candidates}
+
+    while candidates and len(selected) < limit:
+        last_emb = normed_emb[selected[-1]]
+
+        # Vectorized dot product of all remaining candidates with the last selected item
+        all_sims = np.dot(normed_emb, last_emb)
+
+        best_idx = -1
+        best_score = -float("inf")
+
+        for idx in candidates:
+            sim = float(all_sims[idx])
+            if sim > max_sims[idx]:
+                max_sims[idx] = sim
+
+            score = lambda_param * relevance[idx] - (1.0 - lambda_param) * max_sims[idx]
+            if score > best_score:
+                best_score = score
+                best_idx = idx
+
+        selected.append(best_idx)
+        candidates.remove(best_idx)
+
+    return selected
+
+
 #: A keyword found only in a tool's description counts for this much at most,
 #: against 1.0 for one in its name or tags.
 _INTENT_DESCRIPTION_WEIGHT = 0.5
@@ -711,7 +782,6 @@ class SemanticRouter:
         if not scored_tools:
             return []
 
-        lambda_param = 1.0 - diversity_factor
         relevance_scores = [score for _, score in scored_tools]
 
         # Embeddings the store returned with the candidates are reused; only
@@ -728,48 +798,7 @@ class SemanticRouter:
             for idx, emb in zip(missing, fresh):
                 embeddings[idx] = emb
 
-        # Convert to numpy matrix for vectorized cosine similarity
-        emb_matrix = np.array(embeddings, dtype=np.float64)
-        norms = np.linalg.norm(emb_matrix, axis=1)
-
-        # Pre-normalize embeddings to simplify cosine similarity to dot product
-        with np.errstate(divide="ignore", invalid="ignore"):
-            normed_emb = emb_matrix / norms[:, np.newaxis]
-            normed_emb[np.isnan(normed_emb)] = 0.0
-
-        selected: list[int] = []
-        candidates = list(range(len(scored_tools)))
-
-        first_idx = max(candidates, key=lambda i: relevance_scores[i])
-        selected.append(first_idx)
-        candidates.remove(first_idx)
-
-        # Track maximum similarity to any selected item for each candidate
-        max_sims = {idx: 0.0 for idx in candidates}
-
-        while candidates and len(selected) < limit:
-            last_selected = selected[-1]
-            last_emb = normed_emb[last_selected]
-
-            # Vectorized dot product of all remaining candidates with the last selected item
-            all_sims = np.dot(normed_emb, last_emb)
-
-            best_idx = -1
-            best_score = -float("inf")
-
-            for idx in candidates:
-                sim = float(all_sims[idx])
-                if sim > max_sims[idx]:
-                    max_sims[idx] = sim
-
-                score = lambda_param * relevance_scores[idx] - (1.0 - lambda_param) * max_sims[idx]
-                if score > best_score:
-                    best_score = score
-                    best_idx = idx
-
-            selected.append(best_idx)
-            candidates.remove(best_idx)
-
+        selected = mmr_order(relevance_scores, embeddings, diversity_factor, limit)
         return [scored_tools[i] for i in selected]
 
     def _contains_token(self, text: str, token: str) -> bool:
