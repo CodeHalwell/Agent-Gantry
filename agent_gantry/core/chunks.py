@@ -66,12 +66,19 @@ MAX_SKILL_CHUNKS = 72
 
 _SENTENCE_END = re.compile(r"(?<=[.!?;:])\s+")
 
+#: A piece shorter than this joins its neighbour. A few words are no use as a
+#: vector of their own, and a tool chunk made of a one-letter name and "OK."
+#: would be shorter than a description may be.
+_MIN_PIECE = 40
+
 
 def split_text(text: str, size: int = CHUNK_CHARS) -> list[str]:
     """Split ``text`` into pieces of about ``size`` characters, at sentence ends.
 
     A sentence longer than ``size`` is cut at a space, or mid-word if it has
-    none; nothing is dropped.
+    none; nothing is dropped. A piece of only a few words (a short sentence
+    caught between two long ones, or left at the end) joins its neighbour, so
+    a piece may run a little over ``size``.
     """
     pieces: list[str] = []
     current = ""
@@ -91,7 +98,14 @@ def split_text(text: str, size: int = CHUNK_CHARS) -> list[str]:
             current = f"{current} {sentence}".strip()
     if current:
         pieces.append(current)
-    return pieces
+
+    merged: list[str] = []
+    for piece in pieces:
+        if merged and (len(piece) < _MIN_PIECE or len(merged[-1]) < _MIN_PIECE):
+            merged[-1] = f"{merged[-1]} {piece}"
+        else:
+            merged.append(piece)
+    return merged
 
 
 def _chunk_name(namespace: str, name: str, index: int) -> str:

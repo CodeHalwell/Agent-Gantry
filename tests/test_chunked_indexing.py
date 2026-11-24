@@ -92,6 +92,24 @@ def test_a_sentence_longer_than_a_chunk_is_cut_at_a_space_or_mid_word() -> None:
     assert " ".join(pieces) == spaced and all(len(p) <= CHUNK_CHARS for p in pieces)
 
 
+def test_a_few_words_between_long_sentences_join_a_neighbour() -> None:
+    """A piece of a few words is no vector of its own, and may be too short to store."""
+    long_one = "A" * 698 + "."
+    for text in (
+        f"{long_one} {long_one} OK.",  # left at the end
+        f"{long_one} OK. {long_one}",  # caught in the middle
+        f"OK. {long_one} {long_one}",  # at the start
+    ):
+        pieces = split_text(text)
+        assert " ".join(pieces) == text
+        assert len(pieces) == 2 and all(len(piece) >= 100 for piece in pieces)
+
+    # The case that failed a whole sync: a one-word name, no tags, and a last
+    # piece too short to make a valid description with it.
+    chunks = tool_chunks(_tool("run", f"{long_one} {long_one} OK."))
+    assert len(chunks) == 2 and chunks[-1].description.endswith("OK.")
+
+
 def test_only_long_text_is_chunked() -> None:
     assert tool_chunks(_tool("ping_host", "x" * CHUNK_AFTER)) == []
     assert tool_chunks(_tool("ping_host", "Check whether a host answers.")) == []
