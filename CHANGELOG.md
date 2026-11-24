@@ -144,7 +144,9 @@ signal, but not as an equal partner in a rank fusion.
   A tool's pieces are written before the tool itself, so a failure part-way
   leaves the tool looking unsynced and the next `sync()` retries it. They are never returned, listed or counted as tools or skills,
   they are not shown to a selector, and they are removed with their parent
-  and by pruning. `RoutingConfig(chunk_long_text=False)` turns both off. The
+  and by pruning. `RoutingConfig(chunk_long_text=False)` turns both off; pieces
+  indexed while it was on stay until their tool or skill is next updated or
+  deleted, and are removed then. The
   cost is one extra embedding per piece at sync or `add_skills()`: none for a
   tool with a short description, at least one for every skill with a body.
 - **An MCP server is routed to by what it lists.** A server's hand-written

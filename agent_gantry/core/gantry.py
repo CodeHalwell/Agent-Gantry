@@ -1619,9 +1619,12 @@ class AgentGantry:
         :class:`~agent_gantry.schema.query.ContextResult` for why by rank and
         not by score.
 
-        A kind that cannot be searched (MCP support not installed, a vector
-        store without skills) is left out and named in ``result.skipped``,
-        so the call still answers with what it has.
+        A kind this gantry has no means to search (MCP support not installed,
+        a vector store without skills) is left out and named in
+        ``result.skipped``, so the call still answers with what it has. An
+        error from a search that did run, such as an unreachable store, is
+        raised as it would be from that search called on its own: reporting
+        it as "nothing matched" would hide it.
 
         Args:
             query: The natural language query
@@ -3369,8 +3372,11 @@ class AgentGantry:
             [skill.to_embedding_text() for skill in skills]
         )
         stored = int(await store.add_skills(skills, embeddings, upsert=True))
-        if self._config.routing.chunk_long_text:
-            await sync_skill_chunks(store, self._embedder, skills)
+        # With chunking off this still runs, to remove the pieces an earlier
+        # configuration indexed for these skills.
+        await sync_skill_chunks(
+            store, self._embedder, skills, enabled=self._config.routing.chunk_long_text
+        )
         return stored
 
     async def add_skills_from_directory(

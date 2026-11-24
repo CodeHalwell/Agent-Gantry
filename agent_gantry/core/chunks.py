@@ -222,6 +222,7 @@ async def sync_tool_chunks(
     tools: Sequence[ToolDefinition],
     *,
     previously_stored: set[str] | None = None,
+    enabled: bool = True,
 ) -> int:
     """Index the chunks of ``tools``, and drop chunks a shorter text no longer has.
 
@@ -232,6 +233,9 @@ async def sync_tool_chunks(
         previously_stored: ``namespace.name`` of the tools that were in the
             store before this sync. Only those can have chunks left over from
             an earlier, longer text; ``None`` means "check all of them".
+        enabled: ``False`` when chunking is turned off: nothing is indexed,
+            but chunks these tools were given while it was on are still
+            removed, or they would go on matching text the tools have lost.
 
     Returns:
         Number of chunks stored.
@@ -239,7 +243,7 @@ async def sync_tool_chunks(
     chunks: list[ToolDefinition] = []
     counts: dict[tuple[str, str], int] = {}
     for tool in tools:
-        own = tool_chunks(tool)
+        own = tool_chunks(tool) if enabled else []
         counts[(tool.namespace, tool.name)] = len(own)
         chunks.extend(own)
 
@@ -313,8 +317,13 @@ async def delete_skill_chunks(store: Any, name: str, namespace: str, *, start: i
     return removed
 
 
-async def sync_skill_chunks(store: Any, embedder: EmbeddingAdapter, skills: Sequence[Skill]) -> int:
+async def sync_skill_chunks(
+    store: Any, embedder: EmbeddingAdapter, skills: Sequence[Skill], *, enabled: bool = True
+) -> int:
     """Index the chunks of ``skills`` and drop any a shorter body no longer has.
+
+    With ``enabled`` false (chunking turned off) nothing is indexed, and
+    chunks these skills were given while it was on are removed.
 
     Returns:
         Number of chunks stored.
@@ -322,7 +331,7 @@ async def sync_skill_chunks(store: Any, embedder: EmbeddingAdapter, skills: Sequ
     chunks: list[Skill] = []
     counts: dict[tuple[str, str], int] = {}
     for skill in skills:
-        own = skill_chunks(skill)
+        own = skill_chunks(skill) if enabled else []
         counts[(skill.namespace, skill.name)] = len(own)
         chunks.extend(own)
     stored = 0

@@ -689,3 +689,32 @@ async def test_a_failure_to_delete_a_chunk_is_reported(caplog: pytest.LogCapture
     with caplog.at_level("WARNING", logger="agent_gantry.core.chunks"):
         assert await delete_tool_chunks(_Store(), "search_archive", "default") == 0  # type: ignore[arg-type]
     assert any("default.search_archive" in r.getMessage() for r in caplog.records)
+
+
+async def test_turning_chunking_off_does_not_leave_old_pieces_matching() -> None:
+    """A store indexed with chunking on, reopened with it off, then updated.
+
+    Skipping the pieces altogether left the old ones in place, still matching
+    a query for text the update had removed.
+    """
+    off = AgentGantryConfig(routing=RoutingConfig(chunk_long_text=False))
+    first = await _gantry([_long_tool(), *_distractors()])
+    await first.add_skills([_log_skill()])
+    second = AgentGantry(embedder=SimpleEmbedder(), vector_store=first._vector_store, config=off)
+    try:
+        store = first._vector_store
+        assert await store.list_all(namespace=chunk_namespace("default"))
+        assert await first.count_skills(namespace=chunk_namespace("default")) >= 2
+
+        # The tool loses its last sentence, and the skill its body.
+        await second.add_tool(_tool("search_archive", "Search the archive. " + _FILLER * 23))
+        await second.sync()
+        await second.add_skill(_skill("log_search_syntax", "Logwatch reference card.", "See the wiki."))
+
+        assert await store.list_all(namespace=chunk_namespace("default")) == []
+        assert await second.count_skills(namespace=chunk_namespace("default")) == 0
+        found = await second.retrieve_skills("service:checkout env:prod", limit=1, score_threshold=0.3)
+        assert [r.skill.name for r in found] == []
+    finally:
+        await second.close()
+        await first.close()

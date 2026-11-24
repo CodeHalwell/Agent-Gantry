@@ -199,7 +199,8 @@ class RoutingConfig(BaseModel):
             "time in pieces, and score the tool by its best piece. Without it a tool "
             "is searchable only by what fits in one embedding, which for the default "
             "model is roughly its first thousand characters. Costs one extra "
-            "embedding per piece at sync."
+            "embedding per piece at sync. Turned off, pieces already indexed are "
+            "removed as their tool or skill is next updated."
         ),
     )
 

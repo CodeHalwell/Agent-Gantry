@@ -161,7 +161,7 @@ class SyncManager:
         """
         total_synced = 0
         previously_stored: set[str] | None = None
-        if self._chunk_long_text and tools_to_sync:
+        if tools_to_sync:
             # Only a tool that was already stored can have chunks left over
             # from an earlier, longer description, and a store that keeps
             # fingerprints says which those are. One that does not answers
@@ -175,18 +175,20 @@ class SyncManager:
             batch = tools_to_sync[i : i + batch_size]
             texts = [t.to_searchable_text() for t in batch]
             embeddings = await self._embedder.embed_batch(texts)
-            if self._chunk_long_text:
-                # Before the tools themselves. Writing a tool records its
-                # fingerprint, which is what tells the next sync it is up to
-                # date; had its chunks failed after that, no later sync would
-                # have tried them again. This way a failure here leaves the
-                # tool looking unsynced, and the whole of it is retried.
-                await sync_tool_chunks(
-                    self._vector_store,
-                    self._embedder,
-                    batch,
-                    previously_stored=previously_stored,
-                )
+            # Before the tools themselves. Writing a tool records its
+            # fingerprint, which is what tells the next sync it is up to
+            # date; had its chunks failed after that, no later sync would
+            # have tried them again. This way a failure here leaves the
+            # tool looking unsynced, and the whole of it is retried. With
+            # chunking off this still runs, to remove what an earlier
+            # configuration indexed for these tools.
+            await sync_tool_chunks(
+                self._vector_store,
+                self._embedder,
+                batch,
+                previously_stored=previously_stored,
+                enabled=self._chunk_long_text,
+            )
             count = await self._vector_store.add_tools(batch, embeddings, upsert=True)
 
             for tool in batch:
