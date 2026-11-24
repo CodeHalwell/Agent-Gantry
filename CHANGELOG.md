@@ -132,6 +132,19 @@ decimals.
   server with a catalogue has more vectors to match with than one without,
   and with the hash embedder that costs one paraphrase case on the eval; with
   the real embedder it costs none.
+- **Calibrate a threshold instead of guessing one.**
+  `agent_gantry.evaluation.calibrate_threshold(make_retriever, cases)` finds,
+  from labelled queries, the score threshold at which queries nothing fits
+  are declined without losing the answers to the rest, and says when no such
+  threshold exists. At the default of `0.0` semantic retrieval returns its
+  `limit` whatever the query, so it can never decline; a fixed cutoff fixes
+  that only if it is the right one, and the right one does not transfer
+  between embedders, catalogues or modalities. On the eval with
+  `all-MiniLM-L6-v2`: tools have a window only 0.01 wide (0.25 to 0.26), at
+  which all 8 unanswerable queries are declined and recall@1 is unchanged;
+  skills and MCP servers have none, and their best trade-off declines 1 of 2.
+  `python scripts/eval_retrieval.py --calibrate` prints it. No default
+  changed.
 - **Rerankers serve skills and MCP servers.**
   `retrieve_skills(..., rerank=True)` and
   `retrieve_mcp_servers(..., rerank=True)` rescore the best candidates with

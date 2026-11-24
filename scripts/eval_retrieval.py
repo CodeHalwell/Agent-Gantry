@@ -30,7 +30,13 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from agent_gantry.evaluation import compare_to_baseline, format_reports  # noqa: E402
-from tests.retrieval.harness import BASELINE_PATH, flatten, load_baseline, measure  # noqa: E402
+from tests.retrieval.harness import (  # noqa: E402
+    BASELINE_PATH,
+    calibrate,
+    flatten,
+    load_baseline,
+    measure,
+)
 
 
 def _embedder(name: str) -> Any:
@@ -59,6 +65,11 @@ def main() -> int:
     parser.add_argument("--by-kind", action="store_true", help="also show a row per case kind")
     parser.add_argument("--misses", action="store_true", help="list the cases that went wrong")
     parser.add_argument("--check", action="store_true", help="fail if worse than the baseline")
+    parser.add_argument(
+        "--calibrate",
+        action="store_true",
+        help="also find the score threshold each modality's labelled set supports",
+    )
     parser.add_argument("--update-baseline", action="store_true", help="rewrite the baseline")
     args = parser.parse_args()
 
@@ -76,6 +87,21 @@ def main() -> int:
                 want = ", ".join(sorted(outcome.case.expected)) or "(a decline)"
                 print(f"  [{report.modality}/{outcome.case.kind}] {outcome.case.query!r}")
                 print(f"      wanted {want}; got {got}")
+
+    if args.calibrate:
+        print("\nthreshold calibration (recall@1 and declines, at 0.0 -> at the threshold):")
+        for found in asyncio.run(calibrate(k=args.k, embedder=_embedder(args.embedder))):
+            window = (
+                "no clean window"
+                if found.window is None
+                else f"window {found.window[0]:.2f}-{found.window[1]:.2f}"
+            )
+            print(
+                f"  {found.report.modality:<12} threshold {found.threshold:.2f}  ({window})  "
+                f"recall@1 {found.at_zero.recall_at_1:.3f} -> {found.report.recall_at_1:.3f}  "
+                f"declined {found.at_zero.decline_correctness:.3f} -> "
+                f"{found.report.decline_correctness:.3f}"
+            )
 
     comparable = args.embedder == "simple" and args.score_threshold == 0.0
     if (args.check or args.update_baseline) and not comparable:

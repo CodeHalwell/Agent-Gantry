@@ -71,7 +71,10 @@ Tools by kind of query, top-1: paraphrase 21/30, identifier 8/8, parameter name
 3/6, MCP server name 5/5, and 2/2 where the answer sits past character 2000 of
 a long MCP description. Skills whose answer is only in the body: 4/4. MCP
 servers described vaguely, where only their tools say what they do: 2/3. Nothing declines at a threshold of 0.0; pass `--score-threshold`
-to see what yours does.
+to see what yours does, or `--calibrate` to have one found from the labelled
+queries. Here that gives tools a threshold of 0.26, at which all 8 unanswerable
+queries are declined and no right answer is lost, but from a window only 0.01
+wide; skills and MCP servers have no threshold that separates the two.
 
 These are one synthetic catalogue and a few dozen queries per modality. They
 are for comparing a change with what came before it, not for quoting as the

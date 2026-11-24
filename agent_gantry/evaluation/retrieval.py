@@ -37,6 +37,8 @@ __all__ = [
     "RetrievalCase",
     "RetrievalReport",
     "Retriever",
+    "ThresholdCalibration",
+    "calibrate_threshold",
     "compare_to_baseline",
     "evaluate_retrieval",
     "format_reports",
@@ -319,6 +321,125 @@ def mcp_server_retriever(
         return [f"{s.namespace}.{s.name}" for s in servers]
 
     return retrieve
+
+
+@dataclass(frozen=True)
+class ThresholdCalibration:
+    """A score threshold chosen from labelled queries.
+
+    Attributes:
+        threshold: The threshold to use.
+        window: ``(low, high)`` when there is a range in which every
+            unanswerable query declines and no answerable one loses its
+            answer; ``threshold`` is then its midpoint. ``None`` when the two
+            overlap and ``threshold`` is the best trade-off instead.
+        report: The eval at ``threshold``.
+        at_zero: The eval with no threshold, for comparison.
+    """
+
+    threshold: float
+    window: tuple[float, float] | None
+    report: RetrievalReport
+    at_zero: RetrievalReport
+
+
+async def _boundary(
+    make_retriever: Callable[[float], Retriever],
+    case: RetrievalCase,
+    k: int,
+    resolution: float,
+) -> float | None:
+    """The highest threshold at which ``case`` still gets something it should.
+
+    For an answerable case, "something" is one of its expected ids; for an
+    unanswerable one it is anything at all, so the value is the highest
+    threshold at which it wrongly gets a result. ``None`` when even a
+    threshold of zero gives it nothing of the kind. Raising a threshold only
+    removes results, so the boundary is found by bisection.
+    """
+
+    async def holds(threshold: float) -> bool:
+        answer = await make_retriever(threshold)(case.query, k)
+        ids = answer[0] if isinstance(answer, tuple) and not isinstance(answer[0], str) else answer
+        ids = list(ids)[:k]
+        return bool(ids) if case.expect_decline else bool(case.expected.intersection(ids))
+
+    if not await holds(0.0):
+        return None
+    low, high = 0.0, 1.0
+    if await holds(high):
+        return high
+    while high - low > resolution:
+        middle = (low + high) / 2
+        if await holds(middle):
+            low = middle
+        else:
+            high = middle
+    return low
+
+
+async def calibrate_threshold(
+    make_retriever: Callable[[float], Retriever],
+    cases: Iterable[RetrievalCase],
+    *,
+    k: int = 5,
+    resolution: float = 0.01,
+    modality: str = "tools",
+) -> ThresholdCalibration:
+    """Choose a score threshold from labelled queries instead of guessing one.
+
+    At a threshold of zero, which is what the convenience APIs default to, a
+    semantic search returns its ``limit`` whatever the query, so it can never
+    decline. A fixed cutoff fixes that only if it is the right one, and the
+    right one depends on the embedder, the catalogue and the queries: it does
+    not transfer between them, or between tools, skills and MCP servers. This
+    measures it. The cases need both kinds: queries with an answer, and
+    queries nothing in the catalogue fits.
+
+    Args:
+        make_retriever: Builds a retriever for a given threshold, e.g.
+            ``lambda t: tool_retriever(gantry, score_threshold=t)``.
+        cases: Labelled queries, answerable and unanswerable.
+        k: The ``limit`` to retrieve with.
+        resolution: How finely to locate each boundary.
+        modality: A label for the reports.
+
+    Returns:
+        A :class:`ThresholdCalibration`. Check ``window``: when it is ``None``
+        no threshold separates the two kinds of query on this set, and the one
+        returned trades some answers for some declines.
+    """
+    cases = list(cases)
+    keep: list[float] = []  # stay at or below these to keep an answer
+    drop: list[float] = []  # go above these to decline what should be declined
+    for case in cases:
+        boundary = await _boundary(make_retriever, case, k, resolution)
+        if boundary is not None:
+            (drop if case.expect_decline else keep).append(boundary)
+
+    low = max(drop, default=0.0)
+    high = min(keep, default=1.0)
+    if low < high:
+        # Above every wrong answer, at or below every right one.
+        window: tuple[float, float] | None = (low + resolution, high)
+        threshold = round(min(high, (low + resolution + high) / 2), 4)
+    else:
+        window = None
+        # Each boundary is a place the count of right outcomes changes; try
+        # just above each "drop" and at each "keep", and keep the best.
+        candidates = sorted({0.0, *(d + resolution for d in drop), *keep})
+
+        def right(threshold: float) -> int:
+            return sum(k_ >= threshold for k_ in keep) + sum(d < threshold for d in drop)
+
+        threshold = round(min(1.0, max(candidates, key=lambda t: (right(t), -t))), 4)
+
+    return ThresholdCalibration(
+        threshold=threshold,
+        window=None if window is None else (round(window[0], 4), round(window[1], 4)),
+        report=await evaluate_retrieval(make_retriever(threshold), cases, k=k, modality=modality),
+        at_zero=await evaluate_retrieval(make_retriever(0.0), cases, k=k, modality=modality),
+    )
 
 
 _METRICS = ("recall_at_1", "recall_at_k", "decline_correctness")

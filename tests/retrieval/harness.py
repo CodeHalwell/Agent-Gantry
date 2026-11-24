@@ -9,6 +9,8 @@ from typing import Any
 from agent_gantry import AgentGantry
 from agent_gantry.evaluation import (
     RetrievalReport,
+    ThresholdCalibration,
+    calibrate_threshold,
     evaluate_retrieval,
     mcp_server_retriever,
     skill_retriever,
@@ -82,6 +84,34 @@ async def measure(
             ),
             await evaluate_retrieval(
                 mcp_server_retriever(gantry, score_threshold=threshold),
+                catalogue.MCP_SERVER_CASES,
+                k=k,
+                modality="mcp_servers",
+            ),
+        ]
+    finally:
+        await gantry.close()
+
+
+async def calibrate(*, k: int = 5, **gantry_kwargs: Any) -> list[ThresholdCalibration]:
+    """Find, per modality, the score threshold the labelled sets support."""
+    gantry = await build_gantry(**gantry_kwargs)
+    try:
+        return [
+            await calibrate_threshold(
+                lambda t: tool_retriever(gantry, score_threshold=t),
+                catalogue.TOOL_CASES,
+                k=k,
+                modality="tools",
+            ),
+            await calibrate_threshold(
+                lambda t: skill_retriever(gantry, score_threshold=t or None),
+                catalogue.SKILL_CASES,
+                k=k,
+                modality="skills",
+            ),
+            await calibrate_threshold(
+                lambda t: mcp_server_retriever(gantry, score_threshold=t or None),
                 catalogue.MCP_SERVER_CASES,
                 k=k,
                 modality="mcp_servers",

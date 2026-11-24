@@ -204,3 +204,90 @@ async def test_retrieval_is_no_worse_than_the_committed_baseline() -> None:
         for outcome in report.outcomes:
             leaked = [i for i in outcome.returned if i.split(".", 1)[0] in RESERVED_NAMESPACES]
             assert not leaked, f"{outcome.case.query!r} was handed index bookkeeping: {leaked}"
+
+
+# --------------------------------------------------------------------------- #
+# Calibrating a threshold
+# --------------------------------------------------------------------------- #
+
+
+def _scored_retriever(scores: dict[str, list[tuple[str, float]]]):
+    """Builds retrievers that drop every result scoring under their threshold."""
+
+    def make(threshold: float):
+        async def retrieve(query: str, limit: int) -> list[str]:
+            return [name for name, score in scores[query] if score >= threshold][:limit]
+
+        return retrieve
+
+    return make
+
+
+async def test_a_threshold_is_found_between_the_wrong_answers_and_the_right_ones() -> None:
+    from agent_gantry.evaluation import calibrate_threshold
+
+    scores = {
+        "add": [("add_numbers", 0.62), ("other", 0.30)],
+        "reverse": [("reverse_string", 0.48), ("other", 0.20)],
+        "book a flight": [("other", 0.31)],
+        "order pizza": [("other", 0.22)],
+    }
+    cases = [
+        RetrievalCase("add", {"add_numbers"}),
+        RetrievalCase("reverse", {"reverse_string"}),
+        RetrievalCase("book a flight", expect_decline=True, kind="decline"),
+        RetrievalCase("order pizza", expect_decline=True, kind="decline"),
+    ]
+
+    calibration = await calibrate_threshold(_scored_retriever(scores), cases, resolution=0.005)
+
+    assert calibration.window is not None
+    low, high = calibration.window
+    assert 0.31 < low <= 0.33 and 0.47 <= high <= 0.48
+    assert low < calibration.threshold < high
+    assert calibration.at_zero.decline_correctness == 0.0
+    assert calibration.report.decline_correctness == 1.0
+    assert calibration.report.recall_at_1 == 1.0
+
+
+async def test_when_no_threshold_separates_them_the_best_trade_off_is_returned() -> None:
+    from agent_gantry.evaluation import calibrate_threshold
+
+    scores = {
+        "add": [("add_numbers", 0.62)],
+        "reverse": [("reverse_string", 0.25)],  # weaker than a query nothing fits
+        "book a flight": [("other", 0.40)],
+        "order pizza": [("other", 0.35)],
+    }
+    cases = [
+        RetrievalCase("add", {"add_numbers"}),
+        RetrievalCase("reverse", {"reverse_string"}),
+        RetrievalCase("book a flight", expect_decline=True, kind="decline"),
+        RetrievalCase("order pizza", expect_decline=True, kind="decline"),
+    ]
+
+    calibration = await calibrate_threshold(_scored_retriever(scores), cases, resolution=0.005)
+
+    assert calibration.window is None
+    # Three of four right: both declines and the strong answer, at the cost of the weak one.
+    assert 0.40 < calibration.threshold <= 0.62
+    assert calibration.report.decline_correctness == 1.0
+    assert calibration.report.recall_at_1 == 0.5
+
+
+async def test_a_wrong_answer_at_zero_does_not_drag_the_threshold_down() -> None:
+    """A case that is never right says nothing about where the cutoff belongs."""
+    from agent_gantry.evaluation import calibrate_threshold
+
+    scores = {
+        "add": [("add_numbers", 0.62)],
+        "reverse": [("something_else", 0.90)],
+        "book a flight": [("other", 0.31)],
+    }
+    cases = [
+        RetrievalCase("add", {"add_numbers"}),
+        RetrievalCase("reverse", {"reverse_string"}),
+        RetrievalCase("book a flight", expect_decline=True, kind="decline"),
+    ]
+    calibration = await calibrate_threshold(_scored_retriever(scores), cases, resolution=0.005)
+    assert calibration.window is not None and calibration.window[1] >= 0.61
