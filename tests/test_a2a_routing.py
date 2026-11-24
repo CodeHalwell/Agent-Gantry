@@ -235,3 +235,86 @@ async def test_agents_join_the_combined_view(cards: dict[str, int]) -> None:
         assert [a.name for a in result.a2a_agents] == ["travel"]
     finally:
         await gantry.close()
+
+
+async def test_an_agent_registered_while_a_sync_is_in_flight_is_not_lost() -> None:
+    """The sync's snapshot does not hold it, so the sync must not mark it synced."""
+    gantry = AgentGantry(embedder=SimpleEmbedder())
+
+    class _Interrupting(SimpleEmbedder):
+        registered = False
+
+        async def embed_batch(self, texts: list[str], batch_size: int | None = None) -> Any:
+            if not self.registered:
+                self.registered = True
+                gantry.register_a2a_agent(
+                    "latecomer", "https://late.example", description="Handles payroll queries."
+                )
+            return await super().embed_batch(texts, batch_size)
+
+    manager = gantry._a2a_manager
+    manager._embedder = _Interrupting()
+    try:
+        gantry.register_a2a_agent(
+            "travel", "https://travel.example", description="Plans trips and books travel."
+        )
+        await gantry._ensure_initialized()
+        await manager.sync()
+
+        assert manager.needs_sync  # the latecomer is still owed a sync
+        agents = await gantry.retrieve_a2a_agents("payroll queries", limit=1)
+        assert [a.name for a in agents] == ["latecomer"]
+        assert not manager.needs_sync
+    finally:
+        await gantry.close()
+
+
+async def test_agent_entries_are_re_embedded_when_the_embedding_model_changes() -> None:
+    """Even when a tool sync has already told the store about the new model."""
+
+    class _Counting(SimpleEmbedder):
+        def __init__(self, name: str) -> None:
+            super().__init__()
+            self._name = name
+            self.embedded: list[str] = []
+
+        @property
+        def model_name(self) -> str:
+            return self._name
+
+        async def embed_batch(self, texts: list[str], batch_size: int | None = None) -> Any:
+            self.embedded.extend(texts)
+            return await super().embed_batch(texts, batch_size)
+
+    def tool() -> Any:
+        from agent_gantry.schema.tool import ToolDefinition
+
+        return ToolDefinition(
+            name="add_numbers",
+            description="Add two numbers together.",
+            parameters_schema={"type": "object", "properties": {}},
+        )
+
+    first = AgentGantry(embedder=_Counting("model-a"))
+    first.register_a2a_agent("travel", "https://travel.example", description="Plans trips and books travel.")
+    await first.add_tool(tool())
+    await first.retrieve_a2a_agents("plans trips", limit=1)
+
+    newer = _Counting("model-b")
+    second = AgentGantry(embedder=newer, vector_store=first._vector_store)
+    try:
+        second.register_a2a_agent("travel", "https://travel.example", description="Plans trips and books travel.")
+        await second.add_tool(tool())  # the tool sync marks the store as model-b
+        newer.embedded.clear()
+
+        await second.retrieve_a2a_agents("plans trips", limit=1)
+        assert any(text.startswith("Agent: travel") for text in newer.embedded)
+
+        newer.embedded.clear()
+        second.register_a2a_agent("ledger", "https://ledger.example", description="Bookkeeping and tax returns.")
+        await second.retrieve_a2a_agents("plans trips", limit=1)
+        assert [t for t in newer.embedded if t.startswith("Agent: ")] == [
+            "Agent: ledger Description: Bookkeeping and tax returns."
+        ]
+    finally:
+        await first.close()

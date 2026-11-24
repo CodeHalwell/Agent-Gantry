@@ -42,6 +42,9 @@ MAX_SKILL_PIECES = 24
 
 _DESCRIPTION_MAX = 2000
 
+#: Store metadata key recording which embedder the agent entries were made with.
+_EMBEDDER_KEY = "a2a_agents_embedder_id"
+
 
 def _digest(agent: A2AAgentDefinition) -> str:
     return hashlib.sha256(agent.qualified_name.encode()).hexdigest()
@@ -95,12 +98,16 @@ class A2AManager:
         self._embedder = embedder
         self._sync_manager = sync_manager
         self._agents: dict[str, A2AAgentDefinition] = {}
-        self._dirty = False
+        # Counted, not flagged: a registration made while a sync is awaiting
+        # the embedder is not in that sync's snapshot, and a flag cleared at
+        # the end of the sync would lose it for good.
+        self._generation = 0
+        self._synced_generation = 0
 
     def register(self, agent: A2AAgentDefinition) -> None:
         """Register ``agent``, replacing one of the same qualified name."""
         self._agents[agent.qualified_name] = agent
-        self._dirty = True
+        self._generation += 1
         logger.info(f"Registered A2A agent: {agent.qualified_name}")
 
     def get(self, name: str, namespace: str = "default") -> A2AAgentDefinition | None:
@@ -110,7 +117,8 @@ class A2AManager:
     def remove(self, name: str, namespace: str = "default") -> bool:
         """Forget ``namespace.name``; its index entries go at the next sync."""
         removed = self._agents.pop(f"{namespace}.{name}", None) is not None
-        self._dirty = self._dirty or removed
+        if removed:
+            self._generation += 1
         return removed
 
     def list(self, namespace: str | None = None) -> list[A2AAgentDefinition]:
@@ -119,8 +127,8 @@ class A2AManager:
 
     @property
     def needs_sync(self) -> bool:
-        """Whether something was registered or removed since the last sync."""
-        return self._dirty
+        """Whether something was registered or removed since the last sync began."""
+        return self._generation != self._synced_generation
 
     async def sync(self, batch_size: int = 100, force: bool = False) -> int:
         """Embed new or changed agents, and drop the entries of removed ones.
@@ -128,7 +136,21 @@ class A2AManager:
         Returns:
             Number of agents synced.
         """
+        generation = self._generation
         entries = [entry for agent in self._agents.values() for entry in _entries(agent)]
+
+        # The agents' own record of which embedder made their vectors. The
+        # store's shared marker is the tools': a tool sync after a change of
+        # embedding model brings it up to date, and agent entries, whose
+        # fingerprints have not changed, would then be skipped and searched
+        # with the new model against the old model's vectors.
+        embedder_id = self._sync_manager.get_embedder_id()
+        get_metadata = getattr(self._vector_store, "get_metadata", None)
+        set_metadata = getattr(self._vector_store, "set_metadata", None)
+        stored_id = await get_metadata(_EMBEDDER_KEY) if callable(get_metadata) else None
+        if isinstance(stored_id, str) and stored_id != embedder_id:
+            force = True
+
         synced = 0
         if entries:
             to_sync = await self._sync_manager.detect_changes(entries, force)
@@ -138,10 +160,11 @@ class A2AManager:
                 embeddings = await self._embedder.embed_batch([e.description for e in batch])
                 await self._vector_store.add_tools(batch, embeddings, upsert=True)
                 synced += sum(1 for e in batch if e.metadata["entity_type"] == AGENT_ENTITY)
-            if to_sync:
-                await self._sync_manager.update_metadata()
         await self._prune({entry.name for entry in entries})
-        self._dirty = False
+        if callable(set_metadata):
+            await set_metadata(_EMBEDDER_KEY, embedder_id)
+        # What this sync covered, not "everything": see ``_generation``.
+        self._synced_generation = generation
         return synced
 
     async def _prune(self, wanted: set[str]) -> None:
