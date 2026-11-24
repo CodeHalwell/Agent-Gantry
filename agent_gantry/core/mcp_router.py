@@ -135,6 +135,7 @@ class MCPRouter:
             # to nothing or to a server already seen, and is skipped either way.
             scored_servers = []
             vectors = {}
+            penalised = 0
             seen: set[tuple[str, str]] = set()
             for pseudo_tool, score, *rest in candidates:
                 if (
@@ -156,6 +157,7 @@ class MCPRouter:
                     # offered, but below a healthy one of similar relevance:
                     # it used to route first however often it had failed.
                     penalty = 0.0 if server.health.available else UNAVAILABLE_SERVER_PENALTY
+                    penalised += 1 if penalty else 0
                     scored_servers.append(
                         MCPServerScore(server=server, score=max(0.0, score - penalty))
                     )
@@ -163,7 +165,10 @@ class MCPRouter:
                         # The vector of the row that matched best: the
                         # server's own entry, or a piece of its catalogue.
                         vectors[key] = rest[0]
-            if len(scored_servers) >= pool or len(candidates) < fetch:
+            # A server marked down may now sit below one the window has not
+            # reached, so each of those found asks for one more server: with
+            # ``pool`` healthy ones in hand, nothing unseen can outrank them.
+            if len(scored_servers) >= pool + penalised or len(candidates) < fetch:
                 break
             fetch *= 4
         scored_servers.sort(key=lambda entry: entry.score, reverse=True)

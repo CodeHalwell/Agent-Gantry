@@ -617,6 +617,34 @@ async def test_a_namespace_scope_is_not_lost_among_other_namespaces_servers() ->
         await gantry.close()
 
 
+async def test_an_unreachable_servers_pieces_do_not_hide_the_healthy_one_behind_them() -> None:
+    """One server asked for; the unreachable one fills the first window with its pieces.
+
+    Finding one server used to end the search, and marking it down could not
+    then put it below a healthy server the window had not reached.
+    """
+    gantry = AgentGantry(embedder=SimpleEmbedder())
+    try:
+        _Server(gantry, "datadog", _server_tools("datadog", 400))
+        await gantry.list_server_tools("datadog")
+        gantry.register_mcp_server(
+            "vault", url="https://vault.example/mcp", description="Restore a backup."
+        )
+        query = "restore the backup numbered 44"
+
+        both = await gantry.retrieve_mcp_servers(query, limit=2)
+        assert [s.name for s in both] == ["datadog", "vault"]  # datadog matches better
+        rows = [r for r in await _server_rows(gantry) if r.metadata["server_name"] == "datadog"]
+        assert len(rows) > 4  # more of its rows than the first window of four
+
+        gantry._mcp_registry.update_health(
+            "datadog", "default", available=False, consecutive_failures=5
+        )
+        assert [s.name for s in await gantry.retrieve_mcp_servers(query, limit=1)] == ["vault"]
+    finally:
+        await gantry.close()
+
+
 async def test_catalogue_pieces_follow_the_listing_and_go_with_it() -> None:
     gantry = AgentGantry(embedder=SimpleEmbedder())
     try:
