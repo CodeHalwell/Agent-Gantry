@@ -142,12 +142,24 @@ def test_the_full_text_is_the_extended_description_when_there_is_one() -> None:
     assert chunks and _TAIL in chunks[-1].description
 
 
-def test_chunks_are_bounded() -> None:
-    # Twenty-four sentences of 400 characters: no two fit in one chunk.
-    text = " ".join("x" * 399 + "." for _ in range(24))
+def test_chunks_are_bounded_without_losing_the_end_of_the_text() -> None:
+    """Sentence ends would cut this into 23 pieces; the cap is 16, and all of it is kept."""
+    # Twenty-three sentences of 400 characters: no two fit in one chunk.
+    text = " ".join(["x" * 399 + "."] * 23 + [_TAIL])
     tool = _tool("search_logs", "Search the logs.", extended_description=text)
-    assert len(split_text(text)) == 24
-    assert len(tool_chunks(tool)) == MAX_CHUNKS
+    assert len(split_text(text)) == 23
+    chunks = tool_chunks(tool)
+
+    assert len(chunks) == MAX_CHUNKS
+    assert _TAIL in chunks[-1].description  # not dropped with the last seven
+    assert all(len(piece) <= CHUNK_CHARS for piece in split_text(text, max_pieces=MAX_CHUNKS))
+    rejoined = "".join(split_text(text, max_pieces=MAX_CHUNKS))
+    assert rejoined.replace(" ", "") == text.replace(" ", "")
+
+    # The same for a skill's body, at its own cap.
+    body = " ".join(["y" * 399 + "."] * 120 + [_TAIL])
+    pieces = skill_chunks(_skill("handbook", "The keeper handbook.", body))
+    assert len(pieces) == MAX_SKILL_CHUNKS and _TAIL.split(":")[0] in pieces[-1].content
 
 
 # --------------------------------------------------------------------------- #

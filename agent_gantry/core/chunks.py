@@ -59,11 +59,12 @@ CHUNK_AFTER = 900
 CHUNK_CHARS = 700
 
 #: Most chunks one entry may have. Sixteen of 700 characters cover the 10,000
-#: an extended description may hold.
+#: an extended description may hold; text that sentence ends would cut into
+#: more is cut into sixteen equal pieces instead (see :func:`split_text`).
 MAX_CHUNKS = 16
 
 #: Most chunks one skill may have: enough for the 50,000 characters a skill's
-#: content may hold.
+#: content may hold, on the same terms.
 MAX_SKILL_CHUNKS = 72
 
 #: What a match on one of a tool's pieces counts for beside a match on a
@@ -82,17 +83,24 @@ _SENTENCE_END = re.compile(r"(?<=[.!?;:])\s+")
 _MIN_PIECE = 40
 
 
-def split_text(text: str, size: int = CHUNK_CHARS) -> list[str]:
+def split_text(text: str, size: int = CHUNK_CHARS, max_pieces: int | None = None) -> list[str]:
     """Split ``text`` into pieces of about ``size`` characters, at sentence ends.
 
     A sentence longer than ``size`` is cut at a space, or mid-word if it has
     none; nothing is dropped. A piece of only a few words (a short sentence
     caught between two long ones, or left at the end) joins its neighbour, so
     a piece may run a little over ``size``.
+
+    Cutting at sentence ends can take nearly twice the pieces the length
+    alone would: two sentences of 400 characters do not share a piece of 700.
+    Given ``max_pieces``, text that would need more is cut into that many
+    equal pieces instead, wherever the cuts fall, so that a cap on the number
+    of pieces never leaves the end of the text out.
     """
+    normalised = " ".join(text.split())
     pieces: list[str] = []
     current = ""
-    for sentence in _SENTENCE_END.split(" ".join(text.split())):
+    for sentence in _SENTENCE_END.split(normalised):
         while len(sentence) > size:
             cut = sentence.rfind(" ", 0, size)
             cut = cut if cut > 0 else size
@@ -115,6 +123,12 @@ def split_text(text: str, size: int = CHUNK_CHARS) -> list[str]:
             merged[-1] = f"{merged[-1]} {piece}"
         else:
             merged.append(piece)
+    if max_pieces is not None and len(merged) > max_pieces:
+        width = -(-len(normalised) // max_pieces)  # ceiling division
+        cut = (
+            normalised[start : start + width].strip() for start in range(0, len(normalised), width)
+        )
+        return [piece for piece in cut if piece]
     return merged
 
 
@@ -152,7 +166,7 @@ def tool_chunks(tool: ToolDefinition) -> list[ToolDefinition]:
                 "chunk": index,
             },
         )
-        for index, piece in enumerate(split_text(text)[:MAX_CHUNKS])
+        for index, piece in enumerate(split_text(text, max_pieces=MAX_CHUNKS))
     ]
 
 
@@ -268,7 +282,7 @@ def skill_chunks(skill: Skill) -> list[Skill]:
                 "chunk": index,
             },
         )
-        for index, piece in enumerate(split_text(skill.content)[:MAX_SKILL_CHUNKS])
+        for index, piece in enumerate(split_text(skill.content, max_pieces=MAX_SKILL_CHUNKS))
     ]
 
 
