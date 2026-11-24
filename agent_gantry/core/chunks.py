@@ -158,7 +158,13 @@ async def delete_tool_chunks(
                 _chunk_name(namespace, name, index), chunk_namespace(namespace)
             )
         except Exception:
-            logger.debug("Error deleting a tool chunk from the vector store", exc_info=True)
+            # Seen, not swallowed: chunks left behind keep matching queries
+            # on behalf of text their tool no longer has.
+            logger.warning(
+                f"Could not delete chunk {index} of tool '{namespace}.{name}'; it and any "
+                "after it stay in the index until the tool is next synced or deleted.",
+                exc_info=True,
+            )
             break
         if deleted is not True:
             break
@@ -251,7 +257,11 @@ async def delete_skill_chunks(store: Any, name: str, namespace: str, *, start: i
                 _chunk_name(namespace, name, index), chunk_namespace(namespace)
             )
         except Exception:
-            logger.debug("Error deleting a skill chunk from the vector store", exc_info=True)
+            logger.warning(
+                f"Could not delete chunk {index} of skill '{namespace}.{name}'; it and any "
+                "after it stay in the index until the skill is next added or deleted.",
+                exc_info=True,
+            )
             break
         if deleted is not True:
             break

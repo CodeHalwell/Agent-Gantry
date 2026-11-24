@@ -550,3 +550,37 @@ async def test_a_store_failure_fetching_a_chunks_tool_is_reported(
         assert any("default.search_archive" in r.getMessage() for r in caplog.records)
     finally:
         await gantry.close()
+
+
+async def test_a_store_without_fingerprints_still_loses_a_shortened_tools_chunks() -> None:
+    """Such a store answers ``{}`` whatever it holds, which is not "nothing was stored"."""
+    from agent_gantry.adapters.vector_stores.base import VectorStoreAdapter
+    from agent_gantry.adapters.vector_stores.memory import InMemoryVectorStore
+    from agent_gantry.core.registry import ToolRegistry
+    from agent_gantry.core.sync_manager import SyncManager
+
+    class _NoFingerprints(InMemoryVectorStore):
+        # The protocol's own stub, as a store that never implemented it has.
+        get_stored_fingerprints = VectorStoreAdapter.get_stored_fingerprints
+
+    store, embedder = _NoFingerprints(), SimpleEmbedder()
+    await store.initialize()
+    manager = SyncManager(vector_store=store, embedder=embedder, registry=ToolRegistry())
+
+    await manager.sync_batches([_long_tool()], batch_size=10)
+    assert await store.list_all(namespace=chunk_namespace("default")) != []
+
+    await manager.sync_batches([_tool("search_archive", "Search the archive.")], batch_size=10)
+    assert await store.list_all(namespace=chunk_namespace("default")) == []
+
+
+async def test_a_failure_to_delete_a_chunk_is_reported(caplog: pytest.LogCaptureFixture) -> None:
+    from agent_gantry.core.chunks import delete_tool_chunks
+
+    class _Store:
+        async def delete(self, name: str, namespace: str) -> bool:
+            raise ConnectionError("store unreachable")
+
+    with caplog.at_level("WARNING", logger="agent_gantry.core.chunks"):
+        assert await delete_tool_chunks(_Store(), "search_archive", "default") == 0  # type: ignore[arg-type]
+    assert any("default.search_archive" in r.getMessage() for r in caplog.records)

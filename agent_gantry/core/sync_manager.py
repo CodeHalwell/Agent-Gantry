@@ -163,9 +163,14 @@ class SyncManager:
         previously_stored: set[str] | None = None
         if self._chunk_long_text and tools_to_sync:
             # Only a tool that was already stored can have chunks left over
-            # from an earlier, longer description.
+            # from an earlier, longer description, and a store that keeps
+            # fingerprints says which those are. One that does not answers
+            # with an empty mapping whatever it holds; reading that as "none
+            # were stored" would leave a shortened description's old chunks
+            # in the index for good, so there every tool is checked.
             stored = await self._vector_store.get_stored_fingerprints()
-            previously_stored = set(stored) if isinstance(stored, dict) else None
+            if isinstance(stored, dict) and (stored or self._keeps_fingerprints()):
+                previously_stored = set(stored)
         for i in range(0, len(tools_to_sync), batch_size):
             batch = tools_to_sync[i : i + batch_size]
             texts = [t.to_searchable_text() for t in batch]
@@ -189,6 +194,15 @@ class SyncManager:
 
             total_synced += count
         return total_synced
+
+    def _keeps_fingerprints(self) -> bool:
+        """Whether the store implements fingerprints, or only inherits the stub."""
+        from agent_gantry.adapters.vector_stores.base import VectorStoreAdapter
+
+        implemented = getattr(type(self._vector_store), "get_stored_fingerprints", None)
+        return implemented is not None and implemented is not getattr(
+            VectorStoreAdapter, "get_stored_fingerprints", None
+        )
 
     async def update_metadata(self) -> None:
         """Update sync metadata in the vector store."""
