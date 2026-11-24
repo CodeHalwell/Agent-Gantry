@@ -98,6 +98,41 @@ INTENT_TAG_PATTERNS: dict[TaskIntent, re.Pattern[str]] = {
     intent: _keyword_pattern(keywords) for intent, keywords in INTENT_TAG_MAPPING.items()
 }
 
+#: A keyword found only in a tool's description counts for this much at most,
+#: against 1.0 for one in its name or tags.
+_INTENT_DESCRIPTION_WEIGHT = 0.5
+#: ...and for less the longer the description is, in proportion, past this
+#: many characters.
+_INTENT_DESCRIPTION_CHARS = 200
+
+
+def intent_match_score(tool: ToolDefinition, pattern: re.Pattern[str]) -> float:
+    """How strongly ``tool`` matches an intent's keywords, in ``[0, 1]``.
+
+    A keyword in the name or tags says what the tool *is* (``search_logs``,
+    ``list_users``) and scores 1.0. A keyword that appears only in the
+    description scores at most half that, scaled down as the description
+    grows, because prose mentions verbs in passing: any one of ``get``,
+    ``list``, ``read``, ``search``, ``query`` or ``fetch`` turns up somewhere
+    in most long descriptions.
+
+    This used to be 1.0 for a keyword anywhere in name, description or tags.
+    Measured over the library's own docstrings, 14% of those under 200
+    characters matched the data-query keywords and 83% of those over 800 did,
+    so the signal stopped discriminating on exactly the catalogues with long
+    descriptions, and handed verbose tools a flat 0.15 of the final score
+    over concise ones for no reason of relevance.
+    """
+    if pattern.search(f"{tool.name.lower()} {' '.join(tool.tags).lower()}"):
+        return 1.0
+    description = tool.description
+    if not pattern.search(description.lower()):
+        return 0.0
+    return _INTENT_DESCRIPTION_WEIGHT * min(
+        1.0, _INTENT_DESCRIPTION_CHARS / max(len(description), 1)
+    )
+
+
 # Per-keyword patterns for classification, which counts how many of an
 # intent's keywords a query mentions rather than whether it mentions any.
 _INTENT_KEYWORD_PATTERNS: dict[TaskIntent, list[re.Pattern[str]]] = {
@@ -543,11 +578,7 @@ class SemanticRouter:
         if intent != TaskIntent.UNKNOWN:
             pattern = INTENT_TAG_PATTERNS.get(intent)
             if pattern:
-                tool_text = (
-                    f"{tool.name.lower()} {tool.description.lower()} {' '.join(tool.tags).lower()}"
-                )
-                if pattern.search(tool_text):
-                    intent_match = 1.0
+                intent_match = intent_match_score(tool, pattern)
 
         # Conversation relevance
         tool_name_lower = tool.name.lower()

@@ -55,6 +55,19 @@ decimals.
   widening the search window rather than by a predicate: correct, but slower
   on a very large table.
 
+- **Catalogue an MCP server without committing its tools.**
+  `await gantry.list_server_tools("datadog")` asks a registered server what
+  it has and returns the definitions; nothing is registered, embedded or given
+  a handler. `await gantry.adopt_server_tools("datadog", names)` then commits
+  the ones you choose, by Gantry's name or the server's own, reusing the
+  listing. Cataloguing 500 tools embeds none and adopting 5 embeds 5, where
+  `discover_tools_from_server()` embedded all 500 and left them competing with
+  your own tools. Adoption is additive, and a tool the server has dropped is
+  removed. `discover_tools_from_server()` is now
+  `adopt_server_tools(..., names=None, refresh=True)` and behaves as before,
+  except that a failure while embedding no longer marks the server itself
+  unhealthy: only failing to list its tools does.
+
 ### Changed
 
 - **Falling back to `SimpleEmbedder` is logged at `WARNING`, once per
@@ -90,8 +103,28 @@ decimals.
   Parameter descriptions are not indexed. The fingerprint version is now
   `v1.2`, which is what triggers the one-off re-embed.
 
+- **The intent signal no longer rewards long descriptions.** A tool used to
+  get the full intent score (0.15 of the final score) if any of an intent's
+  keywords appeared anywhere in its name, description or tags, and the longer
+  a description is, the likelier one of `get`, `list`, `read`, `search`,
+  `query` or `fetch` appears in it somewhere. A keyword in the name or tags
+  still scores 1.0. One only in the description now scores at most 0.5,
+  scaled down past 200 characters. Over the library's own docstrings, the
+  mean score across all seven intents was 0.91 for those under 200 characters
+  and 2.31 for those over 800; it is now 0.61 and 0.19. The eval is unchanged
+  by this (its queries with an intent keyword match tool names), so the
+  evidence is that probe and a test in which a verbose tool stops outranking
+  the concise right one. A long description whose name and tags carry no
+  intent keyword now gets almost no intent score, by design.
+
 ### Fixed
 
+- **An MCP server with a long `extended_description` can be indexed.** The
+  model allows 10,000 characters, but the server's searchable text was copied
+  whole into a field that holds 2,000, so syncing such a server raised a
+  validation error. The text is now cut to fit, with the full text kept
+  beside it. `register_mcp_server()` takes no extended description, so this
+  was only reachable by setting one on the definition.
 - **`retrieve()` no longer returns MCP-server placeholders as tools.** A
   server registered with `register_mcp_server()` is indexed beside the tools
   under the `__mcp_servers__` namespace, and nothing kept it out of tool

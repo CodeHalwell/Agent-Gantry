@@ -323,3 +323,157 @@ async def test_a_large_mcp_registry_is_selected_end_to_end() -> None:
         assert len(client.asked[0]) == 4 and len(client.asked[1]) == 250
     finally:
         await gantry.close()
+
+
+# --------------------------------------------------------------------------- #
+# Cataloguing a server without committing its tools
+# --------------------------------------------------------------------------- #
+
+
+class _CountingEmbedder(SimpleEmbedder):
+    """Records every text it is asked to embed."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.embedded: list[str] = []
+
+    async def embed_text(self, text: str) -> list[float]:
+        self.embedded.append(text)
+        return await super().embed_text(text)
+
+
+class _Server:
+    """Stands in for a live MCP server behind a registered client."""
+
+    def __init__(self, gantry: AgentGantry, name: str, tools: list[ToolDefinition]) -> None:
+        self.tools = tools
+        self.listings = 0
+        gantry.register_mcp_server(
+            name, url=f"https://{name}.example/mcp", description="Observability platform."
+        )
+        client = gantry._mcp_registry.get_client(name)
+        client.list_tools = self._list_tools  # type: ignore[method-assign]
+
+    async def _list_tools(self) -> list[ToolDefinition]:
+        self.listings += 1
+        return list(self.tools)
+
+
+def _registered(gantry: AgentGantry, server: str) -> list[str]:
+    return sorted(
+        t.name for t in gantry.list_tools_sync() if t.metadata.get("mcp_server") == server
+    )
+
+
+async def test_cataloguing_five_hundred_tools_embeds_and_registers_none() -> None:
+    embedder = _CountingEmbedder()
+    gantry = AgentGantry(embedder=embedder)
+    try:
+        server = _Server(gantry, "datadog", _server_tools("datadog", 500))
+
+        catalogue = await gantry.list_server_tools("datadog")
+
+        assert len(catalogue) == 500
+        assert embedder.embedded == []
+        assert _registered(gantry, "datadog") == []
+        assert (await gantry.retrieve(_query("restore the backup"))).tools == []
+        assert server.listings == 1
+    finally:
+        await gantry.close()
+
+
+async def test_adopting_five_tools_embeds_five_and_does_not_ask_the_server_again() -> None:
+    embedder = _CountingEmbedder()
+    gantry = AgentGantry(embedder=embedder)
+    try:
+        server = _Server(gantry, "datadog", _server_tools("datadog", 500))
+        catalogue = await gantry.list_server_tools("datadog")
+        wanted = [t.name for t in catalogue[:5]]
+
+        assert await gantry.adopt_server_tools("datadog", wanted) == 5
+
+        assert _registered(gantry, "datadog") == sorted(wanted)
+        assert len(embedder.embedded) == 5
+        assert server.listings == 1
+        # Adopted tools are retrievable; the other 495 are not there to compete.
+        result = await gantry.retrieve(_query("create the invoice", limit=10))
+        assert sorted(_names(result)) == sorted(wanted)
+    finally:
+        await gantry.close()
+
+
+async def test_adoption_adds_to_what_was_adopted_and_drops_what_the_server_dropped() -> None:
+    gantry = AgentGantry(embedder=SimpleEmbedder())
+    try:
+        tools = _server_tools("datadog", 6)
+        server = _Server(gantry, "datadog", tools)
+
+        await gantry.adopt_server_tools("datadog", [tools[0].name, tools[1].name])
+        await gantry.adopt_server_tools("datadog", [tools[2].name])
+        assert _registered(gantry, "datadog") == sorted(t.name for t in tools[:3])
+
+        server.tools = tools[1:]  # the server withdraws the first tool
+        await gantry.adopt_server_tools("datadog", [tools[3].name], refresh=True)
+        assert _registered(gantry, "datadog") == sorted(t.name for t in tools[1:4])
+    finally:
+        await gantry.close()
+
+
+async def test_a_tool_can_be_adopted_by_the_name_the_server_gives_it() -> None:
+    pytest.importorskip("mcp")
+    from agent_gantry.adapters.executors.mcp_client import MCPClient
+    from agent_gantry.schema.config import MCPServerConfig
+
+    client = MCPClient(MCPServerConfig(name="datadog", url="https://datadog.example/mcp"))
+    tool = client._convert_tool(
+        SimpleNamespace(name="Search-Logs", description="Search the application logs.", inputSchema={})
+    )
+    assert tool.name != "Search-Logs"
+    gantry = AgentGantry(embedder=SimpleEmbedder())
+    try:
+        _Server(gantry, "datadog", [tool])
+        assert await gantry.adopt_server_tools("datadog", ["Search-Logs"]) == 1
+        assert _registered(gantry, "datadog") == [tool.name]
+    finally:
+        await gantry.close()
+
+
+async def test_an_unknown_name_is_refused_and_nothing_is_adopted() -> None:
+    gantry = AgentGantry(embedder=SimpleEmbedder())
+    try:
+        tools = _server_tools("datadog", 4)
+        _Server(gantry, "datadog", tools)
+
+        with pytest.raises(ValueError, match="has no tool named 'no_such_tool'"):
+            await gantry.adopt_server_tools("datadog", [tools[0].name, "no_such_tool"])
+        assert _registered(gantry, "datadog") == []
+    finally:
+        await gantry.close()
+
+
+async def test_discovery_still_adopts_everything_and_asks_afresh() -> None:
+    gantry = AgentGantry(embedder=SimpleEmbedder())
+    try:
+        server = _Server(gantry, "datadog", _server_tools("datadog", 12))
+        await gantry.list_server_tools("datadog")
+
+        assert await gantry.discover_tools_from_server("datadog") == 12
+        assert len(_registered(gantry, "datadog")) == 12
+        assert server.listings == 2
+    finally:
+        await gantry.close()
+
+
+async def test_a_server_with_a_long_description_can_be_indexed() -> None:
+    """Its searchable text used to overrun the pseudo-tool's 2000-character
+    description and fail validation, so the server could not be synced at all."""
+    gantry = AgentGantry(embedder=SimpleEmbedder())
+    try:
+        _Server(gantry, "datadog", [])
+        gantry._mcp_registry.get_server("datadog").extended_description = "logs and traces " * 500
+        gantry._mcp_registry.add_pending(gantry._mcp_registry.get_server("datadog"))
+
+        assert await gantry.sync_mcp_servers() == 1
+        assert [s.name for s in await gantry.retrieve_mcp_servers("logs and traces")] == ["datadog"]
+    finally:
+        await gantry.close()

@@ -42,12 +42,23 @@ def _pseudo_tool_name(server: MCPServerDefinition) -> str:
     return f"mcp_server_{stem}_{digest}"
 
 
+#: ``ToolDefinition.description``'s ceiling, which the pseudo-tool's text must fit.
+_DESCRIPTION_MAX = 2000
+_EXTENDED_DESCRIPTION_MAX = 10000
+
 def _pseudo_tool(server: MCPServerDefinition) -> ToolDefinition:
     """The ``ToolDefinition`` that stands in for ``server`` in the vector store."""
+    text = server.to_searchable_text()
     return ToolDefinition(
         name=_pseudo_tool_name(server),
         namespace=PSEUDO_NAMESPACE,
-        description=server.to_searchable_text(),
+        # A server may carry up to 10,000 characters of extended description,
+        # and a tool's description holds 2,000: without the cut, a server with
+        # a long one could not be indexed at all (it failed validation here).
+        description=text[:_DESCRIPTION_MAX],
+        extended_description=(
+            text[:_EXTENDED_DESCRIPTION_MAX] if len(text) > _DESCRIPTION_MAX else None
+        ),
         parameters_schema={"type": "object", "properties": {}},
         metadata={
             "entity_type": "mcp_server",

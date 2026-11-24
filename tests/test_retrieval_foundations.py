@@ -343,3 +343,70 @@ async def test_asking_for_the_reserved_namespace_by_name_returns_nothing() -> No
         assert result.tools == []
     finally:
         await gantry.close()
+
+
+# --------------------------------------------------------------------------- #
+# A long description is not an intent match
+# --------------------------------------------------------------------------- #
+
+
+def _intent_score(tool: ToolDefinition) -> float:
+    from agent_gantry.core.router import INTENT_TAG_PATTERNS, TaskIntent, intent_match_score
+
+    return intent_match_score(tool, INTENT_TAG_PATTERNS[TaskIntent.DATA_QUERY])
+
+
+def test_a_keyword_in_the_name_or_tags_is_a_full_match() -> None:
+    assert _intent_score(_tool("search_logs", "Look through application output.")) == 1.0
+    assert _intent_score(_tool("log_viewer", "Look through application output.", tags=["search"])) == 1.0
+    assert _intent_score(_tool("log_viewer", "Look through application output.")) == 0.0
+
+
+def test_a_keyword_only_in_the_description_counts_for_less_the_longer_it_is() -> None:
+    short = _tool("log_viewer", "Lets you read application output.")
+    medium = _tool("log_viewer", "Lets you read application output. " + "Then it rests. " * 20)
+    long = _tool("log_viewer", "Lets you read application output. " + "Then it rests. " * 120)
+
+    assert _intent_score(short) == 0.5
+    assert 0.0 < _intent_score(long) < _intent_score(medium) < _intent_score(short)
+    assert _intent_score(long) < 0.06  # a passing mention in 1800 characters
+
+
+async def test_a_verbose_tool_no_longer_outranks_the_concise_right_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``read`` appears once, in passing, in 1250 characters about something else.
+
+    Under the old rule that passing mention was worth a flat 0.15 of the final
+    score: a quarter of a cosine point, which is more than separates the two
+    tools here. The second half of the test puts the old rule back to show that
+    this ranking is what the change is responsible for.
+    """
+    from agent_gantry.core import router
+
+    right = _tool("tail_logs", "Stream the newest log lines from a service as they arrive.")
+    verbose = _tool(
+        "archive_logs",
+        "Move the oldest log lines from a service to cold storage. " * 12
+        + "Nobody can read an archive without a restore. "
+        + "Archived log lines are billed as they age. " * 12,
+    )
+
+    async def top(query: str) -> str:
+        gantry = AgentGantry(embedder=SimpleEmbedder())
+        try:
+            await gantry.add_tool(right)
+            await gantry.add_tool(verbose)
+            return (await gantry.retrieve(_query(query, limit=2))).tools[0].tool.name
+        finally:
+            await gantry.close()
+
+    question = "read the newest log lines as they arrive"  # ``read``: a data-query intent
+    assert await top(question) == "tail_logs"
+
+    def anywhere(tool: ToolDefinition, pattern: Any) -> float:
+        text = f"{tool.name.lower()} {tool.description.lower()} {' '.join(tool.tags).lower()}"
+        return 1.0 if pattern.search(text) else 0.0
+
+    monkeypatch.setattr(router, "intent_match_score", anywhere)
+    assert await top(question) == "archive_logs"

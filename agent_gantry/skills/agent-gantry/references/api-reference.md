@@ -51,6 +51,10 @@ from agent_gantry import (
 #         tools discovered from a server are tagged "mcp:<server>" (mcp_server_tag(name) in
 #           agent_gantry.schema.mcp): the server name is searchable, and a selector groups by it
 #         gantry.retrieve_tools_from_server("datadog", query, limit=5)  -> search within one server
+#         big server? catalogue first, commit a subset (no embeddings/handlers until adopted):
+#           specs = await gantry.list_server_tools("datadog")          # after register_mcp_server(...)
+#           await gantry.adopt_server_tools("datadog", [t.name for t in specs if "log" in t.name])
+#           discover_tools_from_server(name) == adopt_server_tools(name, None, refresh=True)
 #         ToolQuery(..., mcp_servers=["datadog", "azure"]) / retrieve_tools(q, mcp_servers=[...])
 #         gantry.register_mcp_server(name, command=None, *, url=None, description=...)
 #         gantry.sync(prune=True) drops stored tools that are no longer registered

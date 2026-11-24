@@ -302,6 +302,9 @@ class AgentGantry:
         not loaded here because import + embedding is async.
         """
         self._pending_tools: list[ToolDefinition] = []
+        # What each MCP server listed when last asked, keyed by
+        # (namespace, name), so part of it can be adopted without asking again.
+        self._mcp_catalogues: dict[tuple[str, str], list[ToolDefinition]] = {}
         # Locks are created lazily, inside a running loop, on first use.
         self._init_lock: asyncio.Lock | None = None
         # One-shot guard for _ensure_skill_vectors_current (embedder is fixed
@@ -2048,6 +2051,9 @@ class AgentGantry:
         # the next retrieval; ``_ensure_mcp_synced`` also checks the pending
         # list, this just keeps the flag honest.
         self._mcp_synced = False
+        # A listing made under the previous registration may be another
+        # server's by now.
+        self._mcp_catalogues.pop((namespace, name), None)
 
     def _require_mcp_manager(self) -> Any:
         """Return the MCP manager, or explain how to enable MCP support."""
@@ -2109,6 +2115,181 @@ class AgentGantry:
 
         return [scored.server for scored in result.servers]
 
+    async def _fetch_mcp_catalogue(
+        self, server_name: str, namespace: str, timeout: float
+    ) -> tuple[Any, list[ToolDefinition]]:
+        """Connect to a registered MCP server and list its tools, recording its health.
+
+        Registers nothing and embeds nothing. The listing is remembered so
+        that :meth:`adopt_server_tools` can commit part of it without asking
+        the server again.
+        """
+        self._require_mcp_manager()
+        await self._ensure_initialized()
+
+        client = self._mcp_registry.get_client(server_name, namespace)
+        if not client:
+            raise ValueError(
+                f"MCP server '{namespace}.{server_name}' not found. "
+                f"Register it first with register_mcp_server()."
+            )
+
+        def _mark_failed() -> None:
+            server = self._mcp_registry.get_server(server_name, namespace)
+            self._mcp_registry.update_health(
+                server_name,
+                namespace,
+                available=False,
+                last_failure=datetime.now(timezone.utc),
+                consecutive_failures=server.health.consecutive_failures + 1 if server else 1,
+            )
+
+        try:
+            tools = await asyncio.wait_for(client.list_tools(), timeout=timeout)
+        except asyncio.TimeoutError:
+            _mark_failed()
+            logger.error(
+                f"Timeout while discovering tools from MCP server {namespace}.{server_name} "
+                f"(timeout: {timeout}s)"
+            )
+            raise TimeoutError(
+                f"MCP server {namespace}.{server_name} did not respond within {timeout}s"
+            )
+        except Exception as e:
+            _mark_failed()
+            logger.error(f"Failed to discover tools from MCP server {namespace}.{server_name}: {e}")
+            raise
+
+        self._mcp_registry.update_health(
+            server_name,
+            namespace,
+            available=True,
+            last_success=datetime.now(timezone.utc),
+            consecutive_failures=0,
+        )
+        self._mcp_catalogues[(namespace, server_name)] = list(tools)
+        return client, tools
+
+    async def list_server_tools(
+        self,
+        server_name: str,
+        namespace: str = "default",
+        timeout: float = 30.0,
+    ) -> list[ToolDefinition]:
+        """
+        List the tools a registered MCP server offers, without committing any of them.
+
+        This is discovery without the cost: the server is asked what it has,
+        and nothing is registered, embedded or given a handler, so the tools
+        do not compete with the rest of the registry and cannot be retrieved
+        or executed yet. Commit the ones you want with
+        :meth:`adopt_server_tools`. A server with several hundred tools can be
+        catalogued this way for the price of one request.
+
+        Args:
+            server_name: Name of the registered MCP server
+            namespace: Server namespace
+            timeout: Connection timeout in seconds (default: 30.0)
+
+        Returns:
+            The server's tools as :class:`~agent_gantry.schema.tool.ToolDefinition`
+            objects: names, descriptions and schemas.
+
+        Raises:
+            ValueError: If the server is not registered
+            TimeoutError: If the connection or tool discovery times out
+            Exception: If tool discovery fails
+        """
+        _, tools = await self._fetch_mcp_catalogue(server_name, namespace, timeout)
+        return list(tools)
+
+    async def adopt_server_tools(
+        self,
+        server_name: str,
+        names: Sequence[str] | None = None,
+        *,
+        namespace: str = "default",
+        timeout: float = 30.0,
+        refresh: bool = False,
+    ) -> int:
+        """
+        Register and embed tools from a registered MCP server: all of them, or some.
+
+        Adoption adds to what was adopted before; it does not replace it. A
+        tool the server no longer lists is removed, whether or not it is named
+        here.
+
+        Args:
+            server_name: Name of the registered MCP server
+            names: The tools to adopt, by the name Gantry gives them or the
+                name the server knows them by. ``None`` adopts every tool the
+                server lists, which is what
+                :meth:`discover_tools_from_server` does.
+            namespace: Server namespace
+            timeout: Connection timeout in seconds (default: 30.0)
+            refresh: Ask the server for its tools again even if
+                :meth:`list_server_tools` already has. Without it, a listing
+                made earlier in this process is reused.
+
+        Returns:
+            Number of tools adopted
+
+        Raises:
+            ValueError: If the server is not registered, or a name in
+                ``names`` is not one of its tools
+            TimeoutError: If the connection or tool discovery times out
+            Exception: If tool discovery fails
+
+        Example:
+            >>> catalogue = await gantry.list_server_tools("datadog")
+            >>> wanted = [t.name for t in catalogue if "log" in t.name]
+            >>> await gantry.adopt_server_tools("datadog", wanted)
+        """
+        self._require_mcp_manager()
+        catalogue = None if refresh else self._mcp_catalogues.get((namespace, server_name))
+        client = self._mcp_registry.get_client(server_name, namespace)
+        if catalogue is None or client is None:
+            client, catalogue = await self._fetch_mcp_catalogue(server_name, namespace, timeout)
+        else:
+            await self._ensure_initialized()
+
+        if names is None:
+            tools = list(catalogue)
+        else:
+            from agent_gantry.adapters.executors.mcp_client import MCPClient
+
+            wanted = set(names)
+            tools = [
+                t for t in catalogue if t.name in wanted or MCPClient.server_tool_name(t) in wanted
+            ]
+            found = {t.name for t in tools} | {MCPClient.server_tool_name(t) for t in tools}
+            missing = sorted(wanted - found)
+            if missing:
+                raise ValueError(
+                    f"MCP server '{namespace}.{server_name}' has no tool named "
+                    f"{', '.join(repr(name) for name in missing)}."
+                )
+
+        registry = self._mcp_registry
+
+        def _current_client() -> Any:
+            return registry.get_client(server_name, namespace) if registry else None
+
+        self._register_mcp_tool_handlers(client, tools, resolve_client=_current_client)
+        # Against the whole listing, not the adopted part: a tool adopted
+        # earlier and still offered stays, one the server has dropped goes.
+        await self._remove_stale_mcp_tools(client, catalogue)
+
+        self._pending_tools.extend(tools)
+        if self._config.auto_sync:
+            await self.sync()
+
+        logger.info(
+            f"Adopted {len(tools)} of {len(catalogue)} tools from MCP server: "
+            f"{namespace}.{server_name}"
+        )
+        return len(tools)
+
     async def discover_tools_from_server(
         self,
         server_name: str,
@@ -2118,8 +2299,10 @@ class AgentGantry:
         """
         Dynamically discover and register tools from a previously registered MCP server.
 
-        This method connects to the server, discovers its tools, and adds them to
-        the gantry's tool registry.
+        This method connects to the server, discovers its tools, and adds
+        every one of them to the gantry's tool registry. For a server with
+        many tools, :meth:`list_server_tools` and :meth:`adopt_server_tools`
+        commit only the ones you choose.
 
         Args:
             server_name: Name of the registered MCP server
@@ -2143,86 +2326,9 @@ class AgentGantry:
             >>> count = await gantry.discover_tools_from_server("filesystem")
             >>> print(f"Discovered {count} tools")
         """
-        self._require_mcp_manager()
-        await self._ensure_initialized()
-
-        # Get the MCP client for this server
-        client = self._mcp_registry.get_client(server_name, namespace)
-        if not client:
-            raise ValueError(
-                f"MCP server '{namespace}.{server_name}' not found. "
-                f"Register it first with register_mcp_server()."
-            )
-
-        try:
-            # Discover tools from the server with timeout protection
-            tools = await asyncio.wait_for(client.list_tools(), timeout=timeout)
-
-            # Wire execution handlers (tools execute via the MCP client).
-            # Resolved through the registry on every call so a server
-            # re-registered with a different endpoint is honoured by tools
-            # discovered before the change.
-            registry = self._mcp_registry
-
-            def _current_client() -> Any:
-                return registry.get_client(server_name, namespace) if registry else None
-
-            self._register_mcp_tool_handlers(client, tools, resolve_client=_current_client)
-            await self._remove_stale_mcp_tools(client, tools)
-
-            # Add all tools first, then sync once (avoids per-tool full syncs)
-            self._pending_tools.extend(tools)
-            if self._config.auto_sync:
-                await self.sync()
-
-            # Update server health
-            self._mcp_registry.update_health(
-                server_name,
-                namespace,
-                available=True,
-                last_success=datetime.now(timezone.utc),
-                consecutive_failures=0,
-            )
-
-            logger.info(f"Discovered {len(tools)} tools from MCP server: {namespace}.{server_name}")
-            return len(tools)
-
-        except asyncio.TimeoutError:
-            # Update server health on timeout
-            server = self._mcp_registry.get_server(server_name, namespace)
-            consecutive_failures = server.health.consecutive_failures + 1 if server else 1
-
-            self._mcp_registry.update_health(
-                server_name,
-                namespace,
-                available=False,
-                last_failure=datetime.now(timezone.utc),
-                consecutive_failures=consecutive_failures,
-            )
-
-            logger.error(
-                f"Timeout while discovering tools from MCP server {namespace}.{server_name} "
-                f"(timeout: {timeout}s)"
-            )
-            raise TimeoutError(
-                f"MCP server {namespace}.{server_name} did not respond within {timeout}s"
-            )
-
-        except Exception as e:
-            # Update server health on failure
-            server = self._mcp_registry.get_server(server_name, namespace)
-            consecutive_failures = server.health.consecutive_failures + 1 if server else 1
-
-            self._mcp_registry.update_health(
-                server_name,
-                namespace,
-                available=False,
-                last_failure=datetime.now(timezone.utc),
-                consecutive_failures=consecutive_failures,
-            )
-
-            logger.error(f"Failed to discover tools from MCP server {namespace}.{server_name}: {e}")
-            raise
+        return await self.adopt_server_tools(
+            server_name, None, namespace=namespace, timeout=timeout, refresh=True
+        )
 
     async def serve_mcp(
         self,
