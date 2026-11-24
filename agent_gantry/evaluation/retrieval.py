@@ -243,7 +243,15 @@ async def evaluate_retrieval(
         answer = await retriever(case.query, k)
         latency_ms = (time.perf_counter() - started) * 1000
         backend: str | None = None
-        if isinstance(answer, tuple) and len(answer) == 2 and isinstance(answer[1], str):
+        # ``(ids, backend)`` has a sequence of ids first. Two ids returned as
+        # a tuple are also a two-tuple ending in a string, and reading that as
+        # the backend form scored the first id's characters as the results.
+        if (
+            isinstance(answer, tuple)
+            and len(answer) == 2
+            and isinstance(answer[1], str)
+            and not isinstance(answer[0], str)
+        ):
             ids, backend = answer
         else:
             ids = answer

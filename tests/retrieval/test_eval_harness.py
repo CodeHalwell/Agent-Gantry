@@ -98,6 +98,19 @@ async def test_the_report_splits_by_kind_and_names_the_backend() -> None:
     assert "selector=2" in format_reports([report], by_kind=True)
 
 
+async def test_two_ids_in_a_tuple_are_two_ids_not_ids_and_a_backend() -> None:
+    async def retrieve(query: str, limit: int) -> tuple[str, ...]:
+        return ("default.add_numbers", "default.subtract_numbers")
+
+    report = await evaluate_retrieval(
+        retrieve, [RetrievalCase("add", {"default.add_numbers"})], k=2
+    )
+
+    assert report.outcomes[0].returned == ("default.add_numbers", "default.subtract_numbers")
+    assert report.recall_at_1 == 1.0
+    assert report.backends == {}
+
+
 async def test_a_retriever_that_raises_is_not_scored_as_a_decline() -> None:
     async def broken(query: str, limit: int) -> list[str]:
         raise RuntimeError("the store is down")
