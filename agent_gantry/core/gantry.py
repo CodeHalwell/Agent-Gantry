@@ -3498,6 +3498,7 @@ class AgentGantry:
         pool = limit * 4 if diversity_factor > 0 or reranker is not None else limit
         fetch = pool * 4
         best: dict[tuple[str, str], tuple[Skill | None, float]] = {}
+        passages: dict[tuple[str, str], str] = {}
         for _ in range(7):
             matches = await store.search_skills(
                 query_vector=query_embedding,
@@ -3506,6 +3507,7 @@ class AgentGantry:
                 score_threshold=score_threshold,
             )
             best = {}
+            passages = {}
             for skill, score in matches:
                 parent = chunk_parent(skill)
                 key = parent or (skill.namespace, skill.name)
@@ -3513,6 +3515,10 @@ class AgentGantry:
                     continue
                 known, top = best.get(key, (None, 0.0))
                 best[key] = (known if parent is not None else skill, max(top, float(score)))
+                if parent is not None and key not in passages:
+                    # Best first, so this is the piece of the body that
+                    # matched the query best.
+                    passages[key] = skill.content
             if len(best) >= pool or len(matches) < fetch:
                 break
             fetch *= 4
@@ -3530,10 +3536,24 @@ class AgentGantry:
             # schema bounds score to [0, 1].
             results.append(SkillSearchResult(skill=skill, score=min(1.0, max(0.0, score))))
         if reranker is not None and results:
+            # A skill's own text leaves its body out, and the body may be the
+            # only thing that matched: give the reranker the passage that did,
+            # or it would judge such a skill on a description that says none
+            # of it and rank it away.
             ranked = await rerank_texts(
                 reranker,
                 query,
-                [result.skill.to_embedding_text() for result in results],
+                [
+                    " ".join(
+                        part
+                        for part in (
+                            result.skill.to_embedding_text(),
+                            passages.get((result.skill.namespace, result.skill.name)),
+                        )
+                        if part
+                    )
+                    for result in results
+                ],
                 limit,
                 names=[result.skill.name for result in results],
                 scores=[result.score for result in results],

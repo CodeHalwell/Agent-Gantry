@@ -149,3 +149,39 @@ async def test_reranking_is_off_unless_asked_for_and_needs_a_reranker() -> None:
     finally:
         await with_one.close()
         await without.close()
+
+
+async def test_a_skill_matched_by_its_body_is_reranked_on_that_passage() -> None:
+    """Two skills with the same description; only one's body is about zebras.
+
+    A skill's own text leaves its body out, so the reranker was shown two
+    identical texts and could not keep the one the search had found.
+    """
+    reranker = _KeywordReranker("zebra")
+    gantry = AgentGantry(embedder=SimpleEmbedder(), reranker=reranker)
+    try:
+        await gantry.add_skills(
+            [
+                Skill(
+                    name="keeper_notes_a",
+                    description="Notes for the keepers on duty.",
+                    content="Check the heating in the reptile house before opening.",
+                ),
+                Skill(
+                    name="keeper_notes_b",
+                    description="Notes for the keepers on duty.",
+                    content="Zebra feed is in the second barn. A zebra kicks; approach a zebra side on.",
+                ),
+            ]
+        )
+
+        plain = await gantry.retrieve_skills("zebra feed barn", limit=2)
+        assert plain[0].skill.name == "keeper_notes_b"
+
+        reranked = await gantry.retrieve_skills("zebra feed barn", limit=2, rerank=True)
+        assert reranked[0].skill.name == "keeper_notes_b"
+        shown = {d.name.rsplit("_", 1)[0]: d.to_searchable_text() for d in reranker.seen}
+        assert "second barn" in shown["keeper_notes_b"]
+        assert shown["keeper_notes_b"].startswith("keeper_notes_b")  # its own text still leads
+    finally:
+        await gantry.close()
