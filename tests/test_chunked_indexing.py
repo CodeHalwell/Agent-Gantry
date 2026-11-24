@@ -21,6 +21,7 @@ from agent_gantry.core.chunks import (
     CHUNK_CHARS,
     CHUNK_SCORE_WEIGHT,
     MAX_CHUNKS,
+    MAX_SKILL_CHUNKS,
     chunk_parent,
     split_text,
     tool_chunks,
@@ -475,6 +476,22 @@ async def test_a_shorter_body_and_a_deleted_skill_leave_no_chunks() -> None:
 # --------------------------------------------------------------------------- #
 # Regressions
 # --------------------------------------------------------------------------- #
+
+
+async def test_many_pieces_of_a_few_skills_do_not_leave_the_result_short() -> None:
+    """Eleven skills match, each by 72 pieces: ten are asked for and ten come back.
+
+    Three searches of 40, 160 and 640 rows held the pieces of nine.
+    """
+    body = "Zebra quagga okapi striped ungulate notes for the keeper on duty today. " * 690
+    skills = [_skill(f"rota_{i}", "The keeper rota for the week.", body) for i in range(11)]
+    assert all(len(skill_chunks(skill)) == MAX_SKILL_CHUNKS for skill in skills)
+    gantry = await _skills_gantry(skills)
+    try:
+        found = await gantry.retrieve_skills("zebra quagga okapi striped ungulate", limit=10)
+        assert len(found) == 10
+    finally:
+        await gantry.close()
 
 
 async def test_another_namespaces_chunks_cannot_crowd_a_scoped_search() -> None:
