@@ -11,6 +11,11 @@ from time import perf_counter
 from typing import TYPE_CHECKING
 
 from agent_gantry.adapters.embedders.base import embed_query
+from agent_gantry.core.mcp_manager import CATALOGUE_ENTITY, PSEUDO_NAMESPACE, SERVER_ENTITY
+
+#: How many times a search may be widened when one server's catalogue pieces
+#: crowd the other servers out of the window.
+_MAX_WIDENINGS = 2
 
 if TYPE_CHECKING:
     from agent_gantry.adapters.embedders.base import EmbeddingAdapter
@@ -94,40 +99,51 @@ class MCPRouter:
         search_start = perf_counter()
         # Search the vector store for MCP server pseudo-tools
         # These are stored with namespace "__mcp_servers__" to distinguish from real tools
-        mcp_namespace_filter: dict[str, list[str]] = {"namespace": ["__mcp_servers__"]}
+        mcp_namespace_filter: dict[str, list[str]] = {"namespace": [PSEUDO_NAMESPACE]}
 
-        candidates = await self._vector_store.search(
-            query_vector=query_embedding,
-            limit=limit * 2,  # Get extra candidates for filtering
-            filters=mcp_namespace_filter,
-            score_threshold=score_threshold,
-        )
-        search_time_ms = (perf_counter() - search_start) * 1000
-
-        # Map pseudo-tools back to registered servers. A stale pseudo-tool
-        # (an older naming scheme, a deregistered server) either resolves to
-        # nothing or to a server already seen, and is skipped either way.
+        # A server is indexed as its own entry and, once its tools have been
+        # listed, as pieces of that catalogue. Results come back best first,
+        # so the first row seen for a server is the best of them, and that is
+        # its score. Several of one server's pieces can outrank every other
+        # server, so the window is widened until ``limit`` distinct servers
+        # are in it or the store has no more rows.
+        fetch = limit * 4  # extra candidates for filtering and for pieces
         scored_servers: list[MCPServerScore] = []
-        seen: set[tuple[str, str]] = set()
-        for pseudo_tool, score, *_ in candidates:
-            if len(scored_servers) >= limit:
+        for _ in range(_MAX_WIDENINGS + 1):
+            candidates = await self._vector_store.search(
+                query_vector=query_embedding,
+                limit=fetch,
+                filters=mcp_namespace_filter,
+                score_threshold=score_threshold,
+            )
+            # Map pseudo-tools back to registered servers. A stale pseudo-tool
+            # (an older naming scheme, a deregistered server) either resolves
+            # to nothing or to a server already seen, and is skipped either way.
+            scored_servers = []
+            seen: set[tuple[str, str]] = set()
+            for pseudo_tool, score, *_ in candidates:
+                if len(scored_servers) >= limit:
+                    break
+                if (
+                    pseudo_tool.metadata.get("entity_type") not in (SERVER_ENTITY, CATALOGUE_ENTITY)
+                    or pseudo_tool.namespace != PSEUDO_NAMESPACE
+                ):
+                    continue
+                server_name = pseudo_tool.metadata.get("server_name")
+                server_namespace = pseudo_tool.metadata.get("server_namespace", "default")
+                if not server_name or (namespaces and server_namespace not in namespaces):
+                    continue
+                key = (server_namespace, server_name)
+                if key in seen:
+                    continue
+                seen.add(key)
+                server = await self._get_server_from_registry(server_name, server_namespace)
+                if server:
+                    scored_servers.append(MCPServerScore(server=server, score=score))
+            if len(scored_servers) >= limit or len(candidates) < fetch:
                 break
-            if (
-                pseudo_tool.metadata.get("entity_type") != "mcp_server"
-                or pseudo_tool.namespace != "__mcp_servers__"
-            ):
-                continue
-            server_name = pseudo_tool.metadata.get("server_name")
-            server_namespace = pseudo_tool.metadata.get("server_namespace", "default")
-            if not server_name or (namespaces and server_namespace not in namespaces):
-                continue
-            key = (server_namespace, server_name)
-            if key in seen:
-                continue
-            seen.add(key)
-            server = await self._get_server_from_registry(server_name, server_namespace)
-            if server:
-                scored_servers.append(MCPServerScore(server=server, score=score))
+            fetch *= 4
+        search_time_ms = (perf_counter() - search_start) * 1000
 
         total_time_ms = (perf_counter() - start_time) * 1000
 

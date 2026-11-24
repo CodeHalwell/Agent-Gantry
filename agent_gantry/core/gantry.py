@@ -2187,6 +2187,10 @@ class AgentGantry:
             consecutive_failures=0,
         )
         self._mcp_catalogues[(namespace, server_name)] = list(tools)
+        # The server is routed to by what it lists as well as by what its
+        # registration says; the pieces are embedded at the next server sync.
+        self._mcp_manager.set_catalogue(server_name, namespace, tools)
+        self._mcp_synced = False
         return client, tools
 
     async def list_server_tools(

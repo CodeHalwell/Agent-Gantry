@@ -65,12 +65,12 @@ commit that added the eval:
 |---|---|---|---|
 | tools (59) | 0.765 | 0.873 | 0.000 |
 | skills (14) | 0.917 | 1.000 | 0.000 |
-| MCP servers (13) | 0.636 | 0.818 | 0.000 |
+| MCP servers (13) | 0.727 | 0.909 | 0.000 |
 
 Tools by kind of query, top-1: paraphrase 21/30, identifier 8/8, parameter name
 3/6, MCP server name 5/5, and 2/2 where the answer sits past character 2000 of
 a long MCP description. Skills whose answer is only in the body: 4/4. MCP
-servers described vaguely, where only their tools say what they do: 1/3. Nothing declines at a threshold of 0.0; pass `--score-threshold`
+servers described vaguely, where only their tools say what they do: 2/3. Nothing declines at a threshold of 0.0; pass `--score-threshold`
 to see what yours does.
 
 These are one synthetic catalogue and a few dozen queries per modality. They

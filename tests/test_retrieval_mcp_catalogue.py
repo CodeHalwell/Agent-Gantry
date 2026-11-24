@@ -515,3 +515,162 @@ async def test_a_reused_listing_is_as_old_as_the_call_that_made_it() -> None:
         assert _registered(gantry, "datadog") == []
     finally:
         await gantry.close()
+
+
+# --------------------------------------------------------------------------- #
+# A server is routed to by what it lists
+# --------------------------------------------------------------------------- #
+
+
+async def _with_clear_servers(gantry: AgentGantry) -> None:
+    for name, description in (
+        ("mailroom", "Send and search email, and manage mailboxes."),
+        ("paydesk", "Charge cards and issue refunds."),
+        ("mapkit", "Directions, distances and place search."),
+    ):
+        gantry.register_mcp_server(name, url=f"https://{name}.example/mcp", description=description)
+
+
+async def _server_rows(gantry: AgentGantry) -> list[ToolDefinition]:
+    from agent_gantry.schema.tool import MCP_SERVER_NAMESPACE
+
+    return await gantry.list_tools(namespace=MCP_SERVER_NAMESPACE)
+
+
+async def test_a_vaguely_described_server_is_found_by_what_its_tools_do() -> None:
+    gantry = AgentGantry(embedder=SimpleEmbedder())
+    try:
+        await _with_clear_servers(gantry)
+        _Server(gantry, "datadog", _server_tools("datadog", 16))  # "Observability platform."
+
+        async def first(query: str) -> str:
+            return (await gantry.retrieve_mcp_servers(query, limit=1))[0].name
+
+        question = "restore the backup numbered 7"
+        assert await first(question) != "datadog"
+
+        await gantry.list_server_tools("datadog")
+
+        assert await first(question) == "datadog"
+        # The registration is untouched: the catalogue is indexed beside it.
+        server = gantry._mcp_registry.get_server("datadog")
+        assert server.description == "Observability platform."
+        assert server.extended_description is None
+    finally:
+        await gantry.close()
+
+
+async def test_listing_embeds_nothing_and_the_next_server_search_embeds_the_pieces() -> None:
+    embedder = _CountingEmbedder()
+    gantry = AgentGantry(embedder=embedder)
+    try:
+        _Server(gantry, "datadog", _server_tools("datadog", 40))
+        await gantry.sync_mcp_servers()
+        embedder.embedded.clear()
+
+        await gantry.list_server_tools("datadog")
+        assert embedder.embedded == []
+
+        await gantry.retrieve_mcp_servers("restore the backup", limit=1)
+        pieces = [text for text in embedder.embedded if text.startswith("datadog tools: ")]
+        assert 2 <= len(pieces) < 40  # several tools to a piece
+    finally:
+        await gantry.close()
+
+
+async def test_one_servers_many_pieces_do_not_crowd_the_others_out() -> None:
+    gantry = AgentGantry(embedder=SimpleEmbedder())
+    try:
+        await _with_clear_servers(gantry)
+        _Server(gantry, "datadog", _server_tools("datadog", 400))
+        await gantry.list_server_tools("datadog")
+
+        servers = await gantry.retrieve_mcp_servers("restore the backup", limit=4)
+
+        assert len(await _server_rows(gantry)) > 4 + 12  # far more rows than servers
+        assert [s.name for s in servers][0] == "datadog"
+        assert sorted(s.name for s in servers) == ["datadog", "mailroom", "mapkit", "paydesk"]
+    finally:
+        await gantry.close()
+
+
+async def test_catalogue_pieces_follow_the_listing_and_go_with_it() -> None:
+    gantry = AgentGantry(embedder=SimpleEmbedder())
+    try:
+        server = _Server(gantry, "datadog", _server_tools("datadog", 60))
+
+        async def pieces() -> int:
+            await gantry.sync_mcp_servers()
+            return len(await _server_rows(gantry)) - 1  # less the server's own entry
+
+        await gantry.list_server_tools("datadog")
+        full = await pieces()
+        assert full >= 3
+
+        server.tools = _server_tools("datadog", 6)
+        await gantry.list_server_tools("datadog")
+        assert 1 <= await pieces() < full
+
+        server.tools = []
+        await gantry.list_server_tools("datadog")
+        assert await pieces() == 0
+
+        # A server registered again at a different endpoint is another server.
+        server.tools = _server_tools("datadog", 6)
+        await gantry.list_server_tools("datadog")
+        assert await pieces() >= 1
+        gantry.register_mcp_server(
+            "datadog", url="https://elsewhere.example/mcp", description="Observability platform."
+        )
+        assert await pieces() == 0
+    finally:
+        await gantry.close()
+
+
+async def test_syncing_servers_counts_servers_not_index_rows() -> None:
+    gantry = AgentGantry(embedder=SimpleEmbedder())
+    try:
+        _Server(gantry, "datadog", _server_tools("datadog", 60))
+        await gantry.list_server_tools("datadog")
+        assert await gantry.sync_mcp_servers() == 1
+        assert await gantry.sync_mcp_servers() == 0
+    finally:
+        await gantry.close()
+
+
+async def test_catalogue_pieces_are_never_returned_as_tools() -> None:
+    from agent_gantry.schema.tool import RESERVED_NAMESPACES
+
+    gantry = await _gantry(_native_tools(8))
+    try:
+        _Server(gantry, "datadog", _server_tools("datadog", 60))
+        await gantry.list_server_tools("datadog")
+        await gantry.sync_mcp_servers()
+
+        result = await gantry.retrieve(_query("restore the backup", limit=8))
+        assert len(result.tools) == 8
+        assert not [t for t in result.tools if t.tool.namespace in RESERVED_NAMESPACES]
+    finally:
+        await gantry.close()
+
+
+def test_a_catalogue_is_cut_into_named_and_described_tools_or_names_alone() -> None:
+    from agent_gantry.core.mcp_manager import MAX_CATALOGUE_CHUNKS, catalogue_chunks
+    from agent_gantry.schema.mcp import MCPServerDefinition
+
+    server = MCPServerDefinition(
+        name="datadog", description="Observability platform.", url="https://datadog.example/mcp"
+    )
+    few = catalogue_chunks(server, _server_tools("datadog", 3))
+    assert [c.description for c in few] == [
+        "datadog tools: datadog create invoice 0: Create the invoice numbered 0; "
+        "datadog list invoice 1: List the invoice numbered 1; "
+        "datadog delete invoice 2: Delete the invoice numbered 2"
+    ]
+    assert few[0].metadata["server_name"] == "datadog"
+
+    huge = catalogue_chunks(server, _server_tools("datadog", 1200))
+    assert len(huge) <= MAX_CATALOGUE_CHUNKS
+    assert "numbered" not in huge[0].description  # names alone, to fit more of them
+    assert len({c.name for c in huge}) == len(huge)
+    assert catalogue_chunks(server, []) == []

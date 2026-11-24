@@ -14,6 +14,7 @@ from agent_gantry.evaluation import (
     skill_retriever,
     tool_retriever,
 )
+from agent_gantry.schema.tool import ToolDefinition
 from tests.retrieval import catalogue
 
 BASELINE_PATH = Path(__file__).with_name("baseline.json")
@@ -32,14 +33,31 @@ async def build_gantry(**gantry_kwargs: Any) -> AgentGantry:
             would not be comparable to the baseline.
     """
     gantry = AgentGantry(**gantry_kwargs)
-    for tool in [*catalogue.native_tools(), *catalogue.mcp_tools()]:
+    mcp_tools = catalogue.mcp_tools()
+    for tool in [*catalogue.native_tools(), *mcp_tools]:
         await gantry.add_tool(tool)
     await gantry.sync()
     await gantry.add_skills(catalogue.skills())
+    by_server: dict[str, list[ToolDefinition]] = {}
+    for tool in mcp_tools:
+        by_server.setdefault(tool.metadata["mcp_server"], []).append(tool)
     for name, description in catalogue.MCP_SERVERS.items():
         gantry.register_mcp_server(name, url=f"https://{name}.example/mcp", description=description)
+        if name in by_server:
+            # Catalogue the server as a deployment would, with the fixture
+            # standing in for the live server, so it is routed to by what it
+            # lists as well as by its (deliberately vague) description.
+            gantry._mcp_registry.get_client(name).list_tools = _lister(by_server[name])
+            await gantry.list_server_tools(name)
     await gantry.sync_mcp_servers()
     return gantry
+
+
+def _lister(tools: list[ToolDefinition]) -> Any:
+    async def list_tools() -> list[ToolDefinition]:
+        return list(tools)
+
+    return list_tools
 
 
 async def measure(

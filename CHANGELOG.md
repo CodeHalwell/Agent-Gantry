@@ -115,6 +115,23 @@ decimals.
   and by pruning. `RoutingConfig(chunk_long_text=False)` turns both off. The
   cost is one extra embedding per piece at sync or `add_skills()`: none for a
   tool with a short description, at least one for every skill with a body.
+- **An MCP server is routed to by what it lists.** A server's hand-written
+  description was all `retrieve_mcp_servers()` had to match, and nothing
+  checked it against the server's tools: one registered as "Observability
+  platform." does not match "why is my pod crashlooping". Once a server's
+  tools have been listed (`list_server_tools()`, `adopt_server_tools()` or
+  `discover_tools_from_server()`), the catalogue is indexed in pieces beside
+  the server's own entry, a handful of tools to a piece, and the server is
+  scored by the best of them. The registration itself is not rewritten.
+  Listing embeds nothing; the pieces are embedded at the next server search,
+  a few dozen at most per server. On the eval, MCP-server recall@1 goes from
+  0.636 to 0.727 and recall@5 from 0.818 to 0.909, with vaguely described
+  servers found by their tools in 2 of 3 cases, up from 1. A first attempt,
+  writing the tool names into the server's one description, moved nothing:
+  one vector over nineteen tools is too diffuse to match any of them. A
+  server with a catalogue has more vectors to match with than one without,
+  and with the hash embedder that costs one paraphrase case on the eval; with
+  the real embedder it costs none.
 - **Catalogue an MCP server without committing its tools.**
   `await gantry.list_server_tools("datadog")` asks a registered server what
   it has and returns the definitions; nothing is registered, embedded or given

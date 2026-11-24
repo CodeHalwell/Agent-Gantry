@@ -82,7 +82,7 @@
     "mcp_servers": {
       "k": 5,
       "cases": 13,
-      "recall_at_1": 0.2727,
+      "recall_at_1": 0.3636,
       "recall_at_k": 0.7273,
       "decline_correctness": 0.0
     },
@@ -96,15 +96,15 @@
     "mcp_servers/derived": {
       "k": 5,
       "cases": 3,
-      "recall_at_1": 0.0,
-      "recall_at_k": 0.6667,
+      "recall_at_1": 0.6667,
+      "recall_at_k": 1.0,
       "decline_correctness": null
     },
     "mcp_servers/paraphrase": {
       "k": 5,
       "cases": 8,
-      "recall_at_1": 0.375,
-      "recall_at_k": 0.75,
+      "recall_at_1": 0.25,
+      "recall_at_k": 0.625,
       "decline_correctness": null
     }
   }
