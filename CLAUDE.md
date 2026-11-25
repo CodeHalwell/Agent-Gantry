@@ -11,6 +11,8 @@ It solves three problems:
 2. **Tool/protocol fragmentation** — register a tool once, emit schemas for OpenAI, Anthropic, Gemini, ~12 agent frameworks, MCP, and A2A.
 3. **Operational blindness** — zero-trust execution with policies, capabilities, timeouts, retries, rate limits, circuit breakers, callbacks, and telemetry.
 
+The project was previously published as `agent-gantry` (import `agent_gantry`, class `AgentGantry`); 0.27.0 renamed it to `dotfetch` / `DotFetch` as a clean break with no alias. Environment variables are `DOTFETCH_*`. Do not reintroduce the old names (the GitHub repository and docs URLs still say `Agent-Gantry`; leave those).
+
 The repo also contains an **Astro + React + TypeScript** documentation site (`src/`, `public/`, `astro.config.mjs`) published to GitHub Pages. This is separate from the Python library.
 
 ## Commands
@@ -94,7 +96,7 @@ Everything funnels through one facade: **`DotFetch`** in `dotfetch/core/fetcher.
 
 ## Repo notes
 
-- Version of record is `pyproject.toml` / `dotfetch/__init__.py` `__version__` (currently `0.26.0`). Keep `package.json`, `package-lock.json`, `uv.lock`, `README.md` and the dated changelog in sync too; `scripts/check_release.py` validates release metadata.
+- Version of record is `pyproject.toml` / `dotfetch/__init__.py` `__version__` (currently `0.27.0`). Keep `package.json`, `package-lock.json`, `uv.lock`, `README.md` and the dated changelog in sync too; `scripts/check_release.py` validates release metadata.
 - `.jules/` holds accumulated performance-optimization learnings (e.g. vectorized MMR, fast token matching) — useful context when optimizing the router or serialization paths.
 - `CHANGELOG.md` should be updated for user-facing changes.
 - Releasing/publishing: see `RELEASING.md` and `PUBLISHING.md`.

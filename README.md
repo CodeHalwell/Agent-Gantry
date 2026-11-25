@@ -4,7 +4,9 @@
 
 *Context is precious. Execution is sacred. Trust is earned.*
 
-dotfetch is a Python library (**v0.26.0**) for building agents that can discover, select, and execute the right tools without flooding every prompt with every schema your organization owns. It combines semantic retrieval, provider schema conversion, secure execution, framework bridges, MCP/A2A interoperability, persistence adapters, and observability into one tool orchestration layer.
+dotfetch is a Python library (**v0.27.0**) for building agents that can discover, select, and execute the right tools without flooding every prompt with every schema your organization owns. It combines semantic retrieval, provider schema conversion, secure execution, framework bridges, MCP/A2A interoperability, persistence adapters, and observability into one tool orchestration layer.
+
+> **Renamed in 0.27.0.** dotfetch was previously published as `agent-gantry`. Version 0.27.0 renamed the import from `agent_gantry` to `dotfetch` and the class from `AgentGantry` to `DotFetch`. This is a clean break: the old imports no longer work.
 
 ## Documentation
 
