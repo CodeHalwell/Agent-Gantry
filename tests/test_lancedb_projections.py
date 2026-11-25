@@ -20,8 +20,8 @@ import tempfile
 import numpy as np
 import pytest
 
-from agent_gantry.schema.skill import Skill, SkillCategory
-from agent_gantry.schema.tool import ToolDefinition
+from dotfetch.schema.skill import Skill, SkillCategory
+from dotfetch.schema.tool import ToolDefinition
 
 pytest.importorskip("lancedb", reason="LanceDB store tests need the lancedb extra")
 
@@ -34,7 +34,7 @@ def _vec() -> list[float]:
 
 @pytest.fixture
 async def store():
-    from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+    from dotfetch.adapters.vector_stores.lancedb import LanceDBVectorStore
 
     store = LanceDBVectorStore(db_path=tempfile.mkdtemp(), dimension=_DIM)
     await store.initialize()

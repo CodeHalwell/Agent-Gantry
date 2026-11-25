@@ -1,9 +1,9 @@
 """Test module B with tools for import testing."""
 
-from agent_gantry import AgentGantry
+from dotfetch import DotFetch
 
-# Create a gantry instance with some tools
-tools = AgentGantry()
+# Create a fetcher instance with some tools
+tools = DotFetch()
 
 
 @tools.register

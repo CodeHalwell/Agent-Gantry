@@ -12,12 +12,12 @@ from typing import Any
 
 import pytest
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-from agent_gantry.adapters.rerankers.base import TextDocument, rerank_texts
-from agent_gantry.adapters.rerankers.cross_encoder import CrossEncoderReranker
-from agent_gantry.schema.skill import Skill
-from agent_gantry.schema.tool import ToolDefinition
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
+from dotfetch.adapters.rerankers.base import TextDocument, rerank_texts
+from dotfetch.adapters.rerankers.cross_encoder import CrossEncoderReranker
+from dotfetch.schema.skill import Skill
+from dotfetch.schema.tool import ToolDefinition
 
 
 class _KeywordReranker:
@@ -99,44 +99,44 @@ def _skills() -> list[Skill]:
 
 
 async def test_skills_can_be_reranked() -> None:
-    gantry = AgentGantry(embedder=SimpleEmbedder(), reranker=_KeywordReranker("refund"))
+    fetcher = DotFetch(embedder=SimpleEmbedder(), reranker=_KeywordReranker("refund"))
     try:
-        await gantry.add_skills(_skills())
+        await fetcher.add_skills(_skills())
 
-        plain = await gantry.retrieve_skills("customer refund form", limit=2)
+        plain = await fetcher.retrieve_skills("customer refund form", limit=2)
         assert plain[0].skill.name == "refund_form"
 
-        reranked = await gantry.retrieve_skills("customer refund form", limit=2, rerank=True)
+        reranked = await fetcher.retrieve_skills("customer refund form", limit=2, rerank=True)
         assert [r.skill.name for r in reranked] == ["refund_policy", "refund_form"]
         assert reranked[0].score == 1.0  # the reranker's score, not the cosine
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_mcp_servers_can_be_reranked() -> None:
     pytest.importorskip("mcp")
-    gantry = AgentGantry(embedder=SimpleEmbedder(), reranker=_KeywordReranker("refund"))
+    fetcher = DotFetch(embedder=SimpleEmbedder(), reranker=_KeywordReranker("refund"))
     try:
         for name, description in (
             ("forms", "The customer refund form and where it is kept."),
             ("policy", "Refund rules: when a refund or a part refund is due."),
             ("cards", "Charge a customer card again."),
         ):
-            gantry.register_mcp_server(name, url=f"https://{name}.example/mcp", description=description)
+            fetcher.register_mcp_server(name, url=f"https://{name}.example/mcp", description=description)
 
-        plain = await gantry.retrieve_mcp_servers("customer refund form", limit=2)
+        plain = await fetcher.retrieve_mcp_servers("customer refund form", limit=2)
         assert plain[0].name == "forms"
 
-        reranked = await gantry.retrieve_mcp_servers("customer refund form", limit=2, rerank=True)
+        reranked = await fetcher.retrieve_mcp_servers("customer refund form", limit=2, rerank=True)
         assert [s.name for s in reranked] == ["policy", "forms"]
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_reranking_is_off_unless_asked_for_and_needs_a_reranker() -> None:
     reranker = _KeywordReranker("refund")
-    with_one = AgentGantry(embedder=SimpleEmbedder(), reranker=reranker)
-    without = AgentGantry(embedder=SimpleEmbedder())
+    with_one = DotFetch(embedder=SimpleEmbedder(), reranker=reranker)
+    without = DotFetch(embedder=SimpleEmbedder())
     try:
         await with_one.add_skills(_skills())
         await without.add_skills(_skills())
@@ -158,9 +158,9 @@ async def test_a_skill_matched_by_its_body_is_reranked_on_that_passage() -> None
     identical texts and could not keep the one the search had found.
     """
     reranker = _KeywordReranker("zebra")
-    gantry = AgentGantry(embedder=SimpleEmbedder(), reranker=reranker)
+    fetcher = DotFetch(embedder=SimpleEmbedder(), reranker=reranker)
     try:
-        await gantry.add_skills(
+        await fetcher.add_skills(
             [
                 Skill(
                     name="keeper_notes_a",
@@ -175,28 +175,28 @@ async def test_a_skill_matched_by_its_body_is_reranked_on_that_passage() -> None
             ]
         )
 
-        plain = await gantry.retrieve_skills("zebra feed barn", limit=2)
+        plain = await fetcher.retrieve_skills("zebra feed barn", limit=2)
         assert plain[0].skill.name == "keeper_notes_b"
 
-        reranked = await gantry.retrieve_skills("zebra feed barn", limit=2, rerank=True)
+        reranked = await fetcher.retrieve_skills("zebra feed barn", limit=2, rerank=True)
         assert reranked[0].skill.name == "keeper_notes_b"
         shown = {d.name.rsplit("_", 1)[0]: d.to_searchable_text() for d in reranker.seen}
         assert "second barn" in shown["keeper_notes_b"]
         assert shown["keeper_notes_b"].startswith("keeper_notes_b")  # its own text still leads
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_a_tool_matched_by_a_piece_is_reranked_on_that_piece() -> None:
     """The matching sentence is past what ``description`` holds, so show it to the reranker."""
-    from agent_gantry.schema.query import ConversationContext, ToolQuery
+    from dotfetch.schema.query import ConversationContext, ToolQuery
 
     tail = "Zebra quagga okapi: use this for striped ungulate questions."
     filler = "Results are paged and times are in UTC unless a zone is given. "
     reranker = _KeywordReranker("zebra")
-    gantry = AgentGantry(embedder=SimpleEmbedder(), reranker=reranker)
+    fetcher = DotFetch(embedder=SimpleEmbedder(), reranker=reranker)
     try:
-        await gantry.add_tool(
+        await fetcher.add_tool(
             ToolDefinition(
                 name="search_archive",
                 description="Search the archive.",
@@ -204,16 +204,16 @@ async def test_a_tool_matched_by_a_piece_is_reranked_on_that_piece() -> None:
                 parameters_schema={"type": "object", "properties": {}},
             )
         )
-        await gantry.add_tool(
+        await fetcher.add_tool(
             ToolDefinition(
                 name="list_animals",
                 description="List the animals in the collection.",
                 parameters_schema={"type": "object", "properties": {}},
             )
         )
-        await gantry.sync()
+        await fetcher.sync()
 
-        result = await gantry.retrieve(
+        result = await fetcher.retrieve(
             ToolQuery(
                 context=ConversationContext(query="zebra quagga okapi striped ungulate"),
                 limit=2,
@@ -230,19 +230,19 @@ async def test_a_tool_matched_by_a_piece_is_reranked_on_that_piece() -> None:
         assert result.tools[0].tool.description == "Search the archive."
         assert shown["list_animals"].description == "List the animals in the collection."
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_a_server_matched_by_its_catalogue_is_reranked_on_that_passage() -> None:
     """A vaguely described server found by a tool it lists; the reranker must see the tool."""
     pytest.importorskip("mcp")
     reranker = _KeywordReranker("backup")
-    gantry = AgentGantry(embedder=SimpleEmbedder(), reranker=reranker)
+    fetcher = DotFetch(embedder=SimpleEmbedder(), reranker=reranker)
     try:
-        gantry.register_mcp_server(
+        fetcher.register_mcp_server(
             "skyhost", url="https://skyhost.example/mcp", description="Platform services."
         )
-        gantry.register_mcp_server(
+        fetcher.register_mcp_server(
             "mailroom", url="https://mailroom.example/mcp", description="Send and search email."
         )
 
@@ -255,14 +255,14 @@ async def test_a_server_matched_by_its_catalogue_is_reranked_on_that_passage() -
                 )
             ]
 
-        gantry._mcp_registry.get_client("skyhost").list_tools = list_tools  # type: ignore[method-assign]
-        await gantry.list_server_tools("skyhost")
+        fetcher._mcp_registry.get_client("skyhost").list_tools = list_tools  # type: ignore[method-assign]
+        await fetcher.list_server_tools("skyhost")
 
-        servers = await gantry.retrieve_mcp_servers("restore the backup", limit=1, rerank=True)
+        servers = await fetcher.retrieve_mcp_servers("restore the backup", limit=1, rerank=True)
 
         assert [s.name for s in servers] == ["skyhost"]
         shown = {d.name.rsplit("_", 1)[0]: d.to_searchable_text() for d in reranker.seen}
         assert "restore backup" in shown["skyhost"]  # from its catalogue
         assert "Platform services." in shown["skyhost"]  # after its own text
     finally:
-        await gantry.close()
+        await fetcher.close()

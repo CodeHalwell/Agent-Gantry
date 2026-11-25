@@ -6,8 +6,8 @@ from unittest.mock import patch
 
 import pytest
 
-from agent_gantry.core.rate_limiter import RateLimiter, RateLimitExceeded
-from agent_gantry.schema.config import RateLimitConfig
+from dotfetch.core.rate_limiter import RateLimiter, RateLimitExceeded
+from dotfetch.schema.config import RateLimitConfig
 
 
 def test_get_key():
@@ -356,8 +356,8 @@ def test_a_falsy_burst_size_is_not_treated_as_unset() -> None:
     import pydantic
     import pytest as _pytest
 
-    from agent_gantry.core.rate_limiter import RateLimiter
-    from agent_gantry.schema.config import RateLimitConfig
+    from dotfetch.core.rate_limiter import RateLimiter
+    from dotfetch.schema.config import RateLimitConfig
 
     with _pytest.raises(pydantic.ValidationError):
         RateLimitConfig(max_calls_per_minute=60, burst_size=0)

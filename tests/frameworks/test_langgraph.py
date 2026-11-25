@@ -12,8 +12,8 @@ import types
 
 import pytest
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
 
 
 class _FakeStructuredTool:
@@ -41,8 +41,8 @@ def fake_langchain(monkeypatch):
 
 
 @pytest.fixture
-async def gantry():
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+async def fetcher():
+    g = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
     @g.register(tags=["email"])
     def send_email(to: str, body: str = "") -> str:
@@ -58,11 +58,11 @@ async def gantry():
     return g
 
 
-async def test_spec_to_langgraph_builds_native_tool(fake_langchain, gantry):
-    from agent_gantry.integrations.frameworks.base import GantryToolset
-    from agent_gantry.langgraph import LangGraphAdapter
+async def test_spec_to_langgraph_builds_native_tool(fake_langchain, fetcher):
+    from dotfetch.integrations.frameworks.base import DotFetchToolset
+    from dotfetch.langgraph import LangGraphAdapter
 
-    specs = await GantryToolset(gantry).select("send an email", limit=1)
+    specs = await DotFetchToolset(fetcher).select("send an email", limit=1)
     spec = specs[0]
     tool = LangGraphAdapter.convert(spec)
 
@@ -73,10 +73,10 @@ async def test_spec_to_langgraph_builds_native_tool(fake_langchain, gantry):
     assert await tool.coroutine(to="boss@x.com") == "sent:boss@x.com"
 
 
-async def test_for_langgraph_returns_tool_list(fake_langchain, gantry):
-    from agent_gantry.langgraph import LangGraphAdapter
+async def test_for_langgraph_returns_tool_list(fake_langchain, fetcher):
+    from dotfetch.langgraph import LangGraphAdapter
 
-    tools = await LangGraphAdapter(gantry).select("send an email", limit=2)
+    tools = await LangGraphAdapter(fetcher).select("send an email", limit=2)
 
     assert isinstance(tools, list)
     assert len(tools) >= 1

@@ -20,8 +20,8 @@ from typing import Any
 
 import pytest
 
-from agent_gantry import AgentGantry, StreamingToolCallAccumulator, extract_tool_calls
-from agent_gantry.schema.tool import ToolDefinition
+from dotfetch import DotFetch, StreamingToolCallAccumulator, extract_tool_calls
+from dotfetch.schema.tool import ToolDefinition
 
 
 class _Obj:
@@ -161,8 +161,8 @@ class TestExtractToolCalls:
 
 
 @pytest.fixture
-async def gantry() -> AgentGantry:
-    g = AgentGantry()
+async def fetcher() -> DotFetch:
+    g = DotFetch()
 
     async def weather(city: str) -> dict[str, Any]:
         return {"city": city, "temp_c": 18}
@@ -209,29 +209,29 @@ def _openai_response(*calls: tuple[str, str, str]) -> dict[str, Any]:
 
 
 class TestExecuteToolCalls:
-    async def test_parallel_calls_are_all_executed(self, gantry: AgentGantry) -> None:
+    async def test_parallel_calls_are_all_executed(self, fetcher: DotFetch) -> None:
         response = _openai_response(
             ("call_1", "get_weather", '{"city": "Paris"}'),
             ("call_2", "get_weather", '{"city": "Tokyo"}'),
         )
 
-        results = await gantry.execute_tool_calls(response)
+        results = await fetcher.execute_tool_calls(response)
 
         assert len(results) == 2
         assert [r["tool_call_id"] for r in results] == ["call_1", "call_2"]
         assert "Paris" in results[0]["content"]
         assert "Tokyo" in results[1]["content"]
 
-    async def test_results_are_json_not_python_repr(self, gantry: AgentGantry) -> None:
-        results = await gantry.execute_tool_calls(
+    async def test_results_are_json_not_python_repr(self, fetcher: DotFetch) -> None:
+        results = await fetcher.execute_tool_calls(
             _openai_response(("c", "get_weather", '{"city": "Oslo"}'))
         )
 
         assert results[0]["content"] == '{"city": "Oslo", "temp_c": 18}'
 
-    async def test_a_failing_tool_is_reported_not_raised(self, gantry: AgentGantry) -> None:
+    async def test_a_failing_tool_is_reported_not_raised(self, fetcher: DotFetch) -> None:
         """The model needs to see the failure; raising would end the turn."""
-        results = await gantry.execute_tool_calls(
+        results = await fetcher.execute_tool_calls(
             _openai_response(("c", "always_fails", "{}"))
         )
 
@@ -239,9 +239,9 @@ class TestExecuteToolCalls:
         assert "Error:" in results[0]["content"]
 
     async def test_one_failure_does_not_lose_the_other_results(
-        self, gantry: AgentGantry
+        self, fetcher: DotFetch
     ) -> None:
-        results = await gantry.execute_tool_calls(
+        results = await fetcher.execute_tool_calls(
             _openai_response(
                 ("ok", "get_weather", '{"city": "Rome"}'),
                 ("bad", "always_fails", "{}"),
@@ -252,11 +252,11 @@ class TestExecuteToolCalls:
         assert "Rome" in results[0]["content"]
         assert "Error:" in results[1]["content"]
 
-    async def test_no_tool_calls_returns_empty(self, gantry: AgentGantry) -> None:
-        assert await gantry.execute_tool_calls({"choices": [{"message": {}}]}) == []
+    async def test_no_tool_calls_returns_empty(self, fetcher: DotFetch) -> None:
+        assert await fetcher.execute_tool_calls({"choices": [{"message": {}}]}) == []
 
     async def test_anthropic_dialect_formats_tool_result_blocks(
-        self, gantry: AgentGantry
+        self, fetcher: DotFetch
     ) -> None:
         response = {
             "content": [
@@ -269,25 +269,25 @@ class TestExecuteToolCalls:
             ]
         }
 
-        results = await gantry.execute_tool_calls(response, dialect="anthropic")
+        results = await fetcher.execute_tool_calls(response, dialect="anthropic")
 
         assert results[0]["type"] == "tool_result"
         assert results[0]["tool_use_id"] == "toolu_1"
         assert "is_error" not in results[0]
 
-    async def test_anthropic_failure_sets_is_error(self, gantry: AgentGantry) -> None:
+    async def test_anthropic_failure_sets_is_error(self, fetcher: DotFetch) -> None:
         response = {
             "content": [
                 {"type": "tool_use", "id": "t", "name": "always_fails", "input": {}}
             ]
         }
 
-        results = await gantry.execute_tool_calls(response, dialect="anthropic")
+        results = await fetcher.execute_tool_calls(response, dialect="anthropic")
 
         assert results[0]["is_error"] is True
 
-    async def test_sequential_mode_preserves_order(self, gantry: AgentGantry) -> None:
-        results = await gantry.execute_tool_calls(
+    async def test_sequential_mode_preserves_order(self, fetcher: DotFetch) -> None:
+        results = await fetcher.execute_tool_calls(
             _openai_response(
                 ("a", "get_weather", '{"city": "A"}'),
                 ("b", "get_weather", '{"city": "B"}'),
@@ -297,13 +297,13 @@ class TestExecuteToolCalls:
 
         assert [r["tool_call_id"] for r in results] == ["a", "b"]
 
-    async def test_accepts_already_extracted_payloads(self, gantry: AgentGantry) -> None:
+    async def test_accepts_already_extracted_payloads(self, fetcher: DotFetch) -> None:
         """The streaming path yields payloads, not a response object."""
         payloads = extract_tool_calls(
             _openai_response(("c", "get_weather", '{"city": "Bern"}'))
         )
 
-        results = await gantry.execute_tool_calls(payloads)
+        results = await fetcher.execute_tool_calls(payloads)
 
         assert "Bern" in results[0]["content"]
 
@@ -443,7 +443,7 @@ class TestStreamingAccumulation:
             StreamingToolCallAccumulator("gemini")
 
     async def test_streamed_calls_feed_straight_into_execution(
-        self, gantry: AgentGantry
+        self, fetcher: DotFetch
     ) -> None:
         """The whole point: stream -> accumulate -> execute, with no hand-rolling."""
         acc = StreamingToolCallAccumulator("openai")
@@ -457,7 +457,7 @@ class TestStreamingAccumulation:
         ]:
             acc.add_chunk(chunk)
 
-        results = await gantry.execute_tool_calls(acc.tool_calls())
+        results = await fetcher.execute_tool_calls(acc.tool_calls())
 
         assert "Doha" in results[0]["content"]
 

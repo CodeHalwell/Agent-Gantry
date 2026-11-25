@@ -1,7 +1,7 @@
 """
 Choosing MCP servers and Agent Skills without embeddings.
 
-``SystemOneSelector`` covers all three of Gantry's catalogues, not just tools. This
+``SystemOneSelector`` covers all three of dotfetch's catalogues, not just tools. This
 demo drives the two that the tool-focused demos do not show:
 
 * ``retrieve_mcp_servers()`` — which of your connected MCP servers a prompt
@@ -14,7 +14,7 @@ needs an embedder, a vector store or a sync.
 
 Run with::
 
-    pip install 'agent-gantry[system-one,mcp]'
+    pip install 'dotfetch[system-one,mcp]'
     export TYPESAFE_API_KEY=...
     python examples/protocols/system_one_mcp_selection_demo.py
 
@@ -27,7 +27,7 @@ from __future__ import annotations
 import asyncio
 import os
 
-from agent_gantry import AgentGantry, Skill, SystemOneSelector
+from dotfetch import DotFetch, Skill, SystemOneSelector
 
 SERVERS = [
     ("filesystem", "Reads, writes and lists files on the local disk.",
@@ -61,10 +61,10 @@ async def main() -> None:
     if not os.getenv("TYPESAFE_API_KEY"):
         print("TYPESAFE_API_KEY is not set — selection will fail open to semantic search.\n")
 
-    gantry = AgentGantry(selector=SystemOneSelector(threshold=0.4))
-    if gantry._mcp_registry is None:
-        print("MCP support is not installed: pip install agent-gantry[mcp]")
-        await gantry.close()
+    fetcher = DotFetch(selector=SystemOneSelector(threshold=0.4))
+    if fetcher._mcp_registry is None:
+        print("MCP support is not installed: pip install dotfetch[mcp]")
+        await fetcher.close()
         return
 
     try:
@@ -72,7 +72,7 @@ async def main() -> None:
         # matters here — the point is to decide which ones are worth
         # connecting to before paying for any of them.
         for name, description, examples in SERVERS:
-            gantry.register_mcp_server(
+            fetcher.register_mcp_server(
                 name,
                 ["echo", name],  # a real server would be e.g. ["npx", "-y", "@mcp/server-fs"]
                 description=description,
@@ -80,29 +80,29 @@ async def main() -> None:
             )
 
         for name, description in SKILLS:
-            await gantry.add_skill(
+            await fetcher.add_skill(
                 Skill(name=name, description=description, content=f"The body of {name}.")
             )
 
         print("MCP servers")
         for query in QUERIES:
-            servers = await gantry.retrieve_mcp_servers(query, limit=2)
+            servers = await fetcher.retrieve_mcp_servers(query, limit=2)
             names = [server.name for server in servers] or ["(none relevant)"]
             print(f"  {query[:48]:<48} -> {names}")
 
         print("\nAgent Skills")
         for query in QUERIES:
-            found = await gantry.retrieve_skills(query, limit=2)
+            found = await fetcher.retrieve_skills(query, limit=2)
             names = [f"{r.skill.name} {r.score:.2f}" for r in found] or ["(none relevant)"]
             print(f"  {query[:48]:<48} -> {names}")
 
         # Skills are meant to be injected verbatim, so this is the form you
         # would actually append to a system prompt.
-        prompt = await gantry.retrieve_skills_as_prompt(QUERIES[0], limit=1)
+        prompt = await fetcher.retrieve_skills_as_prompt(QUERIES[0], limit=1)
         print(f"\nSystem-prompt fragment for {QUERIES[0]!r}:")
         print("  " + (prompt.strip().replace("\n", "\n  ") if prompt else "(nothing to inject)"))
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 if __name__ == "__main__":

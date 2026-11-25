@@ -2,7 +2,7 @@
 Plugging a custom embedder into the router.
 
 Implements the ``EmbeddingAdapter`` protocol with a deterministic dummy
-embedder and hands it to ``AgentGantry(embedder=...)``. The vectors carry no
+embedder and hands it to ``DotFetch(embedder=...)``. The vectors carry no
 meaning, so the ranking is arbitrary; the point is that the whole
 register -> sync -> retrieve pipeline runs on your own adapter. No API key,
 no model download.
@@ -15,8 +15,8 @@ Run with::
 import asyncio
 import random
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.base import EmbeddingAdapter
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.base import EmbeddingAdapter
 
 
 # 1. Define a Custom Embedder
@@ -52,22 +52,22 @@ class RandomEmbedder(EmbeddingAdapter):
 
 
 async def main():
-    # 2. Initialize Gantry with the custom embedder
+    # 2. Initialize dotfetch with the custom embedder
     embedder = RandomEmbedder(dimension=4)
-    gantry = AgentGantry(embedder=embedder)
+    fetcher = DotFetch(embedder=embedder)
     try:
 
-        @gantry.register(examples=["run tool A", "use the first tool"])
+        @fetcher.register(examples=["run tool A", "use the first tool"])
         def tool_a() -> str:
             """Tool A description."""
             return "A"
 
-        @gantry.register(examples=["run tool B", "use the second tool"])
+        @fetcher.register(examples=["run tool B", "use the second tool"])
         def tool_b() -> str:
             """Tool B description."""
             return "B"
 
-        await gantry.sync()
+        await fetcher.sync()
 
         print("--- Custom Adapter Demo ---")
         print(f"Using Embedder: {embedder.model_name}")
@@ -75,12 +75,12 @@ async def main():
         # 3. Retrieve tools
         # Since embeddings are random/length-based, semantic relevance is meaningless here,
         # but it proves the pipeline works with custom components.
-        tools = await gantry.retrieve_tools("query")
+        tools = await fetcher.retrieve_tools("query")
         print(f"Retrieved {len(tools)} tools using custom embedder.")
         for t in tools:
             print(f" - {t['function']['name']}")
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 
-from agent_gantry.core.router import _get_token_pattern
+from dotfetch.core.router import _get_token_pattern
 
 
 def test_get_token_pattern_exact_match():

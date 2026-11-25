@@ -22,11 +22,11 @@ from typing import Any, TypedDict
 import pytest
 from pydantic import BaseModel, field_validator
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-from agent_gantry.schema.execution import ToolCall
-from agent_gantry.schema.introspection import build_argument_coercers
-from agent_gantry.schema.tool import ToolDefinition
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
+from dotfetch.schema.execution import ToolCall
+from dotfetch.schema.introspection import build_argument_coercers
+from dotfetch.schema.tool import ToolDefinition
 
 
 class Payload(BaseModel):
@@ -96,7 +96,7 @@ def test_only_types_whose_json_form_differs_are_coerced():
 def test_the_typing_optional_spelling_is_handled_too():
     """``Optional[X]`` and ``X | None`` are different origins at runtime
     (``typing.Union`` vs ``types.UnionType``); both must be recognized."""
-    from agent_gantry.schema.introspection import _needs_reconstruction
+    from dotfetch.schema.introspection import _needs_reconstruction
 
     # Built at runtime rather than written as an annotation: the point is
     # the ``typing.Union`` origin, which the modern spelling doesn't produce.
@@ -117,7 +117,7 @@ def test_container_generics_recurse_into_their_members():
     through every check and the handler got a list of raw dicts — the same
     failure reconstruction exists to fix, one container level up
     (PR #381 review)."""
-    from agent_gantry.schema.introspection import _needs_reconstruction
+    from dotfetch.schema.introspection import _needs_reconstruction
 
     for needs in (
         list[Payload],
@@ -133,8 +133,8 @@ def test_container_generics_recurse_into_their_members():
 
 
 @pytest.fixture
-async def gantry() -> AgentGantry:
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+async def fetcher() -> DotFetch:
+    g = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
     @g.register(tags=["demo"])
     def use_model(p: Payload) -> str:
@@ -181,34 +181,34 @@ async def gantry() -> AgentGantry:
     return g
 
 
-async def test_nested_model_reaches_the_handler_as_its_declared_type(gantry):
-    result = await gantry.execute(
+async def test_nested_model_reaches_the_handler_as_its_declared_type(fetcher):
+    result = await fetcher.execute(
         ToolCall(tool_name="use_model", arguments={"p": {"x": 1}})
     )
     assert result.status.value == "success", result.error
     assert result.result == "x=1"
 
 
-async def test_dataclass_reaches_the_handler_as_its_declared_type(gantry):
-    result = await gantry.execute(
+async def test_dataclass_reaches_the_handler_as_its_declared_type(fetcher):
+    result = await fetcher.execute(
         ToolCall(tool_name="use_dataclass", arguments={"a": {"street": "Main"}})
     )
     assert result.status.value == "success", result.error
     assert result.result == "street=Main"
 
 
-async def test_array_becomes_the_declared_set(gantry):
-    result = await gantry.execute(
+async def test_array_becomes_the_declared_set(fetcher):
+    result = await fetcher.execute(
         ToolCall(tool_name="use_set", arguments={"tags": ["a", "b"]})
     )
     assert result.status.value == "success", result.error
     assert result.result == "set:['a', 'b']"
 
 
-async def test_scalar_arguments_are_passed_through_untouched(gantry):
+async def test_scalar_arguments_are_passed_through_untouched(fetcher):
     """The conservative half: a handler taking scalars must receive exactly
     what it received before this behaviour existed."""
-    result = await gantry.execute(
+    result = await fetcher.execute(
         ToolCall(tool_name="use_scalars", arguments={"name": "n", "count": 2})
     )
     assert result.status.value == "success", result.error
@@ -221,7 +221,7 @@ async def test_an_unconvertible_value_is_a_validation_error_not_a_fallback():
     Reaching it needs a schema *looser* than the annotation — which is exactly
     what an imported (MCP/OpenAPI) or hand-written schema can be, and what a
     Pydantic ``field_validator`` whose invariant JSON Schema can't express
-    produces even for a schema Gantry emitted itself. Here the schema says
+    produces even for a schema dotfetch emitted itself. Here the schema says
     "any object" while the handler says ``Payload``, so ``{"y": 2}`` passes
     validation and then fails reconstruction.
 
@@ -233,7 +233,7 @@ async def test_an_unconvertible_value_is_a_validation_error_not_a_fallback():
     tool, or the tool misbehaves silently. A clear rejection is the honest
     outcome (PR #381 review).
     """
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+    g = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
     def loose(p: Payload) -> str:
         """Report what the handler actually received."""
@@ -267,11 +267,11 @@ async def test_an_unconvertible_value_is_a_validation_error_not_a_fallback():
     assert "p" in rejected.error
 
 
-async def test_every_reconstructed_kind_arrives_typed_end_to_end(gantry):
+async def test_every_reconstructed_kind_arrives_typed_end_to_end(fetcher):
     """The unit test above only checks *which* parameters get a coercer. This
     checks dispatch actually produces the declared types — the gap that let a
     broken fallback test go unnoticed (PR #381 review)."""
-    result = await gantry.execute(
+    result = await fetcher.execute(
         ToolCall(
             tool_name="use_many",
             arguments={
@@ -300,7 +300,7 @@ async def test_composite_enum_member_is_recovered_from_its_json_array():
     so a provider sends ``[0, 0]`` — which Pydantic can't match back to the
     member value ``(0, 0)``. The handler received the raw list instead of the
     member (PR #381 review)."""
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+    g = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
     @g.register(tags=["demo"])
     def use_point(pt: Point) -> str:
@@ -316,7 +316,7 @@ async def test_composite_enum_member_is_recovered_from_its_json_array():
 async def test_composite_enum_recovery_reaches_nested_positions():
     """Applied to the whole annotation, not just a bare ``Enum`` parameter, so
     a container or optional carries it too."""
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+    g = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
     @g.register(tags=["demo"])
     def nested(points: list[Point], maybe: Point | None = None) -> str:
@@ -334,7 +334,7 @@ async def test_composite_enum_recovery_reaches_nested_positions():
 
 async def test_a_value_matching_no_member_is_still_rejected():
     """Recovery must not become a way to smuggle a non-member through."""
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+    g = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
     @g.register(tags=["demo"])
     def use_point(pt: Point) -> str:
@@ -350,20 +350,20 @@ async def test_a_value_matching_no_member_is_still_rejected():
 def test_plain_scalar_enums_need_no_recovery():
     """A ``str``/``int`` enum already round-trips, so its annotation is left
     exactly as declared rather than being wrapped."""
-    from agent_gantry.schema.introspection import _with_enum_recovery
+    from dotfetch.schema.introspection import _with_enum_recovery
 
     assert _with_enum_recovery(Mode) is Mode
     assert _with_enum_recovery(list[Mode]) == list[Mode]
     assert _with_enum_recovery(Point) is not Point
 
 
-async def test_heterogeneous_tuple_is_typed_position_by_position(gantry):
+async def test_heterogeneous_tuple_is_typed_position_by_position(fetcher):
     """``tuple[int, str]`` has no single item type, so the emitted schema used
     to be a bare ``{"type": "array"}``. That accepted ``["bad", 1]``,
     reconstruction then couldn't build the tuple, and the fallback handed the
     handler the raw list — the exact failure reconstruction exists to prevent
     (PR #381 review)."""
-    tool = await gantry.get_tool("use_many")
+    tool = await fetcher.get_tool("use_many")
     assert tool is not None
     pair = tool.parameters_schema["properties"]["pair"]
     assert pair["prefixItems"] == [{"type": "integer"}, {"type": "string"}]
@@ -371,7 +371,7 @@ async def test_heterogeneous_tuple_is_typed_position_by_position(gantry):
 
     # Right arity, wrong order: rejected at validation rather than reaching
     # the handler as a ``list``.
-    swapped = await gantry.execute(
+    swapped = await fetcher.execute(
         ToolCall(
             tool_name="use_many",
             arguments={
@@ -388,7 +388,7 @@ async def test_heterogeneous_tuple_is_typed_position_by_position(gantry):
     assert swapped.error_type == "ValidationError"
 
     # And the arity itself is pinned.
-    short = await gantry.execute(
+    short = await fetcher.execute(
         ToolCall(
             tool_name="use_many",
             arguments={
@@ -408,7 +408,7 @@ async def test_heterogeneous_tuple_is_typed_position_by_position(gantry):
 def test_a_variadic_tuple_keeps_its_homogeneous_item_type():
     """``tuple[int, ...]`` *does* have a single item type — the positional
     branch must not steal it and pin a length of two."""
-    from agent_gantry.schema.introspection import _type_to_json_schema
+    from dotfetch.schema.introspection import _type_to_json_schema
 
     schema = _type_to_json_schema(tuple[int, ...])
     assert schema["items"] == {"type": "integer"}
@@ -422,7 +422,7 @@ def test_optional_members_of_a_container_keep_their_null():
     container member has no such escape hatch, so collapsing the union there
     left the schema forbidding a value the handler's own annotation accepts
     (PR #381 review)."""
-    from agent_gantry.schema.introspection import _type_to_json_schema
+    from dotfetch.schema.introspection import _type_to_json_schema
 
     assert _type_to_json_schema(list[int | None]) == {
         "type": "array",
@@ -452,7 +452,7 @@ def test_optional_members_of_a_container_keep_their_null():
 async def test_a_null_container_member_survives_validation():
     """End-to-end: the handler declares ``list[int | None]``, so ``[1, None, 2]``
     is a call it accepts and validation must not refuse."""
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+    g = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
     @g.register(tags=["demo"])
     def count_present(values: list[int | None]) -> str:
@@ -478,7 +478,7 @@ def test_the_coercer_cache_evicts_rather_than_stopping():
     """A hard cap with no eviction pins the first N handlers for the life of
     the process and re-inspects every handler after them on *every* call. The
     bound has to evict (PR #381 review)."""
-    import agent_gantry.core.executor as executor_module
+    import dotfetch.core.executor as executor_module
 
     original_max = executor_module._COERCER_CACHE_MAX
     original_cache = executor_module._COERCER_CACHE.copy()
@@ -519,7 +519,7 @@ def test_every_fixed_length_tuple_pins_its_arity():
     shared item type — advertised an array of any length. ``[1]`` for
     ``tuple[int, int]`` then validated, reconstruction failed, and the
     fallback handed the handler a raw list (PR #381 review)."""
-    from agent_gantry.schema.introspection import _type_to_json_schema
+    from dotfetch.schema.introspection import _type_to_json_schema
 
     assert _type_to_json_schema(tuple[int, int]) == {
         "type": "array",
@@ -546,7 +546,7 @@ async def test_a_short_homogeneous_tuple_is_rejected_not_reconstructed():
     """End-to-end consequence of the bounds above, on the branch that lacked
     them: ``tuple[int, int]`` shares one item type, so it never had
     ``prefixItems`` to carry the arity."""
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+    g = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
     @g.register(tags=["demo"])
     def span(bounds: tuple[int, int]) -> str:
@@ -570,7 +570,7 @@ def test_a_mapping_keyed_by_anything_but_str_needs_rebuilding():
     """JSON object keys are always strings, so a mapping annotated otherwise
     never arrives as itself — however simple its *values* are, which is all
     this predicate used to look at (PR #381 review)."""
-    from agent_gantry.schema.introspection import _needs_reconstruction
+    from dotfetch.schema.introspection import _needs_reconstruction
 
     assert _needs_reconstruction(dict[int, str]) is True
     assert _needs_reconstruction(dict[uuid.UUID, str]) is True
@@ -586,7 +586,7 @@ def test_a_mapping_keyed_by_anything_but_str_needs_rebuilding():
 async def test_integer_mapping_keys_reach_the_handler_as_integers():
     """``{"1": "a"}`` is the only thing a provider can send for
     ``dict[int, str]``, and the handler must still get ``{1: "a"}``."""
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+    g = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
     @g.register(tags=["demo"])
     def sum_keys(counts: dict[int, str]) -> str:
@@ -607,7 +607,7 @@ def test_bare_container_and_bytes_annotations_are_rebuilt_too():
     introspection still advertised them as JSON arrays, leaving the handler a
     ``list``. Bare ``bytes`` is the same story one type over (PR #381
     review)."""
-    from agent_gantry.schema.introspection import _needs_reconstruction
+    from dotfetch.schema.introspection import _needs_reconstruction
 
     for bare in (set, frozenset, tuple, bytes):
         assert _needs_reconstruction(bare) is True, bare
@@ -618,7 +618,7 @@ def test_bare_container_and_bytes_annotations_are_rebuilt_too():
 
 
 async def test_a_bare_set_annotation_reaches_the_handler_as_a_set():
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+    g = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
     @g.register(tags=["demo"])
     def dedupe(tags: set) -> str:
@@ -648,7 +648,7 @@ async def test_a_malformed_formatted_string_is_rejected_not_passed_through():
     reconstruction then failed, and the fallback handed the raw ``str`` to a
     handler annotated ``datetime`` — reported as a success. The format is
     enforced with the same parser reconstruction uses (PR #381 review)."""
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+    g = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
     @g.register(tags=["demo"])
     def when(at: datetime.datetime) -> str:
@@ -667,12 +667,12 @@ async def test_a_malformed_formatted_string_is_rejected_not_passed_through():
     assert bad.error_type == "ValidationError"
 
 
-def test_only_the_formats_gantry_reconstructs_are_enforced():
+def test_only_the_formats_fetcher_reconstructs_are_enforced():
     """``format`` is an annotation by default in JSON Schema. Enforcing every
     one of them would reject calls that work against an imported schema using
-    ``email``/``uri`` loosely; these four are different because Gantry emits
+    ``email``/``uri`` loosely; these four are different because dotfetch emits
     them precisely because the handler's annotation demands them."""
-    from agent_gantry.schema.base import check_json_constraints
+    from dotfetch.schema.base import check_json_constraints
 
     for fmt, ok, bad in (
         ("date-time", "2026-08-27T00:00:00", "not-a-date"),
@@ -696,7 +696,7 @@ async def test_an_invariant_json_schema_cannot_express_is_still_terminal():
     validation *cannot* have ruled the value out, so passing the raw mapping
     through hands a ``dict`` to a handler annotated with the model
     (PR #381 review)."""
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+    g = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
     @g.register(tags=["demo"])
     def use_positive(p: Positive) -> str:
@@ -720,7 +720,7 @@ async def test_a_formatted_value_survives_the_framework_dispatch_boundary():
     a real ``datetime`` back. The canonical schema types that property as a
     JSON string, so it has to be serialized before dispatch or a *valid* call
     is rejected (PR #381 review)."""
-    from agent_gantry.integrations.frameworks.base import _json_native
+    from dotfetch.integrations.frameworks.base import _json_native
 
     formatted = {"type": "string", "format": "date-time"}
     assert _json_native(datetime.datetime(2026, 8, 27), formatted) == "2026-08-27T00:00:00"
@@ -743,7 +743,7 @@ def test_every_matching_pattern_property_restores_its_own_format():
     ``format`` declared on a later matching pattern was never applied and the
     value reached the executor as a live ``datetime`` for ``type: string`` to
     reject (PR #385 review)."""
-    from agent_gantry.integrations.frameworks.base import _json_native
+    from dotfetch.integrations.frameworks.base import _json_native
 
     # ``a_created_at`` matches both; only the second names the format.
     schema = {
@@ -794,7 +794,7 @@ def test_a_declared_key_still_gets_its_pattern_properties_format():
     a ``format`` living only on the matching pattern was skipped whenever the
     key was also declared, and the executor rejected the live ``datetime``
     against the property's own ``type: string`` (PR #386 review)."""
-    from agent_gantry.integrations.frameworks.base import _json_native
+    from dotfetch.integrations.frameworks.base import _json_native
 
     stamped = datetime.datetime(2026, 8, 27, 22, 30)
     mixed = {
@@ -831,7 +831,7 @@ def test_the_ref_budget_bounds_expansion_not_every_visited_node():
     replaced with ``{}`` — a ``type`` string, a ``required`` list — and a model
     wide enough to exhaust it emitted malformed metadata a provider rejects
     rather than merely unconstrained subschemas (PR #381 review)."""
-    from agent_gantry.schema import introspection
+    from dotfetch.schema import introspection
 
     original = introspection._MAX_REF_NODES
     introspection._MAX_REF_NODES = 3
@@ -865,7 +865,7 @@ async def test_a_rejected_argument_does_not_degrade_tool_health():
     caller could disable a healthy tool for everyone — the valid call that
     followed came back ``CIRCUIT_OPEN``. The schema validation path has always
     left health alone; this now matches it (PR #381 review)."""
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+    g = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
     @g.register(tags=["demo"])
     def use_positive(p: Positive) -> str:
@@ -895,7 +895,7 @@ def test_bare_collection_abcs_are_classified_like_their_concrete_kin():
     advertised a *string* for a parameter needing a mapping, and the executor
     then rejected the correctly shaped object a caller sent. The parameterized
     forms were already handled (PR #381 review)."""
-    from agent_gantry.schema.introspection import (
+    from dotfetch.schema.introspection import (
         _needs_reconstruction,
         _type_to_json_schema,
     )
@@ -931,7 +931,7 @@ async def test_a_bare_mapping_annotation_accepts_an_object():
     falls back to a string schema — the test would then pass against the very
     bug it exists to catch.
     """
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+    g = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
     @g.register(tags=["demo"])
     def count_keys(m: abc.Mapping) -> str:
@@ -962,7 +962,7 @@ def test_a_parameterized_generic_never_takes_the_direct_type_branch():
     """
     import collections.abc as module_abc
 
-    from agent_gantry.schema.introspection import _type_to_json_schema
+    from dotfetch.schema.introspection import _type_to_json_schema
 
     assert _type_to_json_schema(dict[str, int]) == {
         "type": "object",
@@ -998,7 +998,7 @@ def test_a_null_can_itself_be_a_value_worth_rebuilding():
     null is never worth rebuilding. An ``Enum`` with a ``None``-valued member
     emits ``enum: [null]``, and a call supplying null reached the handler as
     raw ``None`` rather than the member (PR #381 review)."""
-    from agent_gantry.core.executor import ArgumentReconstructionError, _reconstructed
+    from dotfetch.core.executor import ArgumentReconstructionError, _reconstructed
 
     def use_mode(mode: NullableMode) -> None: ...
 
@@ -1021,7 +1021,7 @@ def test_a_null_can_itself_be_a_value_worth_rebuilding():
 
 
 async def test_a_null_enum_member_reaches_the_handler_end_to_end():
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+    g = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
     @g.register(tags=["demo"])
     def read_mode(mode: NullableMode) -> str:
@@ -1047,7 +1047,7 @@ def test_a_typeddict_container_needs_nothing_but_its_members_might():
     itself — but a member annotated ``datetime``/``Enum``/``set`` does not, and
     returning ``False`` unconditionally installed no coercer at all
     (PR #381 review)."""
-    from agent_gantry.schema.introspection import _needs_reconstruction
+    from dotfetch.schema.introspection import _needs_reconstruction
 
     assert _needs_reconstruction(RichPayload) is True
     # The conservative half: a TypedDict of scalars still arrives as itself.
@@ -1059,7 +1059,7 @@ async def test_typed_members_of_a_typeddict_reach_the_handler_rebuilt():
     recognizes ``typing_extensions.TypedDict`` before 3.12, so building the
     adapter from a standard-library one silently produced no coercer on
     exactly the versions the schema path already works around."""
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+    g = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
     @g.register(tags=["demo"])
     def use_rich(p: RichPayload) -> str:
@@ -1094,7 +1094,7 @@ def test_a_concrete_sequence_that_is_not_a_list_is_rebuilt():
     rebuild whenever the JSON form — a ``list`` — is not already an instance
     of the declared container.
     """
-    from agent_gantry.schema.introspection import (
+    from dotfetch.schema.introspection import (
         _needs_reconstruction,
         _type_to_json_schema,
     )
@@ -1121,7 +1121,7 @@ def test_a_concrete_sequence_that_is_not_a_list_is_rebuilt():
 async def test_a_deque_parameter_reaches_the_handler_as_a_deque():
     """End-to-end consequence: the only thing distinguishing a ``deque`` from
     the list it arrives as is the API the handler then calls on it."""
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+    g = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
     @g.register(tags=["demo"])
     def drain(items: collections.deque[int]) -> str:
@@ -1144,7 +1144,7 @@ def test_the_empty_tuple_pins_a_length_of_zero():
     depending on version, so the helper is asserted on both directly rather
     than only through whichever spelling this interpreter happens to use.
     """
-    from agent_gantry.schema.introspection import (
+    from dotfetch.schema.introspection import (
         _fixed_tuple_args,
         _type_to_json_schema,
     )
@@ -1170,7 +1170,7 @@ async def test_a_non_empty_array_for_an_empty_tuple_is_rejected():
     rebuilding it, meaning the schema a provider read had advertised the value
     as acceptable. With the bounds it is the schema's own refusal, phrased as
     the arity violation it is."""
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+    g = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
     @g.register(tags=["demo"])
     def sentinel(marker: tuple[()]) -> str:
@@ -1199,7 +1199,7 @@ def test_a_formatted_value_is_restored_at_every_depth_it_can_reach():
     ``additionalProperties``, so a signature-reading framework hands back a
     *container* of real objects — and every element was then rejected against
     the canonical formatted-string schema (PR #381 review)."""
-    from agent_gantry.integrations.frameworks.base import _json_native
+    from dotfetch.integrations.frameworks.base import _json_native
 
     stamp = datetime.datetime(2026, 8, 27)
     iso = "2026-08-27T00:00:00"
@@ -1242,9 +1242,9 @@ async def test_a_container_of_formatted_values_survives_the_dispatch_boundary():
     """End-to-end through the framework spec, which is where the rejection
     happened: the signature says ``list[datetime]``, so the value handed back
     is a list of real ``datetime`` objects."""
-    from agent_gantry.integrations.frameworks.base import spec_from_tool
+    from dotfetch.integrations.frameworks.base import spec_from_tool
 
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+    g = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
     @g.register(tags=["demo"])
     def log_events(stamps: list[datetime.datetime], by_id: dict[str, uuid.UUID]) -> str:
@@ -1270,7 +1270,7 @@ def test_a_concrete_mapping_that_is_not_a_dict_is_rebuilt():
     both counts — was advertised as a JSON object and reported as needing
     nothing. The handler got a plain ``dict`` and ``move_to_end()`` raised
     (PR #381 review)."""
-    from agent_gantry.schema.introspection import (
+    from dotfetch.schema.introspection import (
         _needs_reconstruction,
         _type_to_json_schema,
     )
@@ -1315,7 +1315,7 @@ async def test_an_ordered_mapping_reaches_the_handler_as_its_declared_type():
     """End-to-end: as with the deque, the only thing distinguishing an
     ``OrderedDict`` from the dict it arrives as is the API the handler then
     calls on it."""
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+    g = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
     @g.register(tags=["demo"])
     def promote(counts: collections.OrderedDict[str, int]) -> str:
@@ -1350,7 +1350,7 @@ def test_a_memberless_enum_does_not_emit_an_invalid_enum():
     It degrades exactly as a non-JSON-representable member set already does.
     The annotation is uninhabited either way, so the call still fails, but at
     dispatch and with a message naming the real problem."""
-    from agent_gantry.schema.introspection import (
+    from dotfetch.schema.introspection import (
         _type_to_json_schema,
         build_parameters_schema,
     )
@@ -1383,7 +1383,7 @@ def test_a_bare_concrete_sequence_subclass_is_rebuilt():
     where the check was an exact-type membership naming only
     ``set``/``frozenset``/``tuple`` — a bare ``deque`` was advertised as an
     array and rebuilt into nothing (PR #381 review)."""
-    from agent_gantry.schema.introspection import (
+    from dotfetch.schema.introspection import (
         _needs_reconstruction,
         _type_to_json_schema,
     )
@@ -1410,7 +1410,7 @@ def test_a_bare_concrete_sequence_subclass_is_rebuilt():
 
 async def test_a_bare_deque_parameter_reaches_the_handler_as_a_deque():
     """End-to-end, on the spelling that has no type arguments to inspect."""
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+    g = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
     @g.register(tags=["demo"])
     def drain_bare(items: collections.deque) -> str:
@@ -1429,7 +1429,7 @@ def test_sphinx_docstrings_describe_varargs_too():
     """The Google-style parser has always matched ``*args``/``**kwargs``; the
     Sphinx pattern excluded the stars, so those descriptions were silently
     dropped from a Sphinx-style docstring (PR #381 review)."""
-    from agent_gantry.schema.introspection import _SPHINX_PARAM
+    from dotfetch.schema.introspection import _SPHINX_PARAM
 
     for line, expected in (
         (":param *args: variadic positional", ("*args", "variadic positional")),
@@ -1449,7 +1449,7 @@ def test_the_empty_tuple_has_no_item_type():
     distinct member type and returned ``()`` itself — which then fell through
     ``_type_to_json_schema``'s string fallback and typed the items of an array
     that permits none (PR #381 review)."""
-    from agent_gantry.schema.introspection import _tuple_item_type
+    from dotfetch.schema.introspection import _tuple_item_type
 
     assert _tuple_item_type(tuple, ()) is None
     assert _tuple_item_type(tuple, ((),)) is None

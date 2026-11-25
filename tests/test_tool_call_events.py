@@ -1,7 +1,7 @@
 """Tests for the framework-agnostic additions:
 
-* ``AgentGantry.on_tool_call`` post-execution event emitter.
-* ``agent_gantry.render_result`` result rendering helper.
+* ``DotFetch.on_tool_call`` post-execution event emitter.
+* ``dotfetch.render_result`` result rendering helper.
 * Library logging hygiene (NullHandler + no side-effect logger config).
 
 None of these require an agent framework to be installed.
@@ -13,14 +13,14 @@ import logging
 
 import pytest
 
-import agent_gantry as ag
-from agent_gantry import AgentGantry, ToolCall, ToolCallEvent, render_result
-from agent_gantry.schema.execution import BatchToolCall
+import dotfetch as ag
+from dotfetch import DotFetch, ToolCall, ToolCallEvent, render_result
+from dotfetch.schema.execution import BatchToolCall
 
 
 @pytest.fixture
-async def gantry() -> AgentGantry:
-    g = AgentGantry()
+async def fetcher() -> DotFetch:
+    g = DotFetch()
 
     @g.register(tags=["math"], examples=["add two numbers"])
     async def add(a: int, b: int) -> int:
@@ -38,7 +38,7 @@ async def gantry() -> AgentGantry:
 
 class TestOnToolCall:
     @pytest.mark.asyncio
-    async def test_sync_and_async_callbacks_fire(self, gantry: AgentGantry) -> None:
+    async def test_sync_and_async_callbacks_fire(self, fetcher: DotFetch) -> None:
         seen: list[ToolCallEvent] = []
         asynced: list[ToolCallEvent] = []
 
@@ -48,10 +48,10 @@ class TestOnToolCall:
         async def async_cb(ev: ToolCallEvent) -> None:
             asynced.append(ev)
 
-        gantry.on_tool_call(sync_cb)
-        gantry.on_tool_call(async_cb)
+        fetcher.on_tool_call(sync_cb)
+        fetcher.on_tool_call(async_cb)
 
-        await gantry.execute(ToolCall(tool_name="add", arguments={"a": 2, "b": 3}))
+        await fetcher.execute(ToolCall(tool_name="add", arguments={"a": 2, "b": 3}))
 
         assert len(seen) == 1 and len(asynced) == 1
         ev = seen[0]
@@ -61,11 +61,11 @@ class TestOnToolCall:
         assert ev.call.arguments == {"a": 2, "b": 3}
 
     @pytest.mark.asyncio
-    async def test_failure_still_emits_event(self, gantry: AgentGantry) -> None:
+    async def test_failure_still_emits_event(self, fetcher: DotFetch) -> None:
         events: list[ToolCallEvent] = []
-        gantry.on_tool_call(events.append)
+        fetcher.on_tool_call(events.append)
 
-        await gantry.execute(ToolCall(tool_name="boom", arguments={}))
+        await fetcher.execute(ToolCall(tool_name="boom", arguments={}))
 
         assert len(events) == 1
         assert events[0].tool_name == "boom"
@@ -73,17 +73,17 @@ class TestOnToolCall:
 
     @pytest.mark.asyncio
     async def test_broken_callback_does_not_break_execution(
-        self, gantry: AgentGantry
+        self, fetcher: DotFetch
     ) -> None:
         good: list[ToolCallEvent] = []
 
         def boom_cb(ev: ToolCallEvent) -> None:
             raise ValueError("bad listener")
 
-        gantry.on_tool_call(boom_cb)
-        gantry.on_tool_call(good.append)
+        fetcher.on_tool_call(boom_cb)
+        fetcher.on_tool_call(good.append)
 
-        result = await gantry.execute(
+        result = await fetcher.execute(
             ToolCall(tool_name="add", arguments={"a": 1, "b": 1})
         )
 
@@ -92,7 +92,7 @@ class TestOnToolCall:
         assert len(good) == 1
 
     @pytest.mark.asyncio
-    async def test_double_registration_fires_twice(self, gantry: AgentGantry) -> None:
+    async def test_double_registration_fires_twice(self, fetcher: DotFetch) -> None:
         # Documented behaviour: registering the same callable twice fires it
         # twice; one unsubscribe removes one registration. Guards against a
         # future switch to a set-backed registry.
@@ -101,33 +101,33 @@ class TestOnToolCall:
         def cb(ev: ToolCallEvent) -> None:
             calls.append(ev.tool_name)
 
-        gantry.on_tool_call(cb)
-        unsub = gantry.on_tool_call(cb)
+        fetcher.on_tool_call(cb)
+        unsub = fetcher.on_tool_call(cb)
 
-        await gantry.execute(ToolCall(tool_name="add", arguments={"a": 1, "b": 1}))
+        await fetcher.execute(ToolCall(tool_name="add", arguments={"a": 1, "b": 1}))
         assert len(calls) == 2  # fired once per registration
 
         unsub()  # removes one registration only
-        await gantry.execute(ToolCall(tool_name="add", arguments={"a": 1, "b": 1}))
+        await fetcher.execute(ToolCall(tool_name="add", arguments={"a": 1, "b": 1}))
         assert len(calls) == 3
 
     @pytest.mark.asyncio
-    async def test_unsubscribe(self, gantry: AgentGantry) -> None:
+    async def test_unsubscribe(self, fetcher: DotFetch) -> None:
         events: list[ToolCallEvent] = []
-        unsubscribe = gantry.on_tool_call(events.append)
+        unsubscribe = fetcher.on_tool_call(events.append)
 
-        await gantry.execute(ToolCall(tool_name="add", arguments={"a": 1, "b": 1}))
+        await fetcher.execute(ToolCall(tool_name="add", arguments={"a": 1, "b": 1}))
         unsubscribe()
-        await gantry.execute(ToolCall(tool_name="add", arguments={"a": 2, "b": 2}))
+        await fetcher.execute(ToolCall(tool_name="add", arguments={"a": 2, "b": 2}))
 
         assert len(events) == 1
 
     @pytest.mark.asyncio
-    async def test_batch_emits_per_turn_in_order(self, gantry: AgentGantry) -> None:
+    async def test_batch_emits_per_turn_in_order(self, fetcher: DotFetch) -> None:
         events: list[ToolCallEvent] = []
-        gantry.on_tool_call(events.append)
+        fetcher.on_tool_call(events.append)
 
-        await gantry.execute_batch(
+        await fetcher.execute_batch(
             BatchToolCall(
                 calls=[
                     ToolCall(tool_name="add", arguments={"a": 1, "b": 1}),
@@ -145,9 +145,9 @@ class TestOnToolCall:
         ]
 
     @pytest.mark.asyncio
-    async def test_no_callbacks_is_cheap_noop(self, gantry: AgentGantry) -> None:
+    async def test_no_callbacks_is_cheap_noop(self, fetcher: DotFetch) -> None:
         # Nothing registered: execution path still works.
-        result = await gantry.execute(
+        result = await fetcher.execute(
             ToolCall(tool_name="add", arguments={"a": 3, "b": 4})
         )
         assert result.result == 7
@@ -217,7 +217,7 @@ class TestRenderResult:
         ``structured_content`` is mcp 2.x's spelling of ``structuredContent``
         and qualifies on its own, being a payload rather than a name.
         """
-        from agent_gantry.utils.render import _is_mcp_result
+        from dotfetch.utils.render import _is_mcp_result
 
         types_module = pytest.importorskip("mcp.types")
 
@@ -248,7 +248,7 @@ class TestRenderResult:
         because ``False is not None``, and rendered as ``body``. When there
         are items to unwrap, only the items decide; the markers speak solely
         for the empty-content result that has no payload to judge."""
-        from agent_gantry.utils.render import _is_mcp_result
+        from dotfetch.utils.render import _is_mcp_result
 
         class _Record:
             def __init__(self) -> None:
@@ -294,7 +294,7 @@ class TestRenderResult:
         import typing
 
         types_module = pytest.importorskip("mcp.types")
-        from agent_gantry.utils.render import _MCP_BLOCK_TYPES
+        from dotfetch.utils.render import _MCP_BLOCK_TYPES
 
         from_sdk = set()
         for cls in typing.get_args(types_module.ContentBlock):
@@ -336,22 +336,22 @@ class TestRenderResult:
 
 class TestLoggingHygiene:
     def test_package_attaches_null_handler(self) -> None:
-        lg = logging.getLogger("agent_gantry")
+        lg = logging.getLogger("dotfetch")
         assert any(isinstance(h, logging.NullHandler) for h in lg.handlers)
 
-    def test_constructing_gantry_does_not_configure_logging(self) -> None:
-        lg = logging.getLogger("agent_gantry")
+    def test_constructing_fetcher_does_not_configure_logging(self) -> None:
+        lg = logging.getLogger("dotfetch")
         handlers_before = list(lg.handlers)
         level_before = lg.level
 
-        AgentGantry()
+        DotFetch()
 
         # Construction must not mutate the shared logger as a side effect.
         assert list(lg.handlers) == handlers_before
         assert lg.level == level_before
 
     def test_enable_console_logging_is_idempotent(self) -> None:
-        lg = logging.getLogger("agent_gantry")
+        lg = logging.getLogger("dotfetch")
         handlers_before = list(lg.handlers)
         level_before = lg.level
         try:
@@ -385,9 +385,9 @@ class TestLoggingHygiene:
             assert list(lg.handlers) == handlers_before
 
     def test_console_adapter_attach_handler_opt_in(self) -> None:
-        from agent_gantry.observability.console import ConsoleTelemetryAdapter
+        from dotfetch.observability.console import ConsoleTelemetryAdapter
 
-        lg = logging.getLogger("agent_gantry")
+        lg = logging.getLogger("dotfetch")
         handlers_before = list(lg.handlers)
         level_before = lg.level
         try:
@@ -395,13 +395,13 @@ class TestLoggingHygiene:
             streams = [
                 h
                 for h in lg.handlers
-                if getattr(h, "_agent_gantry_console_handler", False)
+                if getattr(h, "_dotfetch_console_handler", False)
             ]
             assert len(streams) == 1
             assert lg.level == logging.DEBUG
         finally:
             for h in list(lg.handlers):
-                if getattr(h, "_agent_gantry_console_handler", False):
+                if getattr(h, "_dotfetch_console_handler", False):
                     lg.removeHandler(h)
             lg.setLevel(level_before)
             assert list(lg.handlers) == handlers_before
@@ -411,7 +411,7 @@ class TestLoggingHygiene:
     ) -> None:
         # An app whose only handler is a FileHandler (a StreamHandler subclass)
         # must still get a real console handler — the false-positive Copilot fix.
-        lg = logging.getLogger("agent_gantry")
+        lg = logging.getLogger("dotfetch")
         handlers_before = list(lg.handlers)
         level_before = lg.level
         file_handler = logging.FileHandler(str(tmp_path) + "/app.log")
@@ -421,12 +421,12 @@ class TestLoggingHygiene:
             console = [
                 h
                 for h in lg.handlers
-                if getattr(h, "_agent_gantry_console_handler", False)
+                if getattr(h, "_dotfetch_console_handler", False)
             ]
             assert len(console) == 1
         finally:
             for h in list(lg.handlers):
-                if getattr(h, "_agent_gantry_console_handler", False) or h is file_handler:
+                if getattr(h, "_dotfetch_console_handler", False) or h is file_handler:
                     lg.removeHandler(h)
             file_handler.close()
             lg.setLevel(level_before)
@@ -440,7 +440,7 @@ def test_a_structured_only_result_is_not_rendered_as_empty() -> None:
     result silently dropped."""
     import json as _json
 
-    from agent_gantry.utils.render import render_result
+    from dotfetch.utils.render import render_result
 
     class _Result:
         def __init__(self) -> None:

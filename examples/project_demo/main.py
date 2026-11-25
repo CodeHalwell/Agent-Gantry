@@ -2,8 +2,8 @@
 Project Demo - a 300-tool catalogue routed through the OpenAI Responses API.
 
 Imports the 300 tools registered in ``tools/tools.py`` (chemistry, maths,
-files, networking, ...; needs ``agent-gantry[example-tools]`` for rdkit, pint,
-pubchempy, sympy and requests), syncs them, and shows Gantry narrowing the
+files, networking, ...; needs ``dotfetch[example-tools]`` for rdkit, pint,
+pubchempy, sympy and requests), syncs them, and shows dotfetch narrowing the
 catalogue to three tools for one query before any model is called.
 
 Run (from the repo root):
@@ -20,10 +20,10 @@ import os
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
-from agent_gantry.integrations.semantic_tools import with_semantic_tools
+from dotfetch.integrations.semantic_tools import with_semantic_tools
 
-# Import the tools module which creates and configures the gantry instance
-from examples.project_demo.tools.tools import tools as gantry
+# Import the tools module which creates and configures the fetcher instance
+from examples.project_demo.tools.tools import tools as fetcher
 
 load_dotenv()
 
@@ -39,7 +39,7 @@ def client() -> AsyncOpenAI:
     return _client
 
 
-@with_semantic_tools(gantry, limit=3, score_threshold=0.0, dialect="openai_responses")
+@with_semantic_tools(fetcher, limit=3, score_threshold=0.0, dialect="openai_responses")
 async def generate_response(prompt: str, tools: list | None = None):
     """LLM call that gets semantic tools injected."""
 
@@ -60,7 +60,7 @@ async def generate_response(prompt: str, tools: list | None = None):
 
     if tool_calls:
         # Decode, execute and serialize results in the provider's reply format.
-        tool_results = await gantry.execute_tool_calls(first, dialect="openai_responses")
+        tool_results = await fetcher.execute_tool_calls(first, dialect="openai_responses")
 
         # Follow up with tool results
         follow_up = await client().responses.create(
@@ -88,9 +88,9 @@ async def main() -> None:
         # The retrieval half needs no key, so do it first and show it. This is
         # the part worth seeing: a 300-tool catalogue narrowed to three before
         # a single token is spent.
-        selected = await gantry.retrieve_tools(user_query, limit=3)
-        total = len(await gantry.list_tools())
-        print(f"\nCatalogue: {total} tools. Gantry selected {len(selected)} for this query:")
+        selected = await fetcher.retrieve_tools(user_query, limit=3)
+        total = len(await fetcher.list_tools())
+        print(f"\nCatalogue: {total} tools. dotfetch selected {len(selected)} for this query:")
         for tool in selected:
             # Default dialect is OpenAI chat-completions shape, so the name
             # sits under "function" rather than at the top level.
@@ -113,7 +113,7 @@ async def main() -> None:
         else:
             print("LLM did not call any tools.")
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 if __name__ == "__main__":

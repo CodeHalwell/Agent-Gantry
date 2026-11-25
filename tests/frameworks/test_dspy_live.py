@@ -8,7 +8,7 @@ touches an LM (only an actual reasoning call does), and
 its own unit tests — drives one full, offline ``dspy.ReAct`` run end to end,
 proving the adapter's tools work correctly under DSPy's default synchronous
 ``react(question=...)`` call path (see the design rationale in
-``agent_gantry/integrations/frameworks/dspy.py``'s module docstring).
+``dotfetch/integrations/frameworks/dspy.py``'s module docstring).
 """
 
 from __future__ import annotations
@@ -23,16 +23,16 @@ import dspy
 from dspy.adapters.chat_adapter import ChatAdapter
 from dspy.utils.dummies import DummyLM
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-from agent_gantry.dspy import DSPyAdapter
-from agent_gantry.integrations.frameworks.base import GantryToolset, ToolExecutionError
-from agent_gantry.integrations.frameworks.dspy import GantryLiveDSPyReAct
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
+from dotfetch.dspy import DSPyAdapter
+from dotfetch.integrations.frameworks.base import DotFetchToolset, ToolExecutionError
+from dotfetch.integrations.frameworks.dspy import DotFetchLiveDSPyReAct
 
 
 @pytest.fixture
-async def gantry():
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+async def fetcher():
+    g = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
     @g.register(tags=["email", "communication"])
     def send_email(to: str, body: str = "") -> str:
@@ -48,8 +48,8 @@ async def gantry():
     return g
 
 
-async def test_spec_to_dspy_builds_real_tool(gantry):
-    specs = await GantryToolset(gantry).select("send an email", limit=1)
+async def test_spec_to_dspy_builds_real_tool(fetcher):
+    specs = await DotFetchToolset(fetcher).select("send an email", limit=1)
     spec = specs[0]
     tool = DSPyAdapter.convert(spec)
 
@@ -65,46 +65,46 @@ async def test_spec_to_dspy_builds_real_tool(gantry):
     assert not inspect.iscoroutinefunction(tool.func)
 
 
-async def test_dspy_tool_call_routes_through_gantry_execute(gantry):
+async def test_dspy_tool_call_routes_through_fetcher_execute(fetcher):
     """``dspy.Tool.__call__`` — the sync path ``ReAct.forward`` uses — works with no LM/loop caveats."""
-    specs = await GantryToolset(gantry).select("send an email", limit=1)
+    specs = await DotFetchToolset(fetcher).select("send an email", limit=1)
     tool = DSPyAdapter.convert(specs[0])
 
     result = tool(to="boss@x.com")
     assert result == "sent:boss@x.com"
 
 
-async def test_dspy_tool_acall_also_works(gantry):
+async def test_dspy_tool_acall_also_works(fetcher):
     """``dspy.Tool.acall`` — the async path ``ReAct.aforward`` uses — also works for our sync-bridged tool."""
-    specs = await GantryToolset(gantry).select("send an email", limit=1)
+    specs = await DotFetchToolset(fetcher).select("send an email", limit=1)
     tool = DSPyAdapter.convert(specs[0])
 
     result = await tool.acall(to="boss@x.com")
     assert result == "sent:boss@x.com"
 
 
-async def test_missing_optional_arg_uses_tool_default(gantry):
-    specs = await GantryToolset(gantry).select("send an email", limit=1)
+async def test_missing_optional_arg_uses_tool_default(fetcher):
+    specs = await DotFetchToolset(fetcher).select("send an email", limit=1)
     tool = DSPyAdapter.convert(specs[0])
 
     result = tool(to="boss@x.com")
     assert result == "sent:boss@x.com"
 
 
-async def test_tool_failure_surfaces_as_tool_execution_error(gantry):
+async def test_tool_failure_surfaces_as_tool_execution_error(fetcher):
     """``dspy.Tool.__call__``/``.acall`` never swallow the error -- see
     ``test_react_records_tool_failure_as_an_error_result`` below for the
     *different* behaviour of ``dspy.ReAct`` itself, one layer up.
     """
 
-    @gantry.register(tags=["danger"])
+    @fetcher.register(tags=["danger"])
     def explode() -> str:
         "Always raises."
         raise RuntimeError("boom")
 
-    await gantry.sync()
+    await fetcher.sync()
 
-    specs = await GantryToolset(gantry).select("always raises", limit=1)
+    specs = await DotFetchToolset(fetcher).select("always raises", limit=1)
     tool = DSPyAdapter.convert(specs[0])
 
     with pytest.raises(ToolExecutionError):
@@ -133,20 +133,20 @@ def _results(pred):
     ]
 
 
-async def test_react_records_tool_failure_as_an_error_result(gantry):
+async def test_react_records_tool_failure_as_an_error_result(fetcher):
     """``dspy.ReAct`` turns a raising tool into an ``is_error`` result, not an exception.
 
-    DSPy adds its own short traceback; the text it ends with is Gantry's.
+    DSPy adds its own short traceback; the text it ends with is dotfetch's.
     """
 
-    @gantry.register(tags=["danger"])
+    @fetcher.register(tags=["danger"])
     def explode() -> str:
         "Always raises."
         raise RuntimeError("boom")
 
-    await gantry.sync()
+    await fetcher.sync()
 
-    tools = await DSPyAdapter(gantry).select("always raises", limit=1)
+    tools = await DSPyAdapter(fetcher).select("always raises", limit=1)
     react = dspy.ReAct("question -> answer", tools=tools, max_iters=2)
 
     adapter = ChatAdapter()
@@ -163,13 +163,13 @@ async def test_react_records_tool_failure_as_an_error_result(gantry):
     [result] = _results(pred)
     assert result.is_error
     assert result.value.startswith("Execution error in explode:")
-    assert result.value.splitlines()[-1] == "agent_gantry.dspy.DSPyToolError: RuntimeError: boom"
+    assert result.value.splitlines()[-1] == "dotfetch.dspy.DSPyToolError: RuntimeError: boom"
 
 
-async def test_agent_builder_builds_real_react_no_lm_required(gantry):
+async def test_agent_builder_builds_real_react_no_lm_required(fetcher):
     """Constructing ``dspy.ReAct`` never touches the LM -- only calling it does."""
-    builder = DSPyAdapter(gantry).agent_builder("question -> answer", max_iters=3, limit=1)
-    assert isinstance(builder, GantryLiveDSPyReAct)
+    builder = DSPyAdapter(fetcher).agent_builder("question -> answer", max_iters=3, limit=1)
+    assert isinstance(builder, DotFetchLiveDSPyReAct)
 
     react = await builder.build("send an email to a recipient")
     assert isinstance(react, dspy.ReAct)
@@ -180,7 +180,7 @@ async def test_agent_builder_builds_real_react_no_lm_required(gantry):
     assert "add" in react2.tools
 
 
-async def test_react_end_to_end_with_dummy_lm_sync_call(gantry):
+async def test_react_end_to_end_with_dummy_lm_sync_call(fetcher):
     """Full offline ``dspy.ReAct`` run through the SYNCHRONOUS ``react(...)`` entry point.
 
     Proves the sync-bridged tools work with zero DSPy configuration (no
@@ -195,7 +195,7 @@ async def test_react_end_to_end_with_dummy_lm_sync_call(gantry):
         adapter=adapter,
     )
     with dspy.context(lm=lm, adapter=adapter):
-        tools = await DSPyAdapter(gantry).select("send an email", limit=1)
+        tools = await DSPyAdapter(fetcher).select("send an email", limit=1)
         react = dspy.ReAct("question -> answer", tools=tools, max_iters=3)
 
         pred = react(question="Please email my boss.")

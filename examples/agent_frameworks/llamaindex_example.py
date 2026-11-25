@@ -1,12 +1,12 @@
-"""LlamaIndex + Agent-Gantry, through LlamaIndex's own mechanisms.
+"""LlamaIndex + dotfetch, through LlamaIndex's own mechanisms.
 
 1. **Per-step selection** -- ``adapter.function_agent(llm)`` builds a
-   ``FunctionAgent`` whose tool retriever re-selects Gantry tools every step.
+   ``FunctionAgent`` whose tool retriever re-selects dotfetch tools every step.
 2. **Readable errors** -- a failing tool comes back as
    ``ToolOutput(is_error=True)`` the model can react to.
 3. **Approval** -- a ``requires_confirmation`` tool waits for a
    ``HumanResponseEvent``; answering "yes" runs it exactly once.
-4. **Run context** -- a Gantry tool reads the workflow state through
+4. **Run context** -- a dotfetch tool reads the workflow state through
    ``current_workflow_context()``.
 
 Everything runs **offline**: a scripted function-calling LLM stands in for a
@@ -15,7 +15,7 @@ real one, so no API key is needed. Swap in ``OpenAI(model="gpt-5.5")`` (from
 
 Install and run::
 
-    pip install 'agent-gantry[llamaindex]'
+    pip install 'dotfetch[llamaindex]'
     python examples/agent_frameworks/llamaindex_example.py
 """
 
@@ -24,37 +24,37 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
 
 
-def build_gantry() -> AgentGantry:
-    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
+def build_fetcher() -> DotFetch:
+    fetcher = DotFetch(embedder=SimpleEmbedder(dimension=256))
 
-    @gantry.register(tags=["prefs"], examples=["what are the preferences for user dev_123"])
+    @fetcher.register(tags=["prefs"], examples=["what are the preferences for user dev_123"])
     def get_preferences(user_id: str) -> str:
         """Look up a user's saved preferences."""
         return f"{user_id} prefers dark mode and email updates."
 
-    @gantry.register(tags=["math"], examples=["divide 10 by 2"])
+    @fetcher.register(tags=["math"], examples=["divide 10 by 2"])
     def divide(a: int, b: int) -> float:
         """Divide integer a by integer b."""
         return a / b
 
-    @gantry.register(tags=["email"], examples=["email the team"], requires_confirmation=True)
+    @fetcher.register(tags=["email"], examples=["email the team"], requires_confirmation=True)
     def send_email(to: str) -> str:
         """Send an email message to a recipient."""
         return f"Email sent to {to}."
 
-    @gantry.register(tags=["identity"], examples=["who am I signed in as"])
+    @fetcher.register(tags=["identity"], examples=["who am I signed in as"])
     async def whoami() -> str:
         """Return the signed-in user from the workflow state."""
-        from agent_gantry.llamaindex import current_workflow_context
+        from dotfetch.llamaindex import current_workflow_context
 
         ctx = current_workflow_context()
         return f"You are signed in as {await ctx.store.get('user')}." if ctx else "Unknown user."
 
-    return gantry
+    return fetcher
 
 
 def scripted(*steps: list[tuple[str, dict[str, Any]]]) -> Any:
@@ -133,31 +133,31 @@ async def run(agent: Any, prompt: str, ctx: Any = None) -> list[Any]:
         if type(event).__name__ == "ToolCallResult":
             outputs.append(event.tool_output)
         if isinstance(event, InputRequiredEvent):
-            print(f"[approval] {event.prefix} {event.gantry_arguments} -> answering yes")
+            print(f"[approval] {event.prefix} {event.fetcher_arguments} -> answering yes")
             handler.ctx.send_event(
-                HumanResponseEvent(response="yes", gantry_approval_id=event.gantry_approval_id)
+                HumanResponseEvent(response="yes", fetcher_approval_id=event.fetcher_approval_id)
             )
     await handler
     return outputs
 
 
 async def main() -> None:
-    gantry = build_gantry()
+    fetcher = build_fetcher()
     try:
-        await gantry.sync()
+        await fetcher.sync()
         try:
             from llama_index.core.agent.workflow import FunctionAgent
             from llama_index.core.workflow import Context
         except ImportError as exc:
             print(
                 f"The LlamaIndex demo needs llama-index-core ({exc}).\n"
-                "Install it with `pip install 'agent-gantry[llamaindex]'`."
+                "Install it with `pip install 'dotfetch[llamaindex]'`."
             )
             return
 
-        from agent_gantry.llamaindex import LlamaIndexAdapter
+        from dotfetch.llamaindex import LlamaIndexAdapter
 
-        adapter = LlamaIndexAdapter(gantry)
+        adapter = LlamaIndexAdapter(fetcher)
 
         # 1. Per-step selection ------------------------------------------- #
         llm = scripted([("get_preferences", {"user_id": "dev_123"})])
@@ -189,11 +189,11 @@ async def main() -> None:
         print(f"[context] {outputs[0].content}")
 
         print(
-            "\nEvery tool call above went through gantry.execute, so the security "
+            "\nEvery tool call above went through fetcher.execute, so the security "
             "policy, retries, timeouts and circuit breakers all applied."
         )
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 if __name__ == "__main__":

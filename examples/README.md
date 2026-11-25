@@ -1,4 +1,4 @@
-# Agent-Gantry Examples
+# dotfetch Examples
 
 Run these examples from the repository root after installing the library and
 any optional packages listed for the example. Start with:
@@ -27,18 +27,18 @@ python examples/agent_frameworks/langchain_example.py    # no key needed to see 
 
 | Framework | Example | Installed via |
 |---|---|---|
-| LangChain | [`agent_frameworks/langchain_example.py`](agent_frameworks/langchain_example.py) | `pip install 'agent-gantry[langchain]' langchain-openai` |
-| LangGraph | [`agent_frameworks/langgraph_example.py`](agent_frameworks/langgraph_example.py) | `pip install 'agent-gantry[langgraph]'` (runs offline) |
-| CrewAI | [`agent_frameworks/crewai_example.py`](agent_frameworks/crewai_example.py) | `pip install 'agent-gantry[crewai]'` (Python 3.10–3.13; runs offline) |
-| LlamaIndex | [`agent_frameworks/llamaindex_example.py`](agent_frameworks/llamaindex_example.py) | `pip install 'agent-gantry[llamaindex]'` (runs offline) |
-| Google ADK | [`agent_frameworks/google_adk_example.py`](agent_frameworks/google_adk_example.py) | `pip install 'agent-gantry[google-adk]'` (runs offline) |
+| LangChain | [`agent_frameworks/langchain_example.py`](agent_frameworks/langchain_example.py) | `pip install 'dotfetch[langchain]' langchain-openai` |
+| LangGraph | [`agent_frameworks/langgraph_example.py`](agent_frameworks/langgraph_example.py) | `pip install 'dotfetch[langgraph]'` (runs offline) |
+| CrewAI | [`agent_frameworks/crewai_example.py`](agent_frameworks/crewai_example.py) | `pip install 'dotfetch[crewai]'` (Python 3.10–3.13; runs offline) |
+| LlamaIndex | [`agent_frameworks/llamaindex_example.py`](agent_frameworks/llamaindex_example.py) | `pip install 'dotfetch[llamaindex]'` (runs offline) |
+| Google ADK | [`agent_frameworks/google_adk_example.py`](agent_frameworks/google_adk_example.py) | `pip install 'dotfetch[google-adk]'` (runs offline) |
 | Microsoft Agent Framework | [`agent_frameworks/agent_framework_provider_example.py`](agent_frameworks/agent_framework_provider_example.py) | `pip install agent-framework-core agent-framework-openai agent-framework-orchestrations` |
-| OpenAI Agents SDK | [`agent_frameworks/openai_agents_example.py`](agent_frameworks/openai_agents_example.py) | `pip install 'agent-gantry[openai-agents]'` |
-| Pydantic AI | [`agent_frameworks/pydantic_ai_example.py`](agent_frameworks/pydantic_ai_example.py) | `pip install 'agent-gantry[pydantic-ai]'` |
-| Haystack | [`agent_frameworks/haystack_example.py`](agent_frameworks/haystack_example.py) | `pip install 'agent-gantry[haystack]'` (runs offline) |
-| Agno | [`agent_frameworks/agno_example.py`](agent_frameworks/agno_example.py) | `pip install 'agent-gantry[agno]'` (runs offline) |
-| Strands | [`agent_frameworks/strands_example.py`](agent_frameworks/strands_example.py) | `pip install 'agent-gantry[strands]'` (runs offline) |
-| DSPy | [`agent_frameworks/dspy_example.py`](agent_frameworks/dspy_example.py) | `pip install 'agent-gantry[dspy]'` (runs offline) |
+| OpenAI Agents SDK | [`agent_frameworks/openai_agents_example.py`](agent_frameworks/openai_agents_example.py) | `pip install 'dotfetch[openai-agents]'` |
+| Pydantic AI | [`agent_frameworks/pydantic_ai_example.py`](agent_frameworks/pydantic_ai_example.py) | `pip install 'dotfetch[pydantic-ai]'` |
+| Haystack | [`agent_frameworks/haystack_example.py`](agent_frameworks/haystack_example.py) | `pip install 'dotfetch[haystack]'` (runs offline) |
+| Agno | [`agent_frameworks/agno_example.py`](agent_frameworks/agno_example.py) | `pip install 'dotfetch[agno]'` (runs offline) |
+| Strands | [`agent_frameworks/strands_example.py`](agent_frameworks/strands_example.py) | `pip install 'dotfetch[strands]'` (runs offline) |
+| DSPy | [`agent_frameworks/dspy_example.py`](agent_frameworks/dspy_example.py) | `pip install 'dotfetch[dspy]'` (runs offline) |
 | *(none yet)* | [`agent_frameworks/generic_adapters_example.py`](agent_frameworks/generic_adapters_example.py) | — |
 
 Install only the SDK for the framework you use. The `agent-frameworks` extra
@@ -48,7 +48,7 @@ Strands and DSPy have their own extras (`pydantic-ai`, `openai-agents`, `haystac
 [`agent_frameworks/README.md`](agent_frameworks/README.md).
 
 No adapter for your framework? [`agent_frameworks/generic_adapters_example.py`](agent_frameworks/generic_adapters_example.py) shows the
-framework-neutral path, which works anywhere: `GantryToolset(gantry).select(query, limit=1)`
+framework-neutral path, which works anywhere: `DotFetchToolset(fetcher).select(query, limit=1)`
 returns `ToolSpec`s carrying `spec.native_name`, `spec.description` and `spec.parameters` — hand those
 to your framework's tool type and point its callback at `spec.ainvoke(...)`.
 
@@ -66,7 +66,7 @@ before-and-after comparison.
 Give every tool `examples=[...]`:
 
 ```python
-@gantry.register(
+@fetcher.register(
     tags=["weather"],
     examples=["what's the weather in London", "is it raining in Leeds"],
 )
@@ -80,7 +80,7 @@ improvement than switching to a larger embedding model. Write the phrases a
 user would actually type, not a restatement of the description.
 
 Every example in this tree does this, including the bulk catalogues under
-`project_demo/tools/` and `tool_vector_db/`, and `agent-gantry lint` reports
+`project_demo/tools/` and `tool_vector_db/`, and `dotfetch lint` reports
 any registered tool that does not (#434). Copy from `agent_frameworks/` if you
 are starting fresh.
 
@@ -95,9 +95,9 @@ with no error.
   each showing the static tier (select once) and, where the framework supports
   it, the dynamic tier (re-select every turn). Start here.
 - `frameworks/` — **framework-neutral plumbing**, despite the similar name: the
-  universal `GantryToolset`/`ToolSpec` core, a cross-framework verification
+  universal `DotFetchToolset`/`ToolSpec` core, a cross-framework verification
   harness, the multi-turn `ToolRefresher`, and importing existing framework
-  tools *into* Gantry. All offline.
+  tools *into* dotfetch. All offline.
 - `fast_track_demo.py` — vanilla OpenAI to semantic tools in ten lines.
 - `basics/` — registration patterns, async execution, multi-tool routing,
   plug-and-play imports, and skills (retrieved guidance, never executed).
@@ -111,10 +111,10 @@ with no error.
   `enable_console_logging()`; the demos call it, and yours must too.
 - `protocols/` — MCP and A2A demos. The Python files run offline (nothing is served
   or connected); `claude_desktop_config.json` launches the real server with
-  `agent-gantry serve-mcp --module your.module`.
+  `dotfetch serve-mcp --module your.module`.
 - `project_demo/`, `tool_vector_db/` — fuller applications with persistence.
   The persistent variants build a gitignored LanceDB cache on first run (`project_demo/tools/.tool_cache/`
-  and `gantry_tools.lancedb/` in the repo root), so expect the first run to take
+  and `fetcher_tools.lancedb/` in the repo root), so expect the first run to take
   longer when using a downloaded embedder; later runs reuse the stored embeddings.
 - `testing_limits/` — retrieval accuracy at 30 and 100 tools; the 30-tool run adds an
   LLM selection step when a key is set.
@@ -138,7 +138,7 @@ pip install -e ".[nomic]"              # routing/nomic_tool_demo.py, testing_lim
 **Decorator** — used throughout `llm_integration/`:
 
 ```python
-@with_semantic_tools(gantry, limit=3)
+@with_semantic_tools(fetcher, limit=3)
 async def chat(prompt: str, *, tools=None):
     # `tools` is injected: only the relevant ones, already in the provider's dialect
     return await client.chat.completions.create(model="...", tools=tools, ...)
@@ -148,11 +148,11 @@ async def chat(prompt: str, *, tools=None):
 conversion and execution wiring:
 
 ```python
-tools = await gantry.framework("langchain").select(query, limit=3)
+tools = await fetcher.framework("langchain").select(query, limit=3)
 agent = create_agent(model=llm, tools=tools)
 ```
 
-Either way every call routes back through `gantry.execute`, so retries,
+Either way every call routes back through `fetcher.execute`, so retries,
 timeouts, circuit breakers and the security policy still apply.
 
 ## Checking the examples

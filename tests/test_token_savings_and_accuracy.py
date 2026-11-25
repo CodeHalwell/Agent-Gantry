@@ -8,10 +8,10 @@ import asyncio
 
 import pytest
 
-from agent_gantry import AgentGantry
-from agent_gantry.integrations import fetch_framework_tools
-from agent_gantry.metrics import ProviderUsage, calculate_token_savings
-from agent_gantry.schema.query import ConversationContext, ToolQuery
+from dotfetch import DotFetch
+from dotfetch.integrations import fetch_framework_tools
+from dotfetch.metrics import ProviderUsage, calculate_token_savings
+from dotfetch.schema.query import ConversationContext, ToolQuery
 
 
 def test_calculate_token_savings_uses_provider_usage() -> None:
@@ -44,9 +44,9 @@ def test_calculate_token_savings_uses_provider_usage() -> None:
 @pytest.mark.asyncio
 async def test_retrieval_topk_accuracy(sample_tools) -> None:
     """Top-k retrieval should keep the relevant tool present with high accuracy."""
-    gantry = AgentGantry()
+    fetcher = DotFetch()
     for tool in sample_tools:
-        await gantry.add_tool(tool)
+        await fetcher.add_tool(tool)
 
     queries: dict[str, str] = {
         "send a follow-up email to the customer": "send_email",
@@ -57,7 +57,7 @@ async def test_retrieval_topk_accuracy(sample_tools) -> None:
 
     hits = 0
     for prompt, expected_tool in queries.items():
-        result = await gantry.retrieve(
+        result = await fetcher.retrieve(
             ToolQuery(context=ConversationContext(query=prompt), limit=2, score_threshold=0.0)
         )
         retrieved_names = [scored.tool.name for scored in result.tools]
@@ -104,9 +104,9 @@ def test_token_savings_edge_cases() -> None:
 @pytest.mark.asyncio
 async def test_framework_adapter_returns_top_k(sample_tools) -> None:
     """Framework adapters should emit limited OpenAI-style tool schemas for all supported frameworks."""
-    gantry = AgentGantry()
+    fetcher = DotFetch()
     for tool in sample_tools:
-        await gantry.add_tool(tool)
+        await fetcher.add_tool(tool)
 
     for framework in [
         "langgraph",
@@ -115,7 +115,7 @@ async def test_framework_adapter_returns_top_k(sample_tools) -> None:
         "strands",
     ]:
         tools = await fetch_framework_tools(
-            gantry,
+            fetcher,
             "send a quick email",
             framework=framework,
             limit=1,
@@ -126,11 +126,11 @@ async def test_framework_adapter_returns_top_k(sample_tools) -> None:
         assert tools[0]["function"]["name"] == "send_email"
 
 
-def test_framework_adapter_unsupported_framework_raises(gantry) -> None:
+def test_framework_adapter_unsupported_framework_raises(fetcher) -> None:
     with pytest.raises(ValueError):
         asyncio.run(
             fetch_framework_tools(
-                gantry,
+                fetcher,
                 "test",
                 framework="unsupported",  # type: ignore[arg-type]
             )

@@ -1,3 +1,3 @@
 """
-Tests for Agent-Gantry.
+Tests for dotfetch.
 """

@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import pytest
 
-from agent_gantry.adapters.vector_stores.memory import InMemoryVectorStore
-from agent_gantry.schema.tool import ToolDefinition
-from agent_gantry.utils.fingerprint import compute_tool_fingerprint
+from dotfetch.adapters.vector_stores.memory import InMemoryVectorStore
+from dotfetch.schema.tool import ToolDefinition
+from dotfetch.utils.fingerprint import compute_tool_fingerprint
 
 # ============================================================================
 # Vector Store Dimension Property Tests
@@ -197,32 +197,32 @@ async def test_inmemory_store_fingerprints_multiple_tools():
 @pytest.mark.asyncio
 async def test_repeat_sync_is_incremental_noop():
     """A second sync() with unchanged tools must not re-embed anything."""
-    from agent_gantry import AgentGantry
+    from dotfetch import DotFetch
 
-    gantry = AgentGantry()
+    fetcher = DotFetch()
 
-    @gantry.register(name="incr_tool")
+    @fetcher.register(name="incr_tool")
     def incr_tool(x: int) -> int:
         """Increment a number."""
         return x + 1
 
-    first = await gantry.sync()
+    first = await fetcher.sync()
     assert first == 1
 
     embed_calls = 0
-    original = gantry.embedder.embed_batch
+    original = fetcher.embedder.embed_batch
 
     async def counting_embed_batch(texts):
         nonlocal embed_calls
         embed_calls += 1
         return await original(texts)
 
-    gantry.embedder.embed_batch = counting_embed_batch  # type: ignore[method-assign]
+    fetcher.embedder.embed_batch = counting_embed_batch  # type: ignore[method-assign]
     try:
-        gantry._synced = False
-        second = await gantry.sync()
+        fetcher._synced = False
+        second = await fetcher.sync()
     finally:
-        gantry.embedder.embed_batch = original  # type: ignore[method-assign]
+        fetcher.embedder.embed_batch = original  # type: ignore[method-assign]
 
     assert second == 0
     assert embed_calls == 0
@@ -397,8 +397,8 @@ def test_sync_manager_embedder_id_distinguishes_models():
     """Two same-dimension embedders with different models must get different
     sync identities — otherwise switching models silently skips re-embedding
     and queries from the new model search the old model's vectors."""
-    from agent_gantry.core.registry import ToolRegistry
-    from agent_gantry.core.sync_manager import SyncManager
+    from dotfetch.core.registry import ToolRegistry
+    from dotfetch.core.sync_manager import SyncManager
 
     class ProtocolEmbedder:
         def __init__(self, model: str) -> None:
@@ -427,8 +427,8 @@ def test_sync_manager_embedder_id_attribute_fallbacks():
     """Duck-typed embedders without the protocol method still contribute
     their model to the identity via attribute probing (including the
     OpenAI-style `_model` spelling that was previously missed)."""
-    from agent_gantry.core.registry import ToolRegistry
-    from agent_gantry.core.sync_manager import SyncManager
+    from dotfetch.core.registry import ToolRegistry
+    from dotfetch.core.sync_manager import SyncManager
 
     class BareEmbedder:
         def __init__(self, model: str) -> None:
@@ -450,8 +450,8 @@ def test_embedder_id_includes_custom_endpoint(monkeypatch):
     identity would skip re-embedding and corrupt retrieval."""
     pytest.importorskip("openai")
 
-    from agent_gantry.adapters.embedders.openai import OpenAIEmbedder
-    from agent_gantry.schema.config import EmbedderConfig
+    from dotfetch.adapters.embedders.openai import OpenAIEmbedder
+    from dotfetch.schema.config import EmbedderConfig
 
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.delenv("OPENAI_BASE_URL", raising=False)

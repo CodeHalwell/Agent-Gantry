@@ -2,7 +2,7 @@
 import DocsLayout from '../../layouts/DocsLayout.astro';
 import CodeBlock from '../../components/CodeBlock.astro';
 ---
-<DocsLayout title="Operations | Agent-Gantry">
+<DocsLayout title="Operations | dotfetch">
   <h1>Operations guide</h1>
   <p class="lead">A production tool layer needs visibility, safety controls, and repeatable debugging.</p>
   <h2>Security checklist</h2>
@@ -13,7 +13,7 @@ import CodeBlock from '../../components/CodeBlock.astro';
     <li>Log tool-call events and attach tracing through console, OpenTelemetry, or Prometheus adapters.</li>
   </ul>
   <h2>Debug retrieval</h2>
-  <CodeBlock lang="python" code={`result = await gantry.retrieve(query)
+  <CodeBlock lang="python" code={`result = await fetcher.retrieve(query)
 for candidate in result.tools:
     print(candidate.tool.name, candidate.score, candidate.reason)`} />
   <h2>Release checklist</h2>

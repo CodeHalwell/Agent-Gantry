@@ -1,0 +1,148 @@
+"""
+Skill definition models for dotfetch.
+
+Skills are procedural memories, patterns, and how-tos that are retrieved
+and injected into the system prompt to guide agent behavior. Unlike tools,
+skills are not directly executed but provide contextual knowledge.
+"""
+
+from __future__ import annotations
+
+import re
+from datetime import datetime, timezone
+from enum import Enum
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from dotfetch.schema.base import reject_newlines
+
+
+class SkillCategory(str, Enum):
+    """Categories for organizing skills."""
+
+    HOW_TO = "how_to"
+    PATTERN = "pattern"
+    PROCEDURE = "procedure"
+    BEST_PRACTICE = "best_practice"
+    TEMPLATE = "template"
+    EXAMPLE = "example"
+    GUIDELINE = "guideline"
+    WORKFLOW = "workflow"
+
+
+class Skill(BaseModel):
+    """
+    Procedural memory / skill definition.
+
+    Skills are retrieved semantically and injected into the system prompt
+    to provide contextual knowledge and guidance. They are not executed
+    directly like tools.
+
+    Example:
+        >>> skill = Skill(
+        ...     name="api_pagination",
+        ...     description="How to implement cursor-based pagination for API endpoints",
+        ...     content="When implementing pagination, use cursor-based pagination...",
+        ...     category=SkillCategory.HOW_TO,
+        ...     tags=["api", "pagination", "rest"],
+        ... )
+    """
+
+    # Identity
+    name: str = Field(..., min_length=1, max_length=128)
+    namespace: str = Field(default="default")
+
+    # Content
+    description: str = Field(..., min_length=10, max_length=2000)
+    content: str = Field(..., min_length=1, max_length=50000, description="Full skill content")
+    summary: str | None = Field(
+        default=None, max_length=500, description="Brief summary for quick reference"
+    )
+
+    # Classification
+    category: SkillCategory = Field(default=SkillCategory.HOW_TO)
+    tags: list[str] = Field(default_factory=list)
+    related_tools: list[str] = Field(
+        default_factory=list, description="Tool names this skill relates to"
+    )
+
+    # Source / provenance
+    source: str | None = Field(default=None, description="Origin of the skill (docs, user, etc)")
+    source_uri: str | None = Field(default=None, description="URI to source document")
+
+    # Metadata
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime | None = Field(default=None)
+
+    # Usage tracking
+    usage_count: int = Field(default=0, description="Times this skill has been retrieved")
+    last_used: datetime | None = Field(default=None)
+
+    model_config = ConfigDict(extra="ignore", validate_assignment=True)
+
+    _reject_newline_identifiers = field_validator("name", "namespace")(reject_newlines)
+
+    @property
+    def qualified_name(self) -> str:
+        """Return namespace.name identifier."""
+        return f"{self.namespace}.{self.name}"
+
+    def to_prompt_text(self) -> str:
+        """
+        Format skill for system prompt injection.
+
+        Returns:
+            Formatted text suitable for system prompt
+        """
+        lines = [
+            # Skill names are snake_case (dotfetch) or kebab-case (Agent Skills
+            # directories); both read as words in a heading.
+            f"## {re.sub(r'[-_]+', ' ', self.name).strip().title()}",
+            f"*Category: {self.category.value}*",
+            "",
+            self.content,
+        ]
+        if self.related_tools:
+            lines.extend(["", f"Related tools: {', '.join(self.related_tools)}"])
+        return "\n".join(lines)
+
+    def to_embedding_text(self) -> str:
+        """
+        Flatten skill metadata into text for embedding.
+
+        The content is left out: see
+        :func:`dotfetch.core.chunks.skill_chunks`, which indexes it in
+        pieces beside this vector. For one of those pieces, the text is the
+        piece itself, headed by the skill it belongs to.
+
+        Returns:
+            Text representation for embedding
+        """
+        if self.is_chunk:
+            return f"{self.metadata.get('parent_name', '')} {self.content}".strip()
+        parts = [
+            self.name,
+            self.namespace,
+            self.description,
+            " ".join(self.tags),
+            self.category.value,
+            self.summary or "",
+        ]
+        return " ".join(filter(None, parts))
+
+    @property
+    def is_chunk(self) -> bool:
+        """``True`` for an index entry holding one piece of another skill's content.
+
+        See :func:`dotfetch.core.chunks.skill_chunks`.
+        """
+        return self.metadata.get("entity_type") == "skill_chunk"
+
+
+class SkillSearchResult(BaseModel):
+    """Result from a skill search operation."""
+
+    skill: Skill
+    score: float = Field(..., ge=0.0, le=1.0)

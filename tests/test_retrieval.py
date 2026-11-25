@@ -6,20 +6,20 @@ from __future__ import annotations
 
 import pytest
 
-from agent_gantry import AgentGantry
-from agent_gantry.cli.main import main
-from agent_gantry.schema.query import ConversationContext, ToolQuery
+from dotfetch import DotFetch
+from dotfetch.cli.main import main
+from dotfetch.schema.query import ConversationContext, ToolQuery
 
 
 @pytest.mark.asyncio
 async def test_retrieve_ranks_relevant_tool(sample_tools) -> None:
     """Ensure semantic retrieval surfaces the right tool."""
-    gantry = AgentGantry()
+    fetcher = DotFetch()
     for tool in sample_tools:
-        await gantry.add_tool(tool)
+        await fetcher.add_tool(tool)
 
     query = ToolQuery(context=ConversationContext(query="Please send an email to the customer"), score_threshold=0.0)
-    result = await gantry.retrieve(query)
+    result = await fetcher.retrieve(query)
 
     assert result.tools
     assert result.tools[0].tool.name == "send_email"
@@ -29,12 +29,12 @@ async def test_retrieve_ranks_relevant_tool(sample_tools) -> None:
 @pytest.mark.asyncio
 async def test_retrieval_latency(sample_tools) -> None:
     """Retrieval should stay within the latency budget."""
-    gantry = AgentGantry()
+    fetcher = DotFetch()
     for tool in sample_tools:
-        await gantry.add_tool(tool)
+        await fetcher.add_tool(tool)
 
     query = ToolQuery(context=ConversationContext(query="Generate a financial report"), limit=3)
-    result = await gantry.retrieve(query)
+    result = await fetcher.retrieve(query)
 
     # 2000ms budget accounts for sentence-transformers cold-start on slower CI
     # runners (macOS GitHub Actions regularly takes 300–400ms on first embed).

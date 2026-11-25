@@ -1,4 +1,4 @@
-# Releasing Agent-Gantry
+# Releasing dotfetch
 
 The [Publish to PyPI workflow](.github/workflows/publish.yml) builds one source
 archive and wheel, validates them, publishes with PyPI trusted publishing, and
@@ -6,7 +6,7 @@ attaches the distributions and SHA-256 checksums to a GitHub Release.
 
 ## Prepare the release
 
-1. Update `pyproject.toml`, `agent_gantry/__init__.py`, the editable project
+1. Update `pyproject.toml`, `dotfetch/__init__.py`, the editable project
    version in `uv.lock`, `package.json`, the root versions in `package-lock.json`,
    and the version in `README.md`.
 2. Move the accumulated `CHANGELOG.md` notes into a dated release entry, keeping
@@ -21,7 +21,7 @@ attaches the distributions and SHA-256 checksums to a GitHub Release.
 
 4. Run the relevant tests, including `tests/examples/` and
    `tests/frameworks/test_real_packages.py` with the optional SDKs installed.
-   Check `ruff check agent_gantry examples scripts tests`, `uv build`,
+   Check `ruff check dotfetch examples scripts tests`, `uv build`,
    `uv tool run twine check dist/*`, and `npm run build` for the docs.
 5. Merge the release PR to `main` after CI passes, including the native SDK
    matrix and package build job. Preparing a release does not publish it.
@@ -75,13 +75,13 @@ permission; only the production job can write tags and release assets.
 
 ## Verify the published version
 
-Check [PyPI](https://pypi.org/project/agent-gantry/) and
+Check [PyPI](https://pypi.org/project/dotfetch/) and
 [GitHub Releases](https://github.com/CodeHalwell/Agent-Gantry/releases). Download
 `SHA256SUMS` and the artifacts to verify their hashes, then install the version
 in a fresh environment:
 
 ```bash
-uv venv /tmp/gantry-release-check
-uv pip install --python /tmp/gantry-release-check/bin/python agent-gantry==0.26.0
-/tmp/gantry-release-check/bin/python -I -c 'import agent_gantry; print(agent_gantry.__version__)'
+uv venv /tmp/fetcher-release-check
+uv pip install --python /tmp/fetcher-release-check/bin/python dotfetch==0.26.0
+/tmp/fetcher-release-check/bin/python -I -c 'import dotfetch; print(dotfetch.__version__)'
 ```

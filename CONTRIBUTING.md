@@ -1,6 +1,6 @@
-# Contributing to Agent-Gantry
+# Contributing to dotfetch
 
-Thank you for your interest in contributing to Agent-Gantry! This document provides guidelines and instructions for contributing.
+Thank you for your interest in contributing to dotfetch! This document provides guidelines and instructions for contributing.
 
 ## Table of Contents
 
@@ -72,7 +72,7 @@ pip install -e ".[dev]"
 pytest
 
 # Run with coverage
-pytest --cov=agent_gantry
+pytest --cov=dotfetch
 
 # Run specific test file
 pytest tests/test_tool.py
@@ -87,13 +87,13 @@ Before submitting a pull request, ensure your code passes all quality checks:
 
 ```bash
 # Run linter
-ruff check agent_gantry/ examples/ scripts/ tests/
+ruff check dotfetch/ examples/ scripts/ tests/
 
 # Auto-fix linting issues
-ruff check --fix agent_gantry/ examples/ scripts/ tests/
+ruff check --fix dotfetch/ examples/ scripts/ tests/
 
 # Format code (if you have ruff format)
-ruff format agent_gantry/
+ruff format dotfetch/
 ```
 
 ## Code Style
@@ -108,7 +108,7 @@ ruff format agent_gantry/
 
 ### Naming Conventions
 
-- **Classes**: PascalCase (`AgentGantry`, `ToolDefinition`)
+- **Classes**: PascalCase (`DotFetch`, `ToolDefinition`)
 - **Functions/Methods**: snake_case (`retrieve_tools`, `execute_tool`)
 - **Constants**: UPPER_SNAKE_CASE (`DEFAULT_LIMIT`, `MAX_RETRIES`)
 - **Private**: Prefix with underscore (`_internal_method`)
@@ -163,17 +163,17 @@ async def my_function(param: str) -> dict[str, Any]:
 
 ```python
 import pytest
-from agent_gantry import AgentGantry
+from dotfetch import DotFetch
 
 
 @pytest.mark.asyncio
-async def test_retrieve_tools_returns_relevant_results(gantry, sample_tools):
+async def test_retrieve_tools_returns_relevant_results(fetcher, sample_tools):
     """Test that retrieve_tools returns semantically relevant tools."""
     # Given
     query = "calculate sum of numbers"
     
     # When
-    tools = await gantry.retrieve_tools(query, limit=5)
+    tools = await fetcher.retrieve_tools(query, limit=5)
     
     # Then
     assert len(tools) > 0
@@ -283,7 +283,7 @@ pytest -v
 pytest tests/test_tool.py::TestToolDefinition::test_create_minimal_tool
 
 # Check coverage
-pytest --cov=agent_gantry --cov-report=html
+pytest --cov=dotfetch --cov-report=html
 
 # Run linter and auto-fix
 ruff check --fix .
@@ -319,7 +319,7 @@ pip install -e ".[all]"
 ### Project Structure
 
 ```
-agent_gantry/
+dotfetch/
 ├── core/                 # Main facade, registry, router, executor
 ├── schema/               # Pydantic data models
 ├── adapters/             # Protocol adapters
@@ -346,6 +346,6 @@ For instructions on how to build and publish releases to PyPI, please see [PUBLI
 
 ## License
 
-By contributing to Agent-Gantry, you agree that your contributions will be licensed under the MIT License.
+By contributing to dotfetch, you agree that your contributions will be licensed under the MIT License.
 
 Thank you for contributing! 🚀

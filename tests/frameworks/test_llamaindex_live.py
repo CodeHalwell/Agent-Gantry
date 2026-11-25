@@ -4,7 +4,7 @@ These exercise the real ``llama-index-core`` package (skipped if absent). They
 prove the deep integration genuinely re-selects tools on each retriever call —
 a weather query surfaces the weather tool, an email query surfaces the email
 tool — and that the returned objects are real ``FunctionTool`` instances whose
-invocation routes through the gantry.
+invocation routes through the fetcher.
 """
 
 from __future__ import annotations
@@ -15,18 +15,18 @@ pytest.importorskip("llama_index.core")
 
 from llama_index.core.tools import FunctionTool  # noqa: E402
 
-from agent_gantry import AgentGantry  # noqa: E402
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder  # noqa: E402
-from agent_gantry.integrations.frameworks.llamaindex_live import (  # noqa: E402
-    GantryToolRetriever,
+from dotfetch import DotFetch  # noqa: E402
+from dotfetch.adapters.embedders.simple import SimpleEmbedder  # noqa: E402
+from dotfetch.integrations.frameworks.llamaindex_live import (  # noqa: E402
+    DotFetchToolRetriever,
 )
-from agent_gantry.llamaindex import LlamaIndexAdapter  # noqa: E402
-from agent_gantry.schema.tool import ToolDefinition  # noqa: E402
+from dotfetch.llamaindex import LlamaIndexAdapter  # noqa: E402
+from dotfetch.schema.tool import ToolDefinition  # noqa: E402
 
 
 @pytest.fixture
-async def gantry() -> AgentGantry:
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+async def fetcher() -> DotFetch:
+    g = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
     @g.register(tags=["weather"])
     def get_weather(city: str) -> str:
@@ -47,9 +47,9 @@ async def gantry() -> AgentGantry:
     return g
 
 
-async def test_factory_builds_object_retriever(gantry: AgentGantry) -> None:
-    retriever = LlamaIndexAdapter(gantry).tool_retriever(limit=5)
-    assert isinstance(retriever, GantryToolRetriever)
+async def test_factory_builds_object_retriever(fetcher: DotFetch) -> None:
+    retriever = LlamaIndexAdapter(fetcher).tool_retriever(limit=5)
+    assert isinstance(retriever, DotFetchToolRetriever)
     # It is a genuine ObjectRetriever subtype so FunctionAgent accepts it.
     from llama_index.core.objects import ObjectRetriever
 
@@ -57,10 +57,10 @@ async def test_factory_builds_object_retriever(gantry: AgentGantry) -> None:
 
 
 async def test_per_turn_reselection_weather_then_email(
-    gantry: AgentGantry,
+    fetcher: DotFetch,
 ) -> None:
     """Same retriever, different queries -> different tools (per-turn deep)."""
-    retriever = LlamaIndexAdapter(gantry).tool_retriever(limit=1)
+    retriever = LlamaIndexAdapter(fetcher).tool_retriever(limit=1)
 
     weather_tools = await retriever.aretrieve("what's the weather in Paris?")
     weather_names = {t.metadata.name for t in weather_tools}
@@ -75,37 +75,37 @@ async def test_per_turn_reselection_weather_then_email(
 
 
 async def test_returned_objects_are_real_function_tools(
-    gantry: AgentGantry,
+    fetcher: DotFetch,
 ) -> None:
-    retriever = LlamaIndexAdapter(gantry).tool_retriever(limit=5)
+    retriever = LlamaIndexAdapter(fetcher).tool_retriever(limit=5)
     tools = await retriever.aretrieve("what's the weather in Tokyo?")
     assert tools
     for t in tools:
         assert isinstance(t, FunctionTool)
 
 
-async def test_invocation_routes_through_gantry(gantry: AgentGantry) -> None:
-    retriever = LlamaIndexAdapter(gantry).tool_retriever(limit=1)
+async def test_invocation_routes_through_fetcher(fetcher: DotFetch) -> None:
+    retriever = LlamaIndexAdapter(fetcher).tool_retriever(limit=1)
     tools = await retriever.aretrieve("what's the weather in Berlin?")
     by_name = {t.metadata.name: t for t in tools}
     assert "get_weather" in by_name, list(by_name)
 
     tool = by_name["get_weather"]
-    # async_fn path routes through gantry.execute and returns the tool result.
+    # async_fn path routes through fetcher.execute and returns the tool result.
     out = await tool.async_fn(city="Berlin")
     result = getattr(out, "raw_output", out)
     assert result == "weather:Berlin", result
 
 
-async def test_sync_retrieve_matches_async(gantry: AgentGantry) -> None:
-    retriever = LlamaIndexAdapter(gantry).tool_retriever(limit=1)
+async def test_sync_retrieve_matches_async(fetcher: DotFetch) -> None:
+    retriever = LlamaIndexAdapter(fetcher).tool_retriever(limit=1)
     tools = retriever.retrieve("convert 100 USD to EUR")
     names = {t.metadata.name for t in tools}
     assert "convert_currency" in names, names
 
 
 async def test_scalar_coercion_matches_what_the_executor_accepts(
-    gantry: AgentGantry,
+    fetcher: DotFetch,
 ) -> None:
     """LlamaIndex validates against ``fn_schema`` but forwards the caller's
     *original* values, so a model answering ``"100"`` for a ``number``
@@ -116,7 +116,7 @@ async def test_scalar_coercion_matches_what_the_executor_accepts(
     Exercised against the real package because that forwarding behaviour is
     the whole finding — a fake would just pin our assumption about it.
     """
-    tools = await LlamaIndexAdapter(gantry).select("convert 100 USD to EUR", limit=1)
+    tools = await LlamaIndexAdapter(fetcher).select("convert 100 USD to EUR", limit=1)
     by_name = {t.metadata.name: t for t in tools}
     assert "convert_currency" in by_name, list(by_name)
     tool = by_name["convert_currency"]
@@ -130,9 +130,9 @@ async def test_scalar_coercion_matches_what_the_executor_accepts(
 
 
 async def test_well_typed_values_are_passed_through_unchanged(
-    gantry: AgentGantry,
+    fetcher: DotFetch,
 ) -> None:
-    tools = await LlamaIndexAdapter(gantry).select("convert 100 USD to EUR", limit=1)
+    tools = await LlamaIndexAdapter(fetcher).select("convert 100 USD to EUR", limit=1)
     tool = {t.metadata.name: t for t in tools}["convert_currency"]
     out = tool.call(amount=100.0, to_code="EUR")
     assert getattr(out, "raw_output", out) == "converted:100.0:EUR"
@@ -157,7 +157,7 @@ async def test_coercion_does_not_inject_defaults_into_typed_map_values() -> None
     an imported or hand-authored schema is where a non-nullable optional
     field actually occurs.
     """
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+    g = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
     def record_entries(entries: dict) -> str:
         return ",".join(

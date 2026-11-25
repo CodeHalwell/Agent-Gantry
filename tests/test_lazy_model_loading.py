@@ -20,7 +20,7 @@ import types
 import numpy as np
 import pytest
 
-from agent_gantry.schema.tool import ToolDefinition
+from dotfetch.schema.tool import ToolDefinition
 
 #: How long the fake model takes to "load".
 _LOAD_SECONDS = 0.4
@@ -89,7 +89,7 @@ async def _largest_heartbeat_gap(coro: object) -> float:
 async def test_reranker_load_does_not_block_the_loop(
     slow_sentence_transformers: dict[str, int], tool: ToolDefinition
 ) -> None:
-    from agent_gantry.adapters.rerankers.cross_encoder import CrossEncoderReranker
+    from dotfetch.adapters.rerankers.cross_encoder import CrossEncoderReranker
 
     reranker = CrossEncoderReranker()
     gap = await _largest_heartbeat_gap(reranker.rerank("q", [(tool, 1.0)], top_k=1))
@@ -103,7 +103,7 @@ async def test_reranker_load_does_not_block_the_loop(
 async def test_embedder_load_does_not_block_the_loop(
     slow_sentence_transformers: dict[str, int],
 ) -> None:
-    from agent_gantry.adapters.embedders.sentence_transformers import (
+    from dotfetch.adapters.embedders.sentence_transformers import (
         SentenceTransformersEmbedder,
     )
 
@@ -119,7 +119,7 @@ async def test_concurrent_first_calls_load_the_model_once(
     slow_sentence_transformers: dict[str, int], tool: ToolDefinition
 ) -> None:
     """Offloading must not turn one load into a thundering herd."""
-    from agent_gantry.adapters.rerankers.cross_encoder import CrossEncoderReranker
+    from dotfetch.adapters.rerankers.cross_encoder import CrossEncoderReranker
 
     reranker = CrossEncoderReranker()
     await asyncio.gather(
@@ -132,7 +132,7 @@ async def test_concurrent_first_calls_load_the_model_once(
 async def test_model_is_reused_across_calls(
     slow_sentence_transformers: dict[str, int],
 ) -> None:
-    from agent_gantry.adapters.embedders.sentence_transformers import (
+    from dotfetch.adapters.embedders.sentence_transformers import (
         SentenceTransformersEmbedder,
     )
 
@@ -145,7 +145,7 @@ async def test_model_is_reused_across_calls(
 
 def test_sync_property_still_loads(slow_sentence_transformers: dict[str, int]) -> None:
     """``dimension`` is a sync property and must keep working."""
-    from agent_gantry.adapters.embedders.sentence_transformers import (
+    from dotfetch.adapters.embedders.sentence_transformers import (
         SentenceTransformersEmbedder,
     )
 

@@ -19,12 +19,12 @@ from unittest.mock import patch
 
 import pytest
 
-from agent_gantry import AgentGantry, with_semantic_tools
-from agent_gantry.core.rate_limiter import RateLimiter, RateLimitExceeded
-from agent_gantry.integrations.frameworks.base import GantryToolset
-from agent_gantry.integrations.refresh import ToolRefresher
-from agent_gantry.query import fallback_chain, last_user_text
-from agent_gantry.query.strategies import (
+from dotfetch import DotFetch, with_semantic_tools
+from dotfetch.core.rate_limiter import RateLimiter, RateLimitExceeded
+from dotfetch.integrations.frameworks.base import DotFetchToolset
+from dotfetch.integrations.refresh import ToolRefresher
+from dotfetch.query import fallback_chain, last_user_text
+from dotfetch.query.strategies import (
     _msg_role,
     concatenate_recent,
     last_tool_result,
@@ -32,21 +32,21 @@ from agent_gantry.query.strategies import (
     tool_names_used,
     truncated,
 )
-from agent_gantry.schema.config import RateLimitConfig
-from agent_gantry.schema.tool import ToolDefinition
+from dotfetch.schema.config import RateLimitConfig
+from dotfetch.schema.tool import ToolDefinition
 
 
 @pytest.fixture
-async def weather_gantry() -> AgentGantry:
-    gantry = AgentGantry()
+async def weather_fetcher() -> DotFetch:
+    fetcher = DotFetch()
 
-    @gantry.register(tags=["weather"])
+    @fetcher.register(tags=["weather"])
     def get_weather(city: str) -> str:
         """Get the current weather for a city."""
         return f"sunny in {city}"
 
-    await gantry.sync()
-    return gantry
+    await fetcher.sync()
+    return fetcher
 
 
 # --------------------------------------------------------------------------- #
@@ -56,8 +56,8 @@ async def weather_gantry() -> AgentGantry:
 
 class TestNonIdentifierProperties:
     @pytest.fixture
-    async def toolset(self) -> GantryToolset:
-        gantry = AgentGantry()
+    async def toolset(self) -> DotFetchToolset:
+        fetcher = DotFetch()
         tool = ToolDefinition(
             name="lookup_user",
             description="Look up a user record by id in the directory service.",
@@ -76,12 +76,12 @@ class TestNonIdentifierProperties:
         async def handler(**kwargs: Any) -> dict[str, Any]:
             return kwargs
 
-        await gantry.add_tool(tool, handler=handler)
-        return GantryToolset(gantry)
+        await fetcher.add_tool(tool, handler=handler)
+        return DotFetchToolset(fetcher)
 
     @pytest.mark.asyncio
     async def test_a_signature_is_built_from_unusable_names(
-        self, toolset: GantryToolset
+        self, toolset: DotFetchToolset
     ) -> None:
         """``inspect.Parameter`` rejects ``user-id`` and ``from``; one such
         property made ``python_signature`` — and so the seven adapters built on
@@ -97,7 +97,7 @@ class TestNonIdentifierProperties:
 
     @pytest.mark.asyncio
     async def test_calling_by_alias_reaches_the_schema_name(
-        self, toolset: GantryToolset
+        self, toolset: DotFetchToolset
     ) -> None:
         """A framework calls with the aliases it read off the signature; the
         tool must receive the property names its schema declares."""
@@ -112,7 +112,7 @@ class TestNonIdentifierProperties:
 
     @pytest.mark.asyncio
     async def test_an_alias_never_shadows_a_real_property(self) -> None:
-        gantry = AgentGantry()
+        fetcher = DotFetch()
         tool = ToolDefinition(
             name="clashing_tool",
             description="A tool whose property names collide once normalised.",
@@ -121,8 +121,8 @@ class TestNonIdentifierProperties:
                 "properties": {"user_id": {"type": "string"}, "user-id": {"type": "string"}},
             },
         )
-        await gantry.add_tool(tool, handler=lambda **kw: kw)
-        spec = (await GantryToolset(gantry).select("clashing", limit=1))[0]
+        await fetcher.add_tool(tool, handler=lambda **kw: kw)
+        spec = (await DotFetchToolset(fetcher).select("clashing", limit=1))[0]
         assert list(spec.python_signature().parameters) == ["user_id", "user_id_2"]
         assert spec.parameter_aliases() == {"user_id_2": "user-id"}
 
@@ -143,20 +143,20 @@ class _Message:
 class TestPromptExtraction:
     @pytest.mark.asyncio
     async def test_a_messages_list_with_no_user_text_selects_nothing(
-        self, weather_gantry: AgentGantry
+        self, weather_fetcher: DotFetch
     ) -> None:
         """``str(value)`` on the list ran retrieval on ``"[]"`` or a list
         repr, so arbitrary tools were selected for a nonsense query."""
         seen: list[str] = []
-        original = weather_gantry.retrieve
+        original = weather_fetcher.retrieve
 
         async def spy(query: Any) -> Any:
             seen.append(query.context.query)
             return await original(query)
 
-        weather_gantry.retrieve = spy  # type: ignore[method-assign]
+        weather_fetcher.retrieve = spy  # type: ignore[method-assign]
 
-        @with_semantic_tools(weather_gantry, prompt_param="messages", score_threshold=0.0)
+        @with_semantic_tools(weather_fetcher, prompt_param="messages", score_threshold=0.0)
         async def generate(messages: Any, *, tools: Any = None) -> Any:
             return tools
 
@@ -166,18 +166,18 @@ class TestPromptExtraction:
 
     @pytest.mark.asyncio
     async def test_message_objects_and_none_are_read_correctly(
-        self, weather_gantry: AgentGantry
+        self, weather_fetcher: DotFetch
     ) -> None:
         seen: list[str] = []
-        original = weather_gantry.retrieve
+        original = weather_fetcher.retrieve
 
         async def spy(query: Any) -> Any:
             seen.append(query.context.query)
             return await original(query)
 
-        weather_gantry.retrieve = spy  # type: ignore[method-assign]
+        weather_fetcher.retrieve = spy  # type: ignore[method-assign]
 
-        @with_semantic_tools(weather_gantry, prompt_param="messages", score_threshold=0.0)
+        @with_semantic_tools(weather_fetcher, prompt_param="messages", score_threshold=0.0)
         async def generate(messages: Any, *, tools: Any = None) -> Any:
             return tools
 
@@ -187,7 +187,7 @@ class TestPromptExtraction:
         assert seen == ["weather in Paris"]
 
         # An explicit None prompt must not become the query "None"
-        @with_semantic_tools(weather_gantry, score_threshold=0.0)
+        @with_semantic_tools(weather_fetcher, score_threshold=0.0)
         async def generate2(prompt: str | None = None, *, tools: Any = None) -> Any:
             return tools
 
@@ -327,36 +327,36 @@ class TestQueryStrategies:
 class TestQueryBounds:
     @pytest.mark.asyncio
     async def test_the_decorator_fails_at_decoration_not_silently_every_call(
-        self, weather_gantry: AgentGantry
+        self, weather_fetcher: DotFetch
     ) -> None:
         """``limit=60`` exceeds ``ToolQuery``'s cap; the resulting error was
         caught by the retrieval-failure handler, so the model was called with
         no tools on every request and nothing said so."""
         with pytest.raises(ValueError, match="limit"):
-            with_semantic_tools(weather_gantry, limit=60)
+            with_semantic_tools(weather_fetcher, limit=60)
 
         with pytest.raises(ValueError, match="score_threshold"):
-            with_semantic_tools(weather_gantry, score_threshold=1.5)
+            with_semantic_tools(weather_fetcher, score_threshold=1.5)
 
     @pytest.mark.asyncio
     async def test_refresher_and_toolset_report_bounds_clearly(
-        self, weather_gantry: AgentGantry
+        self, weather_fetcher: DotFetch
     ) -> None:
         with pytest.raises(ValueError, match="ToolRefresher"):
-            ToolRefresher(weather_gantry, limit=60)
+            ToolRefresher(weather_fetcher, limit=60)
 
-        with pytest.raises(ValueError, match="GantryToolset.select"):
-            await GantryToolset(weather_gantry).select("weather", limit=60)
+        with pytest.raises(ValueError, match="DotFetchToolset.select"):
+            await DotFetchToolset(weather_fetcher).select("weather", limit=60)
 
         # ``limit or default`` used to turn an explicit 0 into the default and
         # slip it past the check entirely.
         with pytest.raises(ValueError, match="limit"):
-            await GantryToolset(weather_gantry).select("weather", limit=0)
+            await DotFetchToolset(weather_fetcher).select("weather", limit=0)
 
     @pytest.mark.asyncio
-    async def test_valid_bounds_still_work(self, weather_gantry: AgentGantry) -> None:
-        assert ToolRefresher(weather_gantry, limit=50) is not None
-        assert await GantryToolset(weather_gantry).select("weather", limit=1)
+    async def test_valid_bounds_still_work(self, weather_fetcher: DotFetch) -> None:
+        assert ToolRefresher(weather_fetcher, limit=50) is not None
+        assert await DotFetchToolset(weather_fetcher).select("weather", limit=1)
 
 
 # --------------------------------------------------------------------------- #
@@ -370,22 +370,22 @@ async def test_a_failed_sync_keeps_the_late_registration_pending() -> None:
     On a transient embedder failure the buffer was empty and ``_synced`` was
     still True from the previous run, so the new tool was never retried and
     stayed invisible even after the backend recovered."""
-    gantry = AgentGantry()
+    fetcher = DotFetch()
 
-    @gantry.register
+    @fetcher.register
     def first_tool(x: int) -> int:
         """An initial tool that syncs without trouble."""
         return x
 
-    await gantry.sync()
-    assert gantry._synced is True
+    await fetcher.sync()
+    assert fetcher._synced is True
 
-    @gantry.register
+    @fetcher.register
     def late_tool(y: int) -> int:
         """A tool registered after the first successful sync."""
         return y
 
-    healthy = gantry._embedder.embed_batch
+    healthy = fetcher._embedder.embed_batch
     attempts = {"n": 0}
 
     async def flaky(texts: Any, batch_size: Any = None) -> Any:
@@ -394,18 +394,18 @@ async def test_a_failed_sync_keeps_the_late_registration_pending() -> None:
             raise RuntimeError("embedder down")
         return await healthy(texts, batch_size)
 
-    gantry._embedder.embed_batch = flaky  # type: ignore[method-assign]
+    fetcher._embedder.embed_batch = flaky  # type: ignore[method-assign]
 
     with pytest.raises(RuntimeError, match="embedder down"):
-        await gantry.retrieve_tools("late tool", limit=5)
+        await fetcher.retrieve_tools("late tool", limit=5)
 
-    # the registration survives, and the gantry knows it still owes a sync
-    assert [tool.name for tool in gantry._pending_tools] == ["late_tool"]
-    assert gantry._synced is False
+    # the registration survives, and the fetcher knows it still owes a sync
+    assert [tool.name for tool in fetcher._pending_tools] == ["late_tool"]
+    assert fetcher._synced is False
 
-    names = [t["function"]["name"] for t in await gantry.retrieve_tools("late tool", limit=5)]
+    names = [t["function"]["name"] for t in await fetcher.retrieve_tools("late tool", limit=5)]
     assert "late_tool" in names
-    assert gantry._pending_tools == []
+    assert fetcher._pending_tools == []
 
 
 @pytest.mark.asyncio
@@ -417,21 +417,21 @@ async def test_a_registration_made_during_a_sync_is_not_discarded() -> None:
     it -- and ``_synced`` goes True on the way out, so ``ensure_synced`` then
     saw no work and the tool never became retrievable.
     """
-    gantry = AgentGantry()
+    fetcher = DotFetch()
 
-    @gantry.register
+    @fetcher.register
     def first_tool(x: int) -> int:
         """An initial tool, synced before the race begins."""
         return x
 
-    await gantry.sync()
+    await fetcher.sync()
 
-    @gantry.register
+    @fetcher.register
     def second_tool(x: int) -> int:
         """The tool whose sync the late registration races."""
         return x * 2
 
-    healthy = gantry._embedder.embed_batch
+    healthy = fetcher._embedder.embed_batch
     embedding = asyncio.Event()
 
     async def slow(texts: Any, batch_size: Any = None) -> Any:
@@ -439,44 +439,44 @@ async def test_a_registration_made_during_a_sync_is_not_discarded() -> None:
         await asyncio.sleep(0.05)
         return await healthy(texts, batch_size)
 
-    gantry._embedder.embed_batch = slow  # type: ignore[method-assign]
+    fetcher._embedder.embed_batch = slow  # type: ignore[method-assign]
 
     async def register_midway() -> None:
         await embedding.wait()
 
-        @gantry.register
+        @fetcher.register
         def third_tool(x: int) -> int:
             """A tool registered while the sync above is still in flight."""
             return x * 3
 
-    await asyncio.gather(gantry.sync(), register_midway())
-    gantry._embedder.embed_batch = healthy  # type: ignore[method-assign]
+    await asyncio.gather(fetcher.sync(), register_midway())
+    fetcher._embedder.embed_batch = healthy  # type: ignore[method-assign]
 
     # the tool the sync could not have known about is still owed
-    assert [tool.name for tool in gantry._pending_tools] == ["third_tool"]
+    assert [tool.name for tool in fetcher._pending_tools] == ["third_tool"]
 
     # ...and a retrieval settles the debt on its own, via ensure_synced. The
     # assertion is on the store rather than on what comes back: which tools
     # clear a query's score threshold depends on the embedder installed, and
     # what this test is about is that the late tool gets embedded at all.
-    await gantry.retrieve_tools("multiply a number", limit=10)
-    stored = {tool.name for tool in await gantry._vector_store.list_all(limit=100)}
+    await fetcher.retrieve_tools("multiply a number", limit=10)
+    stored = {tool.name for tool in await fetcher._vector_store.list_all(limit=100)}
     assert stored == {"first_tool", "second_tool", "third_tool"}
-    assert gantry._pending_tools == []
+    assert fetcher._pending_tools == []
 
 
 @pytest.mark.asyncio
 async def test_a_tool_re_registered_during_a_sync_keeps_the_newer_definition() -> None:
     """Draining by qualified name would drop the update and leave the
     superseded definition in the store, so the drain matches on identity."""
-    gantry = AgentGantry()
+    fetcher = DotFetch()
 
-    @gantry.register
+    @fetcher.register
     def only_tool(x: int) -> int:
         """The original description, which the re-registration replaces."""
         return x
 
-    healthy = gantry._embedder.embed_batch
+    healthy = fetcher._embedder.embed_batch
     embedding = asyncio.Event()
 
     async def slow(texts: Any, batch_size: Any = None) -> Any:
@@ -484,22 +484,22 @@ async def test_a_tool_re_registered_during_a_sync_keeps_the_newer_definition() -
         await asyncio.sleep(0.05)
         return await healthy(texts, batch_size)
 
-    gantry._embedder.embed_batch = slow  # type: ignore[method-assign]
+    fetcher._embedder.embed_batch = slow  # type: ignore[method-assign]
 
     async def re_register() -> None:
         await embedding.wait()
 
-        @gantry.register(name="only_tool")
+        @fetcher.register(name="only_tool")
         def replacement(x: int) -> int:
             """The replacement description, registered mid-sync."""
             return x * 2
 
-    await asyncio.gather(gantry.sync(), re_register())
-    gantry._embedder.embed_batch = healthy  # type: ignore[method-assign]
+    await asyncio.gather(fetcher.sync(), re_register())
+    fetcher._embedder.embed_batch = healthy  # type: ignore[method-assign]
 
-    assert [tool.name for tool in gantry._pending_tools] == ["only_tool"]
-    await gantry.sync()
-    stored = await gantry._vector_store.list_all(limit=10)
+    assert [tool.name for tool in fetcher._pending_tools] == ["only_tool"]
+    await fetcher.sync()
+    stored = await fetcher._vector_store.list_all(limit=10)
     assert [t.description for t in stored] == [
         "The replacement description, registered mid-sync."
     ]
@@ -515,13 +515,13 @@ class TestPruneSafety:
     @pytest.mark.asyncio
     async def test_an_empty_registry_does_not_prune_a_shared_store(self) -> None:
         """``sync()`` pruned before checking whether anything was registered,
-        so a gantry that had not registered yet asked the store to delete
+        so a fetcher that had not registered yet asked the store to delete
         everything it did not know about -- which, on a store shared between
         gantries, is everything the others put there."""
-        from agent_gantry.adapters.vector_stores.memory import InMemoryVectorStore
+        from dotfetch.adapters.vector_stores.memory import InMemoryVectorStore
 
         shared = InMemoryVectorStore()
-        producer = AgentGantry(vector_store=shared)
+        producer = DotFetch(vector_store=shared)
         for i in range(3):
             await producer.add_tool(
                 ToolDefinition(
@@ -535,17 +535,17 @@ class TestPruneSafety:
         stored = sorted(tool.name for tool in await shared.list_all(limit=100))
         assert len(stored) == 3
 
-        # a second gantry on the same store, pruning on, nothing registered yet
-        latecomer = AgentGantry(vector_store=shared)
+        # a second fetcher on the same store, pruning on, nothing registered yet
+        latecomer = DotFetch(vector_store=shared)
         assert latecomer.export_tools() == []
         await latecomer.sync(prune=True)
         assert sorted(tool.name for tool in await shared.list_all(limit=100)) == stored
 
         # ...and the same through the config flag, and through the public method
-        from agent_gantry.schema.config import AgentGantryConfig
+        from dotfetch.schema.config import DotFetchConfig
 
-        configured = AgentGantry(
-            vector_store=shared, config=AgentGantryConfig(prune_on_sync=True)
+        configured = DotFetch(
+            vector_store=shared, config=DotFetchConfig(prune_on_sync=True)
         )
         await configured.sync()
         assert await configured.prune_stale_tools() == 0
@@ -554,9 +554,9 @@ class TestPruneSafety:
 
     @pytest.mark.asyncio
     async def test_pruning_still_removes_a_tool_dropped_from_the_code(self) -> None:
-        """The guard above must not disable pruning when the gantry does know
+        """The guard above must not disable pruning when the fetcher does know
         which tools belong to it."""
-        from agent_gantry.adapters.vector_stores.memory import InMemoryVectorStore
+        from dotfetch.adapters.vector_stores.memory import InMemoryVectorStore
 
         def _tool(name: str) -> ToolDefinition:
             return ToolDefinition(
@@ -566,13 +566,13 @@ class TestPruneSafety:
             )
 
         shared = InMemoryVectorStore()
-        first = AgentGantry(vector_store=shared)
+        first = DotFetch(vector_store=shared)
         for name in ("kept_one", "kept_two", "removed_from_code"):
             await first.add_tool(_tool(name), handler=lambda **kw: kw)
         await first.sync()
 
         # a later run of the same service, one tool deleted from the code
-        second = AgentGantry(vector_store=shared)
+        second = DotFetch(vector_store=shared)
         for name in ("kept_one", "kept_two"):
             await second.add_tool(_tool(name), handler=lambda **kw: kw)
         await second.sync(prune=True)

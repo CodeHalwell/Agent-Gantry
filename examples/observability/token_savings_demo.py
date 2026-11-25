@@ -2,13 +2,13 @@
 Measuring the token saving on a real OpenAI call.
 
 Registers 30 tools, sends one prompt twice — once with every schema attached,
-once with only the two Gantry retrieved — and compares the ``usage`` the API
+once with only the two dotfetch retrieved — and compares the ``usage`` the API
 reports for each. Needs ``OPENAI_API_KEY`` and the ``openai`` extra; two
 chat completions are billed.
 
 Run with::
 
-    pip install agent-gantry[openai]
+    pip install dotfetch[openai]
     export OPENAI_API_KEY=...
     python examples/observability/token_savings_demo.py
 """
@@ -16,8 +16,8 @@ Run with::
 import asyncio
 import os
 
-from agent_gantry import AgentGantry
-from agent_gantry.metrics import calculate_token_savings
+from dotfetch import DotFetch
+from dotfetch.metrics import calculate_token_savings
 
 try:
     from dotenv import load_dotenv
@@ -28,7 +28,7 @@ except ImportError:  # python-dotenv is optional; the environment variable works
 
 
 async def main():
-    print("=== Agent-Gantry Token Savings Demo (OpenAI) ===\n")
+    print("=== dotfetch Token Savings Demo (OpenAI) ===\n")
 
     # 1. Setup
     api_key = os.environ.get("OPENAI_API_KEY")
@@ -41,14 +41,14 @@ async def main():
         from openai import AsyncOpenAI
     except ImportError:
         print("❌ Error: the 'openai' package is not installed.")
-        print("   pip install agent-gantry[openai]")
+        print("   pip install dotfetch[openai]")
         return
 
     # Initialize OpenAI Client
     client = AsyncOpenAI(api_key=api_key)
 
-    # Initialize Gantry
-    gantry = AgentGantry()
+    # Initialize dotfetch
+    fetcher = DotFetch()
     try:
         # 2. Register 30 tools to create a "heavy" prompt
         # This simulates a real-world scenario with many available capabilities
@@ -63,7 +63,7 @@ async def main():
                 handler.__doc__ = f"This tool is specifically designed to perform specialized operations for task category {idx}."
                 return handler
 
-            gantry.register(
+            fetcher.register(
                 create_handler(i),
                 examples=[
                     f"perform a specialized operation for task category {i}",
@@ -71,15 +71,15 @@ async def main():
                 ],
             )
 
-        await gantry.sync()
-        print(f"✅ Registered {gantry.tool_count} tools.\n")
+        await fetcher.sync()
+        print(f"✅ Registered {fetcher.tool_count} tools.\n")
 
         query = "I need to perform a specialized operation for task category 7"
         print(f"User Query: '{query}'\n")
 
         # --- Baseline: Send ALL tools ---
         print("Step 1: Running Baseline (Sending ALL 30 tools to OpenAI)...")
-        all_tools = [t.to_dialect("openai") for t in await gantry.list_tools()]
+        all_tools = [t.to_dialect("openai") for t in await fetcher.list_tools()]
 
         baseline_response = await client.chat.completions.create(
             model="gpt-5.5",
@@ -92,9 +92,9 @@ async def main():
         print(f"📊 Baseline Prompt Tokens: {baseline_usage.prompt_tokens}")
 
         # --- Optimized: Send only Top-K tools ---
-        print("\nStep 2: Running Optimized (Using Gantry to send only Top-2 tools)...")
-        optimized_tools = await gantry.retrieve_tools(query, limit=2)
-        print(f"Gantry selected: {[t['function']['name'] for t in optimized_tools]}")
+        print("\nStep 2: Running Optimized (Using dotfetch to send only Top-2 tools)...")
+        optimized_tools = await fetcher.retrieve_tools(query, limit=2)
+        print(f"dotfetch selected: {[t['function']['name'] for t in optimized_tools]}")
 
         optimized_response = await client.chat.completions.create(
             model="gpt-5.5",
@@ -128,7 +128,7 @@ async def main():
         else:
             print("\n⚠️ Warning: LLM did not call any tools in the optimized run.")
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 if __name__ == "__main__":

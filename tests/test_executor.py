@@ -1,7 +1,7 @@
 import pytest
 
-from agent_gantry.core.executor import ExecutionEngine
-from agent_gantry.schema.tool import ToolDefinition
+from dotfetch.core.executor import ExecutionEngine
+from dotfetch.schema.tool import ToolDefinition
 
 
 class MockToolRegistry:
@@ -305,7 +305,7 @@ async def test_validate_empty_schema_additional_properties_permits_extras(engine
     )
     assert is_valid is True, error
 
-    # Sanity: absent additionalProperties (Gantry's own strict default,
+    # Sanity: absent additionalProperties (dotfetch's own strict default,
     # distinct from the JSON Schema spec default) must still reject extras
     # at both call sites — the fix must not blur this back together.
     strict_tool = ToolDefinition(
@@ -339,10 +339,10 @@ async def test_confirmation_probe_does_not_consume_rate_limit_budget():
     concurrency counter, so charging both the probe and the approved replay
     would consume two units for one logical call — and at a limit of 1 would
     leave the tool permanently unexecutable (PR #381 review)."""
-    from agent_gantry.core.rate_limiter import RateLimiter
-    from agent_gantry.core.registry import ToolRegistry
-    from agent_gantry.schema.config import RateLimitConfig
-    from agent_gantry.schema.execution import ToolCall
+    from dotfetch.core.rate_limiter import RateLimiter
+    from dotfetch.core.registry import ToolRegistry
+    from dotfetch.schema.config import RateLimitConfig
+    from dotfetch.schema.execution import ToolCall
 
     registry = ToolRegistry()
     tool = ToolDefinition(
@@ -381,10 +381,10 @@ async def test_approved_calls_still_consume_rate_limit_budget():
     """The probe exemption must not become a way around the limiter:
     ``require_confirmation=False`` is caller-supplied, so a call that
     actually executes always counts."""
-    from agent_gantry.core.rate_limiter import RateLimiter
-    from agent_gantry.core.registry import ToolRegistry
-    from agent_gantry.schema.config import RateLimitConfig
-    from agent_gantry.schema.execution import ToolCall
+    from dotfetch.core.rate_limiter import RateLimiter
+    from dotfetch.core.registry import ToolRegistry
+    from dotfetch.schema.config import RateLimitConfig
+    from dotfetch.schema.execution import ToolCall
 
     registry = ToolRegistry()
     tool = ToolDefinition(
@@ -424,10 +424,10 @@ async def test_confirmation_probe_does_not_leak_concurrency_slots():
     """The probe skips ``acquire``, so it must skip ``release`` too — an
     unmatched release would decrement a counter it never incremented and
     hand out extra concurrency."""
-    from agent_gantry.core.rate_limiter import RateLimiter
-    from agent_gantry.core.registry import ToolRegistry
-    from agent_gantry.schema.config import RateLimitConfig
-    from agent_gantry.schema.execution import ToolCall
+    from dotfetch.core.rate_limiter import RateLimiter
+    from dotfetch.core.registry import ToolRegistry
+    from dotfetch.schema.config import RateLimitConfig
+    from dotfetch.schema.execution import ToolCall
 
     registry = ToolRegistry()
     tool = ToolDefinition(
@@ -460,11 +460,11 @@ async def test_a2a_call_is_gated_by_confirmation_before_remote_dispatch():
     and concurrency limits (PR #381 review)."""
     from datetime import datetime, timezone
 
-    from agent_gantry.core.rate_limiter import RateLimiter
-    from agent_gantry.core.registry import ToolRegistry
-    from agent_gantry.schema.config import RateLimitConfig
-    from agent_gantry.schema.execution import ExecutionStatus, ToolCall, ToolResult
-    from agent_gantry.schema.tool import ToolSource
+    from dotfetch.core.rate_limiter import RateLimiter
+    from dotfetch.core.registry import ToolRegistry
+    from dotfetch.schema.config import RateLimitConfig
+    from dotfetch.schema.execution import ExecutionStatus, ToolCall, ToolResult
+    from dotfetch.schema.tool import ToolSource
 
     class _StubA2A:
         def __init__(self) -> None:
@@ -648,9 +648,9 @@ async def test_tool_flag_probe_is_not_charged_to_the_security_policy():
     cannot see. Without being told, the policy recorded the probe against
     its window and then denied the approved replay for the rest of the
     minute, making the tool unexecutable (PR #381 review)."""
-    from agent_gantry.core.registry import ToolRegistry
-    from agent_gantry.core.security import SecurityPolicy
-    from agent_gantry.schema.execution import ToolCall
+    from dotfetch.core.registry import ToolRegistry
+    from dotfetch.core.security import SecurityPolicy
+    from dotfetch.schema.execution import ToolCall
 
     registry = ToolRegistry()
     registry.register_tool(
@@ -680,9 +680,9 @@ async def test_tool_flag_probe_is_not_charged_to_the_security_policy():
 @pytest.mark.asyncio
 async def test_executed_calls_still_consume_the_security_policy_budget():
     """The probe exemption must not leak into calls that actually run."""
-    from agent_gantry.core.registry import ToolRegistry
-    from agent_gantry.core.security import SecurityPolicy
-    from agent_gantry.schema.execution import ToolCall
+    from dotfetch.core.registry import ToolRegistry
+    from dotfetch.core.security import SecurityPolicy
+    from dotfetch.schema.execution import ToolCall
 
     registry = ToolRegistry()
     registry.register_tool(
@@ -803,7 +803,7 @@ async def test_validate_enforces_constraint_keywords(engine):
     """Pydantic emits these for any constrained field (``Annotated[int,
     Field(gt=0)]`` becomes ``exclusiveMinimum: 0``), so they arrive inside
     the nested schemas introspection now inlines; ``uniqueItems`` is emitted
-    by Gantry itself for a ``set`` parameter (PR #381 review)."""
+    by dotfetch itself for a ``set`` parameter (PR #381 review)."""
     tool = ToolDefinition(
         name="bounded",
         description="Carries numeric, string and array constraints",
@@ -991,9 +991,9 @@ async def test_malformed_confirmation_probe_consumes_quota():
     """A call whose arguments don't match the schema is terminal even on a
     confirmation-gated tool — it returns a ValidationError, never a pending
     prompt — so it must not take the probe exemption (PR #381 review)."""
-    from agent_gantry.core.registry import ToolRegistry
-    from agent_gantry.core.security import SecurityPolicy
-    from agent_gantry.schema.execution import ToolCall
+    from dotfetch.core.registry import ToolRegistry
+    from dotfetch.core.security import SecurityPolicy
+    from dotfetch.schema.execution import ToolCall
 
     registry = ToolRegistry()
     registry.register_tool(
@@ -1024,9 +1024,9 @@ async def test_malformed_confirmation_probe_consumes_quota():
 @pytest.mark.asyncio
 async def test_valid_confirmation_probe_is_still_exempt():
     """The malformed-probe carve-out must not undo the exemption itself."""
-    from agent_gantry.core.registry import ToolRegistry
-    from agent_gantry.core.security import SecurityPolicy
-    from agent_gantry.schema.execution import ToolCall
+    from dotfetch.core.registry import ToolRegistry
+    from dotfetch.core.security import SecurityPolicy
+    from dotfetch.schema.execution import ToolCall
 
     registry = ToolRegistry()
     registry.register_tool(
@@ -1336,9 +1336,9 @@ async def test_malformed_args_outrank_a_pattern_confirmation_gate():
     ``require_confirmation`` *pattern* gate, whose result was returned before
     the validation result was ever consulted — putting a schema violation in
     front of a human to approve and then failing it anyway (PR #381 review)."""
-    from agent_gantry.core.registry import ToolRegistry
-    from agent_gantry.core.security import SecurityPolicy
-    from agent_gantry.schema.execution import ToolCall
+    from dotfetch.core.registry import ToolRegistry
+    from dotfetch.core.security import SecurityPolicy
+    from dotfetch.schema.execution import ToolCall
 
     registry = ToolRegistry()
     tool = ToolDefinition(
@@ -1372,9 +1372,9 @@ async def test_malformed_args_outrank_a_pattern_confirmation_gate():
 async def test_denial_still_outranks_a_validation_error():
     """A denial must not leak "your arguments are malformed" about a tool the
     caller may not invoke at all, so it still wins over validation."""
-    from agent_gantry.core.registry import ToolRegistry
-    from agent_gantry.core.security import SecurityPolicy
-    from agent_gantry.schema.execution import ToolCall
+    from dotfetch.core.registry import ToolRegistry
+    from dotfetch.core.security import SecurityPolicy
+    from dotfetch.schema.execution import ToolCall
 
     registry = ToolRegistry()
     tool = ToolDefinition(
@@ -1470,9 +1470,9 @@ async def test_execute_records_exactly_one_telemetry_event():
     denial outranks it and a pending result can be discarded in favour of it.
     Recording where it was built produced two executions for one call, one of
     them an outcome that was never returned (PR #381 review)."""
-    from agent_gantry.core.registry import ToolRegistry
-    from agent_gantry.core.security import SecurityPolicy
-    from agent_gantry.schema.execution import ToolCall
+    from dotfetch.core.registry import ToolRegistry
+    from dotfetch.core.security import SecurityPolicy
+    from dotfetch.schema.execution import ToolCall
 
     class _Telemetry:
         def __init__(self) -> None:
@@ -1520,9 +1520,9 @@ async def test_malformed_pattern_gated_calls_consume_policy_quota():
     nothing was ever counted and such calls were unlimited — the same exemption
     abuse the tool-flag gate was fixed for, reachable through the pattern gate
     (PR #381 review)."""
-    from agent_gantry.core.registry import ToolRegistry
-    from agent_gantry.core.security import SecurityPolicy
-    from agent_gantry.schema.execution import ToolCall
+    from dotfetch.core.registry import ToolRegistry
+    from dotfetch.core.security import SecurityPolicy
+    from dotfetch.schema.execution import ToolCall
 
     registry = ToolRegistry()
     tool = ToolDefinition(
@@ -1557,9 +1557,9 @@ async def test_malformed_pattern_gated_calls_consume_policy_quota():
 async def test_valid_pattern_gated_probe_keeps_its_exemption():
     """The exemption exists so an approved replay isn't denied for the rest of
     the window — that must survive the fix above."""
-    from agent_gantry.core.registry import ToolRegistry
-    from agent_gantry.core.security import SecurityPolicy
-    from agent_gantry.schema.execution import ToolCall
+    from dotfetch.core.registry import ToolRegistry
+    from dotfetch.core.security import SecurityPolicy
+    from dotfetch.schema.execution import ToolCall
 
     registry = ToolRegistry()
     tool = ToolDefinition(
@@ -1592,7 +1592,7 @@ async def test_valid_pattern_gated_probe_keeps_its_exemption():
 
 async def test_required_nullable_parameter_accepts_null_end_to_end(engine):
     """The schema fix is only worth anything if validation agrees with it."""
-    from agent_gantry.schema.introspection import build_parameters_schema
+    from dotfetch.schema.introspection import build_parameters_schema
 
     def handler(x: int | None) -> str:
         return "none" if x is None else str(x)
@@ -1611,7 +1611,7 @@ def test_explicit_null_survives_a_non_none_default():
     """``x: int | None = 5`` — an explicit null is a distinct choice, so
     normalization must not drop it as "not provided" and hand the handler
     ``5`` (PR #381 review)."""
-    from agent_gantry.schema.introspection import build_parameters_schema
+    from dotfetch.schema.introspection import build_parameters_schema
 
     def handler(x: int | None = 5) -> str:
         return "none" if x is None else str(x)
@@ -1695,7 +1695,7 @@ def test_declared_null_respects_an_enum_that_forbids_it():
     ``{"type": ["string", "null"], "enum": [...]}`` — nullable by its type list
     but not by its enum. Treating it as nullable preserved a strict-mode
     placeholder the canonical schema then rejected (PR #381 review)."""
-    from agent_gantry.schema.base import schema_declares_null
+    from dotfetch.schema.base import schema_declares_null
 
     assert schema_declares_null({"type": ["string", "null"], "enum": ["fast", "slow"]}) is False
     assert schema_declares_null({"type": ["string", "null"], "enum": ["fast", None]}) is True
@@ -1725,7 +1725,7 @@ def test_a_sibling_type_governs_combinator_nullability():
     isolation called ``{"type": "string", "anyOf": [{"type": "null"}, {}]}``
     nullable and preserved a placeholder validation then rejected
     (PR #381 review)."""
-    from agent_gantry.schema.base import schema_declares_null
+    from dotfetch.schema.base import schema_declares_null
 
     assert schema_declares_null({"type": "string", "anyOf": [{"type": "null"}, {}]}) is False
     assert schema_declares_null({"anyOf": [{"type": "null"}, {"type": "string"}]}) is True
@@ -1740,7 +1740,7 @@ def test_oneof_null_must_match_exactly_one_branch():
     ``null`` match twice — and a value matching two branches is invalid.
     Sharing the ``anyOf`` any-branch reading called that nullable and
     preserved a placeholder validation then rejected (PR #381 review)."""
-    from agent_gantry.schema.base import schema_declares_null
+    from dotfetch.schema.base import schema_declares_null
 
     # ``{}`` matches everything, so ``null`` matches both branches.
     assert schema_declares_null({"oneOf": [{"type": "null"}, {}]}) is False
@@ -1879,7 +1879,7 @@ def test_a_constraint_only_oneof_branch_also_matches_null():
     assert nothing about null — so null matches it as well, making
     ``{"oneOf": [{"type": "null"}, {"minimum": 5}]}`` ambiguous and therefore
     not nullable. Counting *declared* nulls saw one branch (PR #381 review)."""
-    from agent_gantry.schema.base import null_validates_against, schema_declares_null
+    from dotfetch.schema.base import null_validates_against, schema_declares_null
 
     assert schema_declares_null({"oneOf": [{"type": "null"}, {"minimum": 5}]}) is False
     assert schema_declares_null({"oneOf": [{"type": "null"}, {"maxLength": 3}]}) is False
@@ -1911,12 +1911,12 @@ def test_one_question_decides_whether_a_null_is_kept():
     """This previously pinned an asymmetry — ``oneOf`` counted what *matches*
     while ``anyOf`` asked what the author *declared*, so a branch that merely
     failed to forbid null didn't count. The distinction cost more than it
-    bought: it needed a fresh patch per spelling and still got Gantry's own
+    bought: it needed a fresh patch per spelling and still got dotfetch's own
     emission wrong (an optional ``Literal["a", None]`` emits
     ``{"enum": ["a", null]}`` with no ``type``, and the declaring reading
     dropped an explicitly supplied ``None``). One rule replaces it — keep a
     null iff the executor would accept it (PR #381 review)."""
-    from agent_gantry.schema.base import schema_declares_null
+    from dotfetch.schema.base import schema_declares_null
 
     # The reversed case: null validates against a constraint-only branch, so
     # an explicit one is the caller's value, not a placeholder.
@@ -1931,7 +1931,7 @@ def test_a_sibling_assertion_can_forbid_the_null_a_branch_admits():
     """``anyOf`` naming null did not stop a sibling ``allOf`` forbidding it —
     the early return fired first. Every sibling assertion is resolved now
     (PR #381 review)."""
-    from agent_gantry.schema.base import schema_declares_null
+    from dotfetch.schema.base import schema_declares_null
 
     assert (
         schema_declares_null(
@@ -1957,7 +1957,7 @@ def test_an_enum_or_const_naming_null_declares_it():
     ``enum`` only to *reject* null, so an explicitly supplied ``None`` was
     dropped and the handler got its default instead of the value its own
     annotation permits (PR #381 review)."""
-    from agent_gantry.schema.base import schema_declares_null
+    from dotfetch.schema.base import schema_declares_null
 
     assert schema_declares_null({"enum": ["a", None]}) is True
     assert schema_declares_null({"const": None}) is True
@@ -2088,11 +2088,11 @@ async def test_an_over_quota_call_is_refused_before_it_buys_validation():
     ahead of every admission check handed an over-quota caller unlimited CPU —
     the limits stopped protecting the work they exist to protect
     (PR #381 review)."""
-    import agent_gantry.core.executor as executor_module
-    from agent_gantry import AgentGantry
-    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-    from agent_gantry.core.security import SecurityPolicy
-    from agent_gantry.schema.execution import ToolCall
+    import dotfetch.core.executor as executor_module
+    from dotfetch import DotFetch
+    from dotfetch.adapters.embedders.simple import SimpleEmbedder
+    from dotfetch.core.security import SecurityPolicy
+    from dotfetch.schema.execution import ToolCall
 
     evaluations = {"count": 0}
     original = executor_module._check_constraints
@@ -2104,7 +2104,7 @@ async def test_an_over_quota_call_is_refused_before_it_buys_validation():
 
     executor_module._check_constraints = counting
     try:
-        gantry = AgentGantry(
+        fetcher = DotFetch(
             embedder=SimpleEmbedder(dimension=64),
             security_policy=SecurityPolicy(require_confirmation=[], max_requests_per_minute=2),
         )
@@ -2112,7 +2112,7 @@ async def test_an_over_quota_call_is_refused_before_it_buys_validation():
         async def handler(s):
             return s
 
-        await gantry.add_tool(
+        await fetcher.add_tool(
             ToolDefinition(
                 name="patterned",
                 description="A tool whose schema pattern-matches its argument",
@@ -2125,10 +2125,10 @@ async def test_an_over_quota_call_is_refused_before_it_buys_validation():
             ),
             handler=handler,
         )
-        await gantry.sync()
+        await fetcher.sync()
 
         for _ in range(2):
-            result = await gantry.execute(
+            result = await fetcher.execute(
                 ToolCall(tool_name="patterned", arguments={"s": "aaaa!"})
             )
             assert result.error_type == "ValidationError"
@@ -2138,7 +2138,7 @@ async def test_an_over_quota_call_is_refused_before_it_buys_validation():
         # Over quota now: further calls are refused without the pattern ever
         # being evaluated again.
         for _ in range(4):
-            denied = await gantry.execute(
+            denied = await fetcher.execute(
                 ToolCall(tool_name="patterned", arguments={"s": "aaaa!"})
             )
             assert denied.status.value == "permission_denied"
@@ -2153,9 +2153,9 @@ def test_the_admission_peek_spends_nothing():
     admits, the very bug the ordering it protects was introduced to fix."""
     import asyncio
 
-    from agent_gantry.core.rate_limiter import RateLimiter
-    from agent_gantry.core.security import SecurityPolicy
-    from agent_gantry.schema.config import RateLimitConfig
+    from dotfetch.core.rate_limiter import RateLimiter
+    from dotfetch.core.security import SecurityPolicy
+    from dotfetch.schema.config import RateLimitConfig
 
     for strategy in ("sliding_window", "token_bucket", "fixed_window"):
         limiter = RateLimiter(
@@ -2289,10 +2289,10 @@ async def test_a_gated_probe_is_not_refused_by_the_admission_peek():
     for. Approved replays of the tool saturate its own key, and the next probe
     came back ``RateLimitExceeded`` instead of ``PENDING_CONFIRMATION``
     (PR #381 review)."""
-    from agent_gantry.core.rate_limiter import RateLimiter
-    from agent_gantry.core.registry import ToolRegistry
-    from agent_gantry.schema.config import RateLimitConfig
-    from agent_gantry.schema.execution import ToolCall
+    from dotfetch.core.rate_limiter import RateLimiter
+    from dotfetch.core.registry import ToolRegistry
+    from dotfetch.schema.config import RateLimitConfig
+    from dotfetch.schema.execution import ToolCall
 
     registry = ToolRegistry()
     gated = ToolDefinition(
@@ -2356,10 +2356,10 @@ async def test_an_over_quota_gated_call_answers_without_validating(engine):
     charges it and the window may have room again by the time a human
     approves — and it skips validation either way, which is the work the quota
     exists to protect."""
-    from agent_gantry.core.rate_limiter import RateLimiter
-    from agent_gantry.core.registry import ToolRegistry
-    from agent_gantry.schema.config import RateLimitConfig
-    from agent_gantry.schema.execution import ToolCall
+    from dotfetch.core.rate_limiter import RateLimiter
+    from dotfetch.core.registry import ToolRegistry
+    from dotfetch.schema.config import RateLimitConfig
+    from dotfetch.schema.execution import ToolCall
 
     registry = ToolRegistry()
     tool = ToolDefinition(
@@ -2444,11 +2444,11 @@ async def test_an_over_quota_gated_call_still_reports_a_policy_denial():
     A denial outranks a gate everywhere else in ``execute``; it does here too
     now. What must *not* come back is the validator: that is the expensive,
     caller-controlled work the quota is protecting."""
-    from agent_gantry.core.rate_limiter import RateLimiter
-    from agent_gantry.core.registry import ToolRegistry
-    from agent_gantry.core.security import SecurityPolicy
-    from agent_gantry.schema.config import RateLimitConfig
-    from agent_gantry.schema.execution import ToolCall
+    from dotfetch.core.rate_limiter import RateLimiter
+    from dotfetch.core.registry import ToolRegistry
+    from dotfetch.core.security import SecurityPolicy
+    from dotfetch.schema.config import RateLimitConfig
+    from dotfetch.schema.execution import ToolCall
 
     def build() -> tuple[ToolRegistry, SecurityPolicy]:
         registry = ToolRegistry()
@@ -2547,11 +2547,11 @@ async def test_an_over_quota_gated_call_runs_a_custom_policy_check():
     finding is not confined to ``allowed_domains``. Every check
     ``check_permission`` makes has to run before a human is asked to approve
     the call (PR #385 review)."""
-    from agent_gantry.core.rate_limiter import RateLimiter
-    from agent_gantry.core.registry import ToolRegistry
-    from agent_gantry.core.security import PermissionDeniedError, SecurityPolicy
-    from agent_gantry.schema.config import RateLimitConfig
-    from agent_gantry.schema.execution import ToolCall
+    from dotfetch.core.rate_limiter import RateLimiter
+    from dotfetch.core.registry import ToolRegistry
+    from dotfetch.core.security import PermissionDeniedError, SecurityPolicy
+    from dotfetch.schema.config import RateLimitConfig
+    from dotfetch.schema.execution import ToolCall
 
     class RefusesFridays(SecurityPolicy):
         def __init__(self) -> None:
@@ -2817,7 +2817,7 @@ def test_fully_evaluable_certifies_only_what_the_validator_applies():
     schemas and the empty schema are evaluable (they are exactly what they
     say), a keyword the validator skips is not, and the check recurses through
     every position a subschema can occupy."""
-    from agent_gantry.core.executor import _fully_evaluable
+    from dotfetch.core.executor import _fully_evaluable
 
     for evaluable in (
         True,
@@ -2861,7 +2861,7 @@ def test_fully_evaluable_certifies_only_what_the_validator_applies():
 async def test_a_combinator_branch_constrains_without_closing(engine):
     """A branch says what it says *about the keys it names* — it is not a
     description of the whole object. Evaluating one through the same object
-    path as a tool schema applied Gantry's closed-by-default reading to it, so
+    path as a tool schema applied dotfetch's closed-by-default reading to it, so
     a root ``allOf`` branch declaring ``b`` rejected ``{"a": 1, "b": 2}`` with
     ``Unknown parameter: a``, ``a`` being the *root's* own property
     (PR #386 review).
@@ -2956,7 +2956,7 @@ async def test_a_combinator_branch_constrains_without_closing(engine):
 
 @pytest.mark.asyncio
 async def test_a_plain_tool_schema_is_still_closed(engine):
-    """The guard on the change above: Gantry closes an object whose
+    """The guard on the change above: dotfetch closes an object whose
     ``additionalProperties`` is absent, stricter than the spec's open default,
     and that must survive for every schema that is not a combinator branch."""
     plain = ToolDefinition(
@@ -2995,7 +2995,7 @@ def test_root_assertions_are_all_keywords_the_validator_implements():
     advertise an assertion as enforced without enforcing it. `_EVALUATED_KEYWORDS`
     is the same claim from the other direction, so pinning one against the
     other catches the drift a future keyword would introduce."""
-    from agent_gantry.core.executor import _EVALUATED_KEYWORDS, _ROOT_ASSERTIONS
+    from dotfetch.core.executor import _EVALUATED_KEYWORDS, _ROOT_ASSERTIONS
 
     assert set(_ROOT_ASSERTIONS) <= _EVALUATED_KEYWORDS
     # The structural keywords stay with the top-level walk, which owns them.
@@ -3096,14 +3096,14 @@ async def test_a_constraint_that_does_not_bind_cannot_forbid(engine):
     values, both fail-open by design: `pattern` skips a regex Python's `re`
     cannot compile — a legal ECMA-262 one such as ``\\p{L}`` would otherwise
     fail every call — and `format` is enforced only for the string formats
-    Gantry reconstructs, `format` being an annotation by default in JSON
+    dotfetch reconstructs, `format` being an annotation by default in JSON
     Schema.
 
     Under ``not`` that silence reads as "matched", so a branch declaring one
     of them forbade *every* value and the tool could not be called
     (PR #386 review). Third instance of the same inversion, after `$ref` and
     the unevaluable `oneOf` branch, and the general form of it."""
-    from agent_gantry.core.executor import _fully_evaluable
+    from dotfetch.core.executor import _fully_evaluable
 
     ecma_only = r"\p{L}"
 
@@ -3129,7 +3129,7 @@ async def test_a_constraint_that_does_not_bind_cannot_forbid(engine):
     assert ok is False and "required not to" in err
     assert await engine._validate_arguments(binding, {"s": "xyz"}) == (True, None)
 
-    # ``format`` is enforced for the formats Gantry reconstructs, so a ``not``
+    # ``format`` is enforced for the formats dotfetch reconstructs, so a ``not``
     # around one of those binds too.
     formatted = tool_with({"type": "string", "not": {"format": "uuid"}})
     ok, err = await engine._validate_arguments(
@@ -3171,9 +3171,9 @@ async def test_a2a_execution_is_recorded_exactly_once() -> None:
     """The A2A branch returns the adapter's result; the engine records it, the adapter does not."""
     from datetime import datetime, timezone
 
-    from agent_gantry.core.registry import ToolRegistry
-    from agent_gantry.schema.execution import ExecutionStatus, ToolCall, ToolResult
-    from agent_gantry.schema.tool import ToolSource
+    from dotfetch.core.registry import ToolRegistry
+    from dotfetch.schema.execution import ExecutionStatus, ToolCall, ToolResult
+    from dotfetch.schema.tool import ToolSource
 
     class CountingTelemetry:
         records = 0
@@ -3214,8 +3214,8 @@ async def test_a2a_execution_is_recorded_exactly_once() -> None:
 @pytest.mark.asyncio
 async def test_each_terminal_result_is_recorded_once() -> None:
     """Every outcome the caller sees reaches telemetry exactly once."""
-    from agent_gantry.core.registry import ToolRegistry
-    from agent_gantry.schema.execution import ExecutionStatus, ToolCall, ToolResult
+    from dotfetch.core.registry import ToolRegistry
+    from dotfetch.schema.execution import ExecutionStatus, ToolCall, ToolResult
 
     class CountingTelemetry:
         def __init__(self) -> None:
@@ -3289,8 +3289,8 @@ async def test_retried_and_timed_out_calls_report_attempts_and_timestamps() -> N
     """The attempt count and timestamps survive the retry loop's exits."""
     import asyncio
 
-    from agent_gantry.core.registry import ToolRegistry
-    from agent_gantry.schema.execution import ExecutionStatus, ToolCall
+    from dotfetch.core.registry import ToolRegistry
+    from dotfetch.schema.execution import ExecutionStatus, ToolCall
 
     seen: list[int] = []
 

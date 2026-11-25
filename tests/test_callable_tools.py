@@ -10,18 +10,18 @@ from datetime import date
 import pytest
 from pydantic import BaseModel
 
-from agent_gantry import AgentGantry, ToolCall
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-from agent_gantry.schema.config import AgentGantryConfig, ExecutionConfig
-from agent_gantry.schema.execution import ExecutionStatus
-from agent_gantry.schema.introspection import build_parameters_schema
+from dotfetch import DotFetch, ToolCall
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
+from dotfetch.schema.config import DotFetchConfig, ExecutionConfig
+from dotfetch.schema.execution import ExecutionStatus
+from dotfetch.schema.introspection import build_parameters_schema
 
 
 @pytest.fixture(autouse=True)
 def _offline_embedder(monkeypatch):
     """Execution tests must not race an optional model's download/startup."""
     monkeypatch.setattr(
-        "agent_gantry.core.gantry.build_embedder", lambda config: SimpleEmbedder()
+        "dotfetch.core.fetcher.build_embedder", lambda config: SimpleEmbedder()
     )
 
 
@@ -53,9 +53,9 @@ def test_partial_schema_preserves_unbound_parameter_types():
 
 
 async def test_async_callable_is_awaited_and_arguments_are_reconstructed():
-    async with AgentGantry() as gantry:
-        gantry.register(AsyncCallable(), name="read_payload")
-        result = await gantry.execute(
+    async with DotFetch() as fetcher:
+        fetcher.register(AsyncCallable(), name="read_payload")
+        result = await fetcher.execute(
             ToolCall(
                 tool_name="read_payload",
                 arguments={"payload": {"count": 3}, "when": "2026-10-16"},
@@ -69,9 +69,9 @@ async def test_partial_reconstructs_model_arguments():
     def summarize(prefix: str, payload: Payload) -> str:
         return f"{prefix}:{payload.count}"
 
-    async with AgentGantry() as gantry:
-        gantry.register(functools.partial(summarize, "report"), name="summarize_payload")
-        result = await gantry.execute(
+    async with DotFetch() as fetcher:
+        fetcher.register(functools.partial(summarize, "report"), name="summarize_payload")
+        result = await fetcher.execute(
             ToolCall(tool_name="summarize_payload", arguments={"payload": {"count": 4}})
         )
         assert result.status == ExecutionStatus.SUCCESS
@@ -93,9 +93,9 @@ async def test_sync_handler_returning_awaitable_is_awaited():
 
         return calculate()
 
-    async with AgentGantry() as gantry:
-        gantry.register(wrapper)
-        result = await gantry.execute(ToolCall(tool_name="wrapper", arguments={"value": 3}))
+    async with DotFetch() as fetcher:
+        fetcher.register(wrapper)
+        result = await fetcher.execute(ToolCall(tool_name="wrapper", arguments={"value": 3}))
         assert result.status == ExecutionStatus.SUCCESS
         assert result.result == 6
         assert sync_threads and sync_threads[0] != loop_thread
@@ -115,10 +115,10 @@ async def test_awaitable_failure_is_reported_instead_of_success(async_object):
         async def __call__(self):
             return await fail_later()
 
-    config = AgentGantryConfig(execution=ExecutionConfig(max_retries=0))
-    async with AgentGantry(config=config) as gantry:
-        gantry.register(FailingCallable() if async_object else fail_later, name="fail_later")
-        result = await gantry.execute(ToolCall(tool_name="fail_later", arguments={}))
+    config = DotFetchConfig(execution=ExecutionConfig(max_retries=0))
+    async with DotFetch(config=config) as fetcher:
+        fetcher.register(FailingCallable() if async_object else fail_later, name="fail_later")
+        result = await fetcher.execute(ToolCall(tool_name="fail_later", arguments={}))
         assert result.status == ExecutionStatus.FAILURE
         assert result.error_type == "ValueError"
         assert "failure inside awaitable" in result.error
@@ -143,10 +143,10 @@ async def test_timeout_covers_returned_awaitable_and_cancels_it(async_object):
         async def __call__(self):
             return await wait_later()
 
-    config = AgentGantryConfig(execution=ExecutionConfig(max_retries=0))
-    async with AgentGantry(config=config) as gantry:
-        gantry.register(WaitingCallable() if async_object else wait_later, name="wait_later")
-        result = await gantry.execute(
+    config = DotFetchConfig(execution=ExecutionConfig(max_retries=0))
+    async with DotFetch(config=config) as fetcher:
+        fetcher.register(WaitingCallable() if async_object else wait_later, name="wait_later")
+        result = await fetcher.execute(
             ToolCall(tool_name="wait_later", arguments={}, timeout_ms=100)
         )
         assert result.status == ExecutionStatus.TIMEOUT
@@ -165,10 +165,10 @@ async def test_cancellation_reaches_async_callable():
             finally:
                 cancelled.set()
 
-    async with AgentGantry() as gantry:
-        gantry.register(WaitingCallable(), name="wait_for_cancel")
+    async with DotFetch() as fetcher:
+        fetcher.register(WaitingCallable(), name="wait_for_cancel")
         task = asyncio.create_task(
-            gantry.execute(ToolCall(tool_name="wait_for_cancel", arguments={}))
+            fetcher.execute(ToolCall(tool_name="wait_for_cancel", arguments={}))
         )
         try:
             await asyncio.wait_for(started.wait(), timeout=2)

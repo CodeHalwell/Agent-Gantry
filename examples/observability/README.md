@@ -1,6 +1,6 @@
 # examples/observability
 
-Telemetry- and metrics-focused examples that show how to instrument Agent-Gantry.
+Telemetry- and metrics-focused examples that show how to instrument dotfetch.
 
 ## Files
 - `telemetry_demo.py`: Uses the console telemetry adapter to emit spans and events during retrieval
@@ -10,7 +10,7 @@ Telemetry- and metrics-focused examples that show how to instrument Agent-Gantry
   through `calculate_token_savings` to show they normalise to one `ProviderUsage`. Hard-coded
   numbers; no provider is called.
 - `token_savings_demo.py`: Measures the saving on a real OpenAI call — one prompt with all 30 tool
-  schemas attached versus only the two Gantry retrieved. Needs `OPENAI_API_KEY` and the `openai`
+  schemas attached versus only the two dotfetch retrieved. Needs `OPENAI_API_KEY` and the `openai`
   extra; two completions are billed.
 
 ## Run
@@ -23,5 +23,5 @@ python examples/observability/token_savings_demo.py          # needs OPENAI_API_
 
 `telemetry_demo.py` prints `Span started` / `Span completed` records for `tool_retrieval` and
 `tool_execution`, plus a `Tool retrieval` and a `Tool execution` event with timings. Swap in a
-different telemetry adapter (`agent_gantry.observability.opentelemetry_adapter`) to forward the same
+different telemetry adapter (`dotfetch.observability.opentelemetry_adapter`) to forward the same
 events to OpenTelemetry or Prometheus.

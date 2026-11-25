@@ -16,8 +16,8 @@ import asyncio
 import random
 import time
 
-from agent_gantry.adapters.vector_stores.memory import InMemoryVectorStore
-from agent_gantry.schema.tool import ToolDefinition
+from dotfetch.adapters.vector_stores.memory import InMemoryVectorStore
+from dotfetch.schema.tool import ToolDefinition
 
 DIM = 384  # all-MiniLM-L6-v2 dimensionality
 

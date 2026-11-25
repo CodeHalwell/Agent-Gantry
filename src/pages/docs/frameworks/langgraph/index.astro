@@ -2,58 +2,58 @@
 import DocsLayout from '../../../../layouts/DocsLayout.astro';
 import CodeBlock from '../../../../components/CodeBlock.astro';
 ---
-<DocsLayout title="LangGraph guide | Agent-Gantry" description="Integrate Agent-Gantry with LangGraph: per-turn tool selection as create_agent middleware, approval through interrupt(), readable tool errors and run context.">
+<DocsLayout title="LangGraph guide | dotfetch" description="Integrate dotfetch with LangGraph: per-turn tool selection as create_agent middleware, approval through interrupt(), readable tool errors and run context.">
   <p class="eyebrow">Framework guide</p>
   <h1>LangGraph</h1>
-  <p class="lead">Agent-Gantry plugs into LangGraph's own mechanisms: a <code>create_agent</code> middleware that picks each model turn's tools, <code>interrupt()</code> for human approval, and the graph's runtime for your context. Failures come back to the model as error <code>ToolMessage</code>s instead of ending the run.</p>
+  <p class="lead">dotfetch plugs into LangGraph's own mechanisms: a <code>create_agent</code> middleware that picks each model turn's tools, <code>interrupt()</code> for human approval, and the graph's runtime for your context. Failures come back to the model as error <code>ToolMessage</code>s instead of ending the run.</p>
   <p><a class="pill" href="/Agent-Gantry/docs/frameworks/langgraph/advanced/">Advanced LangGraph usage →</a></p>
 
   <h2>Install</h2>
-  <CodeBlock lang="bash" code={`uv add "agent-gantry[langgraph]"   # langchain, langchain-core, langgraph >= 1.0`} />
+  <CodeBlock lang="bash" code={`uv add "dotfetch[langgraph]"   # langchain, langchain-core, langgraph >= 1.0`} />
 
   <h2>Basic page: per-turn tools</h2>
   <ol>
-    <li>Register tools with <code>@gantry.register</code> and <code>await gantry.sync()</code>.</li>
-    <li>Add <code>await adapter.middleware()</code> to <code>create_agent</code>. It brings the Gantry tools with it.</li>
-    <li>Run the agent normally. Each model turn sees only the tools Gantry selects for the newest message or tool result.</li>
+    <li>Register tools with <code>@fetcher.register</code> and <code>await fetcher.sync()</code>.</li>
+    <li>Add <code>await adapter.middleware()</code> to <code>create_agent</code>. It brings the dotfetch tools with it.</li>
+    <li>Run the agent normally. Each model turn sees only the tools dotfetch selects for the newest message or tool result.</li>
   </ol>
   <CodeBlock lang="python" title="Per-turn tool selection" code={`import asyncio
 
 from langchain.agents import create_agent
-from agent_gantry import AgentGantry
-from agent_gantry.langgraph import LangGraphAdapter
+from dotfetch import DotFetch
+from dotfetch.langgraph import LangGraphAdapter
 
-gantry = AgentGantry()
+fetcher = DotFetch()
 
-@gantry.register(examples=["where is my order", "has order 4471 shipped"])
+@fetcher.register(examples=["where is my order", "has order 4471 shipped"])
 def get_order_status(order_id: str) -> str:
     """Return the current shipping status for an order."""
     return "in_transit"
 
-@gantry.register(examples=["refund order 4471"], requires_confirmation=True)
+@fetcher.register(examples=["refund order 4471"], requires_confirmation=True)
 def refund_order(order_id: str) -> str:
     """Refund an order in full."""
     return "refunded"
 
 async def main():
-    await gantry.sync()
-    adapter = LangGraphAdapter(gantry)
+    await fetcher.sync()
+    adapter = LangGraphAdapter(fetcher)
     agent = create_agent("openai:gpt-5.5", middleware=[await adapter.middleware(limit=5)])
     result = await agent.ainvoke({"messages": [("user", "Has order 4471 shipped?")]})
     print(result["messages"][-1].content)
 
 asyncio.run(main())`} />
-  <p>Tools you pass to <code>create_agent(tools=...)</code> yourself stay available every turn; only the Gantry tools are narrowed. <code>await adapter.areact_agent(model, limit=5)</code> builds the same agent in one call.</p>
+  <p>Tools you pass to <code>create_agent(tools=...)</code> yourself stay available every turn; only the dotfetch tools are narrowed. <code>await adapter.areact_agent(model, limit=5)</code> builds the same agent in one call.</p>
 
   <h2>What the model sees when a tool fails</h2>
-  <p>A failed call raises LangChain's <code>ToolException</code>, and Gantry's tools set <code>handle_tool_error=True</code>, so the model receives an error <code>ToolMessage</code> (<code>status="error"</code>) with <code>&lt;type&gt;: &lt;message&gt;</code>, capped at 2,000 characters. It can correct a bad argument or try something else.</p>
-  <div class="callout"><strong>Redact or opt out:</strong> <code>LangGraphAdapter(gantry, error_formatter=redact)</code> rewrites the text the model sees; <code>error_mode="raise"</code> lets <code>ToolExecutionError</code> propagate instead.</div>
+  <p>A failed call raises LangChain's <code>ToolException</code>, and dotfetch's tools set <code>handle_tool_error=True</code>, so the model receives an error <code>ToolMessage</code> (<code>status="error"</code>) with <code>&lt;type&gt;: &lt;message&gt;</code>, capped at 2,000 characters. It can correct a bad argument or try something else.</p>
+  <div class="callout"><strong>Redact or opt out:</strong> <code>LangGraphAdapter(fetcher, error_formatter=redact)</code> rewrites the text the model sees; <code>error_mode="raise"</code> lets <code>ToolExecutionError</code> propagate instead.</div>
 
-  <h2>Reading your context from a Gantry tool</h2>
+  <h2>Reading your context from a dotfetch tool</h2>
   <p>Whatever you pass as the graph's <code>context=</code> is available while the tool runs, without changing its schema.</p>
-  <CodeBlock lang="python" code={`from agent_gantry.langgraph import current_tool_runtime
+  <CodeBlock lang="python" code={`from dotfetch.langgraph import current_tool_runtime
 
-@gantry.register
+@fetcher.register
 async def get_balance(account: str) -> str:
     """Fetch an account balance for the signed-in user."""
     runtime = current_tool_runtime()   # None outside a run

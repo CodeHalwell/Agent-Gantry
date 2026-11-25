@@ -2,7 +2,7 @@
 Plug-and-play demo: load tools from a module and semantically filter them with
 one decorator.
 
-This shows how an existing LLM call can adopt Agent-Gantry without rewriting
+This shows how an existing LLM call can adopt dotfetch without rewriting
 tool code—just import the module and wrap the call. The LLM is mocked, so it
 runs offline with no API key.
 
@@ -14,7 +14,7 @@ Run from the repo root (it imports ``examples.basics.toolpack``):
 import asyncio
 from typing import Any
 
-from agent_gantry import AgentGantry, set_default_gantry, with_semantic_tools
+from dotfetch import DotFetch, set_default_fetcher, with_semantic_tools
 
 
 async def mock_llm(prompt: str, *, tools: list[dict[str, Any]] | None = None) -> str:
@@ -28,8 +28,8 @@ async def mock_llm(prompt: str, *, tools: list[dict[str, Any]] | None = None) ->
 async def main() -> None:
     # Drop-in: load tools that live in a separate module. No explicit sync()
     # here: the decorator's retrieval syncs the index incrementally on first use.
-    gantry = await AgentGantry.from_modules(["examples.basics.toolpack"])
-    set_default_gantry(gantry)
+    fetcher = await DotFetch.from_modules(["examples.basics.toolpack"])
+    set_default_fetcher(fetcher)
 
     try:
         # Add a single decorator to inject only the relevant tools per prompt
@@ -42,7 +42,7 @@ async def main() -> None:
         await chat("What's the current UTC time?")
         await chat("Draft a quick email to Maria about a $45 invoice.")
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 if __name__ == "__main__":

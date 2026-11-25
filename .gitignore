@@ -106,4 +106,4 @@ node_modules/
 # the working directory, so running it from the repo root drops the database
 # there rather than beside the example.
 .tool_cache/
-gantry_tools.lancedb/
+fetcher_tools.lancedb/

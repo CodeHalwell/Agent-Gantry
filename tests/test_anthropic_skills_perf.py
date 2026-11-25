@@ -5,13 +5,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from agent_gantry import AgentGantry
-from agent_gantry.integrations.anthropic_skills import SkillsClient
+from dotfetch import DotFetch
+from dotfetch.integrations.anthropic_skills import SkillsClient
 
 
 @pytest.mark.asyncio
 async def test_execute_tool_calls_performance():
-    gantry = MagicMock(spec=AgentGantry)
+    fetcher = MagicMock(spec=DotFetch)
 
     # Simulate a delay in tool execution (0.5s makes scheduling overhead negligible
     # relative to task duration, keeping the speedup ratio stable on slow runners).
@@ -22,13 +22,13 @@ async def test_execute_tool_calls_performance():
         mock_result.result = "Tool executed"
         return mock_result
 
-    gantry.execute = AsyncMock(side_effect=slow_execute)
-    # The concurrency now lives in AgentGantry.execute_tool_calls, which the
+    fetcher.execute = AsyncMock(side_effect=slow_execute)
+    # The concurrency now lives in DotFetch.execute_tool_calls, which the
     # spec'd mock would otherwise stub out; bind the real method so this
     # still measures actual fan-out.
-    gantry.execute_tool_calls = partial(AgentGantry.execute_tool_calls, gantry)
+    fetcher.execute_tool_calls = partial(DotFetch.execute_tool_calls, fetcher)
 
-    client = SkillsClient(api_key="test-key", gantry=gantry)
+    client = SkillsClient(api_key="test-key", fetcher=fetcher)
 
     # Build a mock response with 10 tool-use blocks
     response = MagicMock()
@@ -42,14 +42,14 @@ async def test_execute_tool_calls_performance():
         blocks.append(tool_block)
     response.content = blocks
 
-    # Measure sequential baseline: call gantry.execute 10 times in series
+    # Measure sequential baseline: call fetcher.execute 10 times in series
     seq_start = time.time()
     for block in blocks:
-        await gantry.execute(block.name, block.input)
+        await fetcher.execute(block.name, block.input)
     sequential_time = time.time() - seq_start
 
     # Reset the mock call count so concurrent run starts fresh
-    gantry.execute.reset_mock()
+    fetcher.execute.reset_mock()
 
     # Measure concurrent execution via execute_tool_calls
     conc_start = time.time()

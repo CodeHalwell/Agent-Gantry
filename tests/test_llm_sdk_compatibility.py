@@ -1,7 +1,7 @@
 """
 Tests for LLM SDK compatibility (Late 2025).
 
-These tests verify that Agent-Gantry is compatible with major Python LLM SDKs.
+These tests verify that dotfetch is compatible with major Python LLM SDKs.
 Tests cover SDK imports, client initialization patterns, and key endpoint methods.
 """
 
@@ -181,7 +181,7 @@ class TestMistralCompatibility:
     """Tests for Mistral compatibility via the OpenAI-compatible endpoint.
 
     The official ``mistralai`` SDK was quarantined on PyPI on 2026-05-12 and is no
-    longer installable. Gantry's ``provider="mistral"`` now uses ``AsyncOpenAI``
+    longer installable. dotfetch's ``provider="mistral"`` now uses ``AsyncOpenAI``
     with ``base_url="https://api.mistral.ai/v1"`` (see ``adapters/llm_client.py``).
     """
 
@@ -250,24 +250,24 @@ class TestGroqCompatibility:
         assert hasattr(client.chat.completions, "create")
 
 
-class TestAgentGantryToolFormatCompatibility:
-    """Tests for Agent-Gantry tool format compatibility with LLM providers."""
+class TestDotFetchToolFormatCompatibility:
+    """Tests for dotfetch tool format compatibility with LLM providers."""
 
     @pytest.mark.asyncio
     async def test_openai_tool_format(self) -> None:
-        """Test that Agent-Gantry produces valid OpenAI tool format."""
-        from agent_gantry import AgentGantry
+        """Test that dotfetch produces valid OpenAI tool format."""
+        from dotfetch import DotFetch
 
-        gantry = AgentGantry()
+        fetcher = DotFetch()
 
-        @gantry.register
+        @fetcher.register
         def test_tool(x: int, y: str) -> str:
             """A test tool for format validation."""
             return f"{x}: {y}"
 
-        await gantry.sync()
+        await fetcher.sync()
 
-        tools = await gantry.retrieve_tools("test tool", limit=1)
+        tools = await fetcher.retrieve_tools("test tool", limit=1)
 
         assert len(tools) >= 1
         tool = tools[0]
@@ -289,19 +289,19 @@ class TestAgentGantryToolFormatCompatibility:
 
     @pytest.mark.asyncio
     async def test_anthropic_tool_format_conversion(self) -> None:
-        """Test converting Agent-Gantry tools to Anthropic format."""
-        from agent_gantry import AgentGantry
+        """Test converting dotfetch tools to Anthropic format."""
+        from dotfetch import DotFetch
 
-        gantry = AgentGantry()
+        fetcher = DotFetch()
 
-        @gantry.register
+        @fetcher.register
         def analyze_text(text: str) -> str:
             """Analyze the given text."""
             return f"Analysis of: {text}"
 
-        await gantry.sync()
+        await fetcher.sync()
 
-        openai_tools = await gantry.retrieve_tools("analyze text", limit=1)
+        openai_tools = await fetcher.retrieve_tools("analyze text", limit=1)
 
         # Convert to Anthropic format
         anthropic_tools = [
@@ -325,39 +325,39 @@ class TestAgentGantryToolFormatCompatibility:
     @pytest.mark.asyncio
     async def test_tool_execution_returns_expected_result(self) -> None:
         """Test that tool execution works correctly."""
-        from agent_gantry import AgentGantry
-        from agent_gantry.schema.execution import ExecutionStatus, ToolCall
+        from dotfetch import DotFetch
+        from dotfetch.schema.execution import ExecutionStatus, ToolCall
 
-        gantry = AgentGantry()
+        fetcher = DotFetch()
 
-        @gantry.register
+        @fetcher.register
         def add_numbers(a: int, b: int) -> int:
             """Add two numbers together."""
             return a + b
 
-        await gantry.sync()
+        await fetcher.sync()
 
-        result = await gantry.execute(ToolCall(tool_name="add_numbers", arguments={"a": 5, "b": 3}))
+        result = await fetcher.execute(ToolCall(tool_name="add_numbers", arguments={"a": 5, "b": 3}))
 
         assert result.status == ExecutionStatus.SUCCESS
         assert result.result == 8
 
     @pytest.mark.asyncio
     async def test_openai_responses_api_tool_format(self) -> None:
-        """Test that Agent-Gantry produces valid OpenAI Responses API tool format."""
-        from agent_gantry import AgentGantry
+        """Test that dotfetch produces valid OpenAI Responses API tool format."""
+        from dotfetch import DotFetch
 
-        gantry = AgentGantry()
+        fetcher = DotFetch()
 
-        @gantry.register
+        @fetcher.register
         def get_weather(location: str, unit: str = "celsius") -> str:
             """Get weather for a location."""
             return f"Weather in {location}: 72°F"
 
-        await gantry.sync()
+        await fetcher.sync()
 
         # Get tools in OpenAI Responses API format
-        tools = await gantry.retrieve_tools("get weather", limit=1, dialect="openai_responses")
+        tools = await fetcher.retrieve_tools("get weather", limit=1, dialect="openai_responses")
 
         assert len(tools) >= 1
         tool = tools[0]

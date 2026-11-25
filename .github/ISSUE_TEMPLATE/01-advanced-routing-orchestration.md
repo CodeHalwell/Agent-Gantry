@@ -47,7 +47,7 @@ assignees: []
 
 ## Context: Current Architecture
 
-Currently, Agent-Gantry excels at "Flat" Semantic Retrieval (finding the best tool for a query). This feature request aims to expand beyond that foundation.
+Currently, dotfetch excels at "Flat" Semantic Retrieval (finding the best tool for a query). This feature request aims to expand beyond that foundation.
 
 ### Hierarchical / Domain Routing
 - **Goal**: As tool counts grow from 100 to 10,000, implement a "Router of Routers" pattern
@@ -71,4 +71,4 @@ Currently, Agent-Gantry excels at "Flat" Semantic Retrieval (finding the best to
 <!-- Link to related issues or PRs -->
 
 ---
-**Note**: This feature aligns with the strategic roadmap for scaling Agent-Gantry to handle enterprise-scale tool inventories and complex orchestration patterns.
+**Note**: This feature aligns with the strategic roadmap for scaling dotfetch to handle enterprise-scale tool inventories and complex orchestration patterns.

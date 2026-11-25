@@ -12,15 +12,15 @@ Run with::
 
 import asyncio
 
-from agent_gantry import AgentGantry
-from agent_gantry.schema.config import AgentGantryConfig, ExecutionConfig
-from agent_gantry.schema.execution import ExecutionStatus, ToolCall
+from dotfetch import DotFetch
+from dotfetch.schema.config import DotFetchConfig, ExecutionConfig
+from dotfetch.schema.execution import ExecutionStatus, ToolCall
 
 
 async def main():
-    # 1. Configure Gantry with a sensitive circuit breaker
+    # 1. Configure dotfetch with a sensitive circuit breaker
     # Threshold = 2 failures -> Open Circuit
-    config = AgentGantryConfig(
+    config = DotFetchConfig(
         execution=ExecutionConfig(
             circuit_breaker_threshold=2,
             # Seconds the circuit stays open before a retry is allowed.
@@ -28,15 +28,15 @@ async def main():
             circuit_breaker_timeout_s=5,
         )
     )
-    gantry = AgentGantry(config=config)
+    fetcher = DotFetch(config=config)
     try:
         # 2. Register a flaky tool
-        @gantry.register(examples=["call the flaky API", "hit the upstream service"])
+        @fetcher.register(examples=["call the flaky API", "hit the upstream service"])
         def flaky_api() -> str:
             """Always fails."""
             raise ConnectionError("API is down!")
 
-        await gantry.sync()
+        await fetcher.sync()
 
         print("--- Circuit Breaker Demo ---")
 
@@ -45,7 +45,7 @@ async def main():
         # 3. Trigger failures to open the circuit
         for i in range(1, 5):
             print(f"\nAttempt {i}:")
-            result = await gantry.execute(call)
+            result = await fetcher.execute(call)
 
             print(f"Status: {result.status.value}")
             if result.error:
@@ -55,7 +55,7 @@ async def main():
                 print(">>> CIRCUIT BREAKER IS OPEN! Execution blocked to protect system. <<<")
                 break
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 if __name__ == "__main__":

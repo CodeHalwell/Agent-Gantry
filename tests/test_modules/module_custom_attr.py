@@ -1,9 +1,9 @@
 """Test module with custom attribute name."""
 
-from agent_gantry import AgentGantry
+from dotfetch import DotFetch
 
-# Create a gantry instance with a custom attribute name
-my_custom_tools = AgentGantry()
+# Create a fetcher instance with a custom attribute name
+my_custom_tools = DotFetch()
 
 
 @my_custom_tools.register

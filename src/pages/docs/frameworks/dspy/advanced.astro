@@ -2,7 +2,7 @@
 import DocsLayout from '../../../../layouts/DocsLayout.astro';
 import CodeBlock from '../../../../components/CodeBlock.astro';
 ---
-<DocsLayout title="Advanced DSPy guide | Agent-Gantry" description="Approving gated calls, per-run selection, run context and error modes for the Agent-Gantry DSPy integration.">
+<DocsLayout title="Advanced DSPy guide | dotfetch" description="Approving gated calls, per-run selection, run context and error modes for the dotfetch DSPy integration.">
   <p class="eyebrow">Advanced framework guide</p>
   <h1>Advanced DSPy</h1>
   <p class="lead">Approving confirmation-gated calls, selecting tools per call, and run context.</p>
@@ -10,27 +10,27 @@ import CodeBlock from '../../../../components/CodeBlock.astro';
 
   <h2>Approving gated calls</h2>
   <p>DSPy has no human-in-the-loop mechanism of its own, so the adapter takes an approver. It is asked about confirmation-gated tools only (<code>requires_confirmation=True</code> or a <code>SecurityPolicy(require_confirmation=[...])</code> pattern).</p>
-  <CodeBlock lang="python" code={`from agent_gantry.dspy import ApprovalRequest, DSPyAdapter
+  <CodeBlock lang="python" code={`from dotfetch.dspy import ApprovalRequest, DSPyAdapter
 
 def approve(request: ApprovalRequest) -> bool:
     # request.tool_name, request.arguments, request.description, request.module
     return input(f"Run {request.tool_name}({request.arguments})? [y/N] ").strip() == "y"
 
-tools = await DSPyAdapter(gantry, approve=approve).select("refund an order")`} />
-  <p><code>True</code> runs the call once, with only Gantry's confirmation gate cleared; every other policy check still applies. Anything else, or an approver that raises, blocks the call and tells the model it was declined. With no approver, a gated call reports that it needs approval. <code>error_mode="raise"</code> never asks the approver.</p>
+tools = await DSPyAdapter(fetcher, approve=approve).select("refund an order")`} />
+  <p><code>True</code> runs the call once, with only dotfetch's confirmation gate cleared; every other policy check still applies. Anything else, or an approver that raises, blocks the call and tells the model it was declined. With no approver, a gated call reports that it needs approval. <code>error_mode="raise"</code> never asks the approver.</p>
 
   <h2>Per-run selection</h2>
   <p><code>dspy.ReAct</code> fixes its tools, and writes their names into its instructions, when it is constructed, and DSPy has no hook before each model call. So selection is per call: <code>agent_builder()</code> builds a fresh <code>ReAct</code> with tools picked for each query, using the adapter's <code>error_formatter</code> and <code>approve</code>. If retrieval fails, the pinned tools are still offered (with a <code>WARNING</code>).</p>
-  <CodeBlock lang="python" code={`builder = DSPyAdapter(gantry, approve=approve).agent_builder(
+  <CodeBlock lang="python" code={`builder = DSPyAdapter(fetcher, approve=approve).agent_builder(
     "question -> answer", max_iters=5, always_include=["get_order_status"]
 )
 react = await builder.build("What's the weather in Tokyo?")
 pred = react(question="What's the weather in Tokyo?")`} />
 
   <h2>Run context</h2>
-  <CodeBlock lang="python" code={`from agent_gantry.dspy import current_dspy_module
+  <CodeBlock lang="python" code={`from dotfetch.dspy import current_dspy_module
 
-@gantry.register
+@fetcher.register
 def audit_note(text: str) -> str:
     """Record a note against the running task."""
     module = current_dspy_module()     # the dspy.ReAct running this call, or None

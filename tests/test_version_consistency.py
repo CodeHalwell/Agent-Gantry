@@ -1,6 +1,6 @@
 """The package version must match across its two sources.
 
-``agent_gantry.__version__`` and ``pyproject.toml``'s ``[project].version`` are
+``dotfetch.__version__`` and ``pyproject.toml``'s ``[project].version`` are
 maintained by hand. The automated release workflow gates on this match (and
 refuses to publish on a mismatch), so this test catches drift before CI/release.
 """
@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import agent_gantry
+import dotfetch
 
 _ROOT = Path(__file__).resolve().parent.parent
 
@@ -27,7 +27,7 @@ def _pyproject_version() -> str:
 
 
 def test_version_matches_pyproject() -> None:
-    assert agent_gantry.__version__ == _pyproject_version(), (
-        f"agent_gantry.__version__ ({agent_gantry.__version__}) != "
+    assert dotfetch.__version__ == _pyproject_version(), (
+        f"dotfetch.__version__ ({dotfetch.__version__}) != "
         f"pyproject.toml version ({_pyproject_version()})"
     )

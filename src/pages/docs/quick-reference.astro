@@ -2,18 +2,18 @@
 import DocsLayout from '../../layouts/DocsLayout.astro';
 import CodeBlock from '../../components/CodeBlock.astro';
 ---
-<DocsLayout title="Quick Reference | Agent-Gantry">
+<DocsLayout title="Quick Reference | dotfetch">
   <h1>Quick reference</h1>
   <CodeBlock lang="python" title="Minimum viable setup" code={`# Install
-uv add agent-gantry
-uv add "agent-gantry[openai,lancedb,nomic,mcp,a2a]"
+uv add dotfetch
+uv add "dotfetch[openai,lancedb,nomic,mcp,a2a]"
 
-from agent_gantry import AgentGantry, with_semantic_tools, set_default_gantry
+from dotfetch import DotFetch, with_semantic_tools, set_default_fetcher
 
-gantry = AgentGantry()
-set_default_gantry(gantry)
+fetcher = DotFetch()
+set_default_fetcher(fetcher)
 
-@gantry.register(tags=["search"])
+@fetcher.register(tags=["search"])
 def search_docs(query: str) -> str:
     """Search internal documentation."""
     return "..."

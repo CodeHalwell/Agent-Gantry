@@ -6,13 +6,13 @@ pick a tool, read its result, then **change direction** and pick a completely
 different tool driven purely by the semantics of the new sub-task — not by a
 fixed, pre-bound tool list.
 
-It simulates the agent loop directly against the public Gantry API:
+It simulates the agent loop directly against the public dotfetch API:
 
     for each turn:
         query  = query_generator(conversation_so_far)   # per-turn
-        tools  = gantry.retrieve_tools(query, limit=3)   # re-rank the WHOLE registry
+        tools  = fetcher.retrieve_tools(query, limit=3)   # re-rank the WHOLE registry
         pick   = first tool the (simulated) model chooses
-        result = gantry.execute(ToolCall(pick, args))    # real execution
+        result = fetcher.execute(ToolCall(pick, args))    # real execution
         append (assistant call, tool result) to conversation
 
 The registry is 50 tools (imported from ``benchmark_tool_selection``). Each
@@ -34,10 +34,10 @@ from typing import Any
 
 from benchmark_tool_selection import TOOLS, _make_tool, build_embedder
 
-from agent_gantry import AgentGantry
-from agent_gantry.query.strategies import fallback_chain, last_tool_result, last_user_text
-from agent_gantry.schema.execution import ToolCall
-from agent_gantry.schema.query import ConversationContext, ToolQuery
+from dotfetch import DotFetch
+from dotfetch.query.strategies import fallback_chain, last_tool_result, last_user_text
+from dotfetch.schema.execution import ToolCall
+from dotfetch.schema.query import ConversationContext, ToolQuery
 
 # A single "agent run": an ordered list of (user utterance, expected tool).
 # Note how the direction lurches across domains turn to turn — weather, then
@@ -63,10 +63,10 @@ def _model_picks_first(tool_schemas: list[dict[str, Any]]) -> str | None:
 async def run(embedder_kind: str, limit: int) -> dict[str, Any]:
     embedder, label = build_embedder(embedder_kind)
     print(f"Embedder: {label}\n")
-    gantry = AgentGantry(embedder=embedder)
+    fetcher = DotFetch(embedder=embedder)
     for name, desc, tags in TOOLS:
-        gantry.register(_make_tool(name, desc), tags=tags)
-    await gantry.sync()
+        fetcher.register(_make_tool(name, desc), tags=tags)
+    await fetcher.sync()
 
     # Per-turn query generator: prefer the latest tool result (to detect when
     # the conversation has moved on), else fall back to the latest user text.
@@ -87,7 +87,7 @@ async def run(embedder_kind: str, limit: int) -> dict[str, Any]:
         #    fresh for this turn. tools_already_used lets the router gently
         #    deprioritise repeats so the agent keeps moving forward.
         derived_query = query_gen(messages) or utterance
-        result = await gantry.retrieve(
+        result = await fetcher.retrieve(
             ToolQuery(
                 context=ConversationContext(
                     query=derived_query,
@@ -102,7 +102,7 @@ async def run(embedder_kind: str, limit: int) -> dict[str, Any]:
             )
         )
         ranked = [st.tool.name for st in result.tools]
-        schemas = await gantry.retrieve_tools(derived_query, limit=limit, score_threshold=0.0)
+        schemas = await fetcher.retrieve_tools(derived_query, limit=limit, score_threshold=0.0)
 
         # 2. Simulated model picks the top tool.
         pick = _model_picks_first(schemas)
@@ -110,7 +110,7 @@ async def run(embedder_kind: str, limit: int) -> dict[str, Any]:
         # 3. Execute it for real (closing the select -> act loop).
         exec_result = None
         if pick is not None:
-            call = await gantry.execute(ToolCall(tool_name=pick, arguments={}))
+            call = await fetcher.execute(ToolCall(tool_name=pick, arguments={}))
             exec_result = call.result if str(call.status).endswith("success") else call.error
             messages.append({"role": "assistant", "content": f"calling {pick}"})
             messages.append(

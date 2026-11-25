@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import pytest
 
-from agent_gantry.schema.skill import Skill, SkillCategory
-from agent_gantry.schema.tool import ToolDefinition
+from dotfetch.schema.skill import Skill, SkillCategory
+from dotfetch.schema.tool import ToolDefinition
 
 
 @pytest.fixture
@@ -95,7 +95,7 @@ class TestNomicEmbedder:
 
     def test_nomic_embedder_initialization(self) -> None:
         """Test Nomic embedder can be imported and configured."""
-        from agent_gantry.adapters.embedders.nomic import NomicEmbedder
+        from dotfetch.adapters.embedders.nomic import NomicEmbedder
 
         embedder = NomicEmbedder(dimension=256)
         assert embedder.dimension == 256
@@ -103,20 +103,20 @@ class TestNomicEmbedder:
 
     def test_nomic_embedder_task_prefixes(self) -> None:
         """The task type is fixed at construction and part of the embedder id."""
-        from agent_gantry.adapters.embedders.nomic import NomicEmbedder
+        from dotfetch.adapters.embedders.nomic import NomicEmbedder
 
         embedder = NomicEmbedder(task_type="search_query")
         assert embedder.get_embedder_id() == "nomic-ai/nomic-embed-text-v1.5:768:search_query"
 
     async def test_nomic_embedder_empty_batch_needs_no_model(self) -> None:
         """The empty-input guard lives in the parent and runs before any model load."""
-        from agent_gantry.adapters.embedders.nomic import NomicEmbedder
+        from dotfetch.adapters.embedders.nomic import NomicEmbedder
 
         assert await NomicEmbedder(dimension=64).embed_batch([]) == []
 
     def test_nomic_embedder_matryoshka_dims(self) -> None:
         """Test Matryoshka dimension constants."""
-        from agent_gantry.adapters.embedders.nomic import NomicEmbedder
+        from dotfetch.adapters.embedders.nomic import NomicEmbedder
 
         assert 768 in NomicEmbedder.MATRYOSHKA_DIMS
         assert 256 in NomicEmbedder.MATRYOSHKA_DIMS
@@ -124,7 +124,7 @@ class TestNomicEmbedder:
 
     def test_nomic_embedder_invalid_dimension_raises(self) -> None:
         """Test that invalid dimensions raise ValueError."""
-        from agent_gantry.adapters.embedders.nomic import NomicEmbedder
+        from dotfetch.adapters.embedders.nomic import NomicEmbedder
 
         with pytest.raises(ValueError, match="dimension must be between"):
             NomicEmbedder(dimension=0)
@@ -134,7 +134,7 @@ class TestNomicEmbedder:
 
     def test_nomic_embedder_invalid_task_type_raises(self) -> None:
         """Test that invalid task types raise ValueError."""
-        from agent_gantry.adapters.embedders.nomic import NomicEmbedder
+        from dotfetch.adapters.embedders.nomic import NomicEmbedder
 
         with pytest.raises(ValueError, match="Unsupported task_type"):
             NomicEmbedder(task_type="invalid_type")
@@ -145,7 +145,7 @@ class TestLanceDBVectorStore:
 
     def test_lancedb_initialization(self, tmp_path) -> None:
         """Test LanceDB store can be initialized."""
-        from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+        from dotfetch.adapters.vector_stores.lancedb import LanceDBVectorStore
 
         db_path = str(tmp_path / "test_db")
         store = LanceDBVectorStore(db_path=db_path, dimension=64)
@@ -155,14 +155,14 @@ class TestLanceDBVectorStore:
 
     def test_lancedb_default_path_resolution(self) -> None:
         """Test default database path resolution."""
-        from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+        from dotfetch.adapters.vector_stores.lancedb import LanceDBVectorStore
 
         store = LanceDBVectorStore()
         # Should resolve to some valid path containing the expected suffix
         # Use os.path normalization to handle Windows/Unix path differences
         import os
 
-        expected_suffix = os.path.join(".agent_gantry", "lancedb")
+        expected_suffix = os.path.join(".dotfetch", "lancedb")
         assert store.db_path is not None
         assert expected_suffix in store.db_path
 
@@ -172,7 +172,7 @@ class TestLanceDBVectorStore:
         pytest.importorskip("lancedb")
         pytest.importorskip("pyarrow")
 
-        from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+        from dotfetch.adapters.vector_stores.lancedb import LanceDBVectorStore
 
         db_path = str(tmp_path / "test_db")
         store = LanceDBVectorStore(db_path=db_path, dimension=64)
@@ -191,7 +191,7 @@ class TestLanceDBVectorStore:
         pytest.importorskip("lancedb")
         pytest.importorskip("pyarrow")
 
-        from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+        from dotfetch.adapters.vector_stores.lancedb import LanceDBVectorStore
 
         db_path = str(tmp_path / "test_db")
         store = LanceDBVectorStore(db_path=db_path, dimension=64)
@@ -220,7 +220,7 @@ class TestLanceDBVectorStore:
         pytest.importorskip("lancedb")
         pytest.importorskip("pyarrow")
 
-        from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+        from dotfetch.adapters.vector_stores.lancedb import LanceDBVectorStore
 
         db_path = str(tmp_path / "test_db")
         store = LanceDBVectorStore(db_path=db_path, dimension=64)
@@ -248,7 +248,7 @@ class TestLanceDBVectorStore:
         pytest.importorskip("lancedb")
         pytest.importorskip("pyarrow")
 
-        from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+        from dotfetch.adapters.vector_stores.lancedb import LanceDBVectorStore
 
         db_path = str(tmp_path / "test_db")
         store = LanceDBVectorStore(db_path=db_path, dimension=64)
@@ -273,7 +273,7 @@ class TestLanceDBVectorStore:
         pytest.importorskip("lancedb")
         pytest.importorskip("pyarrow")
 
-        from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+        from dotfetch.adapters.vector_stores.lancedb import LanceDBVectorStore
 
         db_path = str(tmp_path / "test_db")
         store = LanceDBVectorStore(db_path=db_path, dimension=64)
@@ -299,7 +299,7 @@ class TestLanceDBVectorStore:
         pytest.importorskip("lancedb")
         pytest.importorskip("pyarrow")
 
-        from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+        from dotfetch.adapters.vector_stores.lancedb import LanceDBVectorStore
 
         db_path = str(tmp_path / "test_db")
         store = LanceDBVectorStore(db_path=db_path, dimension=64)
@@ -323,7 +323,7 @@ class TestLanceDBVectorStore:
         pytest.importorskip("lancedb")
         pytest.importorskip("pyarrow")
 
-        from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+        from dotfetch.adapters.vector_stores.lancedb import LanceDBVectorStore
 
         db_path = str(tmp_path / "test_db")
         store = LanceDBVectorStore(db_path=db_path, dimension=64)
@@ -339,7 +339,7 @@ class TestLanceDBVectorStore:
         pytest.importorskip("lancedb")
         pytest.importorskip("pyarrow")
 
-        from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+        from dotfetch.adapters.vector_stores.lancedb import LanceDBVectorStore
 
         db_path = str(tmp_path / "test_db")
         store = LanceDBVectorStore(db_path=db_path, dimension=64)
@@ -370,7 +370,7 @@ class TestLanceDBVectorStore:
         pytest.importorskip("lancedb")
         pytest.importorskip("pyarrow")
 
-        from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+        from dotfetch.adapters.vector_stores.lancedb import LanceDBVectorStore
 
         db_path = str(tmp_path / "test_db")
         store = LanceDBVectorStore(db_path=db_path, dimension=64)
@@ -401,7 +401,7 @@ class TestLanceDBVectorStore:
         pytest.importorskip("lancedb")
         pytest.importorskip("pyarrow")
 
-        from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+        from dotfetch.adapters.vector_stores.lancedb import LanceDBVectorStore
 
         db_path = str(tmp_path / "test_db")
         store = LanceDBVectorStore(db_path=db_path, dimension=64)
@@ -426,7 +426,7 @@ class TestLanceDBVectorStore:
         pytest.importorskip("lancedb")
         pytest.importorskip("pyarrow")
 
-        from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+        from dotfetch.adapters.vector_stores.lancedb import LanceDBVectorStore
 
         db_path = str(tmp_path / "test_db")
         store = LanceDBVectorStore(db_path=db_path, dimension=64)
@@ -447,7 +447,7 @@ class TestLanceDBVectorStore:
         pytest.importorskip("lancedb")
         pytest.importorskip("pyarrow")
 
-        from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+        from dotfetch.adapters.vector_stores.lancedb import LanceDBVectorStore
 
         db_path = str(tmp_path / "test_db")
         store = LanceDBVectorStore(db_path=db_path, dimension=64)
@@ -468,7 +468,7 @@ class TestLanceDBVectorStore:
         pytest.importorskip("lancedb")
         pytest.importorskip("pyarrow")
 
-        from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+        from dotfetch.adapters.vector_stores.lancedb import LanceDBVectorStore
 
         db_path = str(tmp_path / "test_db")
         store = LanceDBVectorStore(db_path=db_path, dimension=64)
@@ -489,7 +489,7 @@ class TestLanceDBVectorStore:
         pytest.importorskip("lancedb")
         pytest.importorskip("pyarrow")
 
-        from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+        from dotfetch.adapters.vector_stores.lancedb import LanceDBVectorStore
 
         db_path = str(tmp_path / "test_db")
         store = LanceDBVectorStore(db_path=db_path, dimension=64)
@@ -514,7 +514,7 @@ class TestSQLInjectionPrevention:
         pytest.importorskip("lancedb")
         pytest.importorskip("pyarrow")
 
-        from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+        from dotfetch.adapters.vector_stores.lancedb import LanceDBVectorStore
 
         db_path = str(tmp_path / "test_db")
         store = LanceDBVectorStore(db_path=db_path, dimension=64)
@@ -547,7 +547,7 @@ class TestSQLInjectionPrevention:
         pytest.importorskip("lancedb")
         pytest.importorskip("pyarrow")
 
-        from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+        from dotfetch.adapters.vector_stores.lancedb import LanceDBVectorStore
 
         db_path = str(tmp_path / "test_db")
         store = LanceDBVectorStore(db_path=db_path, dimension=64)
@@ -580,7 +580,7 @@ class TestSQLInjectionPrevention:
         pytest.importorskip("lancedb")
         pytest.importorskip("pyarrow")
 
-        from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+        from dotfetch.adapters.vector_stores.lancedb import LanceDBVectorStore
 
         db_path = str(tmp_path / "test_db")
         store = LanceDBVectorStore(db_path=db_path, dimension=64)
@@ -618,7 +618,7 @@ class TestSQLInjectionPrevention:
         pytest.importorskip("lancedb")
         pytest.importorskip("pyarrow")
 
-        from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+        from dotfetch.adapters.vector_stores.lancedb import LanceDBVectorStore
 
         db_path = str(tmp_path / "test_db")
         store = LanceDBVectorStore(db_path=db_path, dimension=64)
@@ -645,7 +645,7 @@ class TestSQLInjectionPrevention:
         pytest.importorskip("lancedb")
         pytest.importorskip("pyarrow")
 
-        from agent_gantry.adapters.vector_stores.lancedb import (
+        from dotfetch.adapters.vector_stores.lancedb import (
             LanceDBVectorStore,
             _escape_sql_string,
         )
@@ -696,7 +696,7 @@ class TestSQLInjectionPrevention:
         pytest.importorskip("lancedb")
         pytest.importorskip("pyarrow")
 
-        from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+        from dotfetch.adapters.vector_stores.lancedb import LanceDBVectorStore
 
         db_path = str(tmp_path / "test_db")
         store = LanceDBVectorStore(db_path=db_path, dimension=64)
@@ -713,7 +713,7 @@ class TestSQLInjectionPrevention:
         pytest.importorskip("lancedb")
         pytest.importorskip("pyarrow")
 
-        from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+        from dotfetch.adapters.vector_stores.lancedb import LanceDBVectorStore
 
         db_path = str(tmp_path / "test_db")
         store = LanceDBVectorStore(db_path=db_path, dimension=64)
@@ -737,7 +737,7 @@ class TestConfigIntegration:
 
     def test_vector_store_config_lancedb_type(self) -> None:
         """Test that LanceDB is a valid vector store type."""
-        from agent_gantry.schema.config import VectorStoreConfig
+        from dotfetch.schema.config import VectorStoreConfig
 
         config = VectorStoreConfig(
             type="lancedb",
@@ -750,7 +750,7 @@ class TestConfigIntegration:
 
     def test_embedder_config_nomic_type(self) -> None:
         """Test that Nomic is a valid embedder type."""
-        from agent_gantry.schema.config import EmbedderConfig
+        from dotfetch.schema.config import EmbedderConfig
 
         config = EmbedderConfig(
             type="nomic",
@@ -762,16 +762,16 @@ class TestConfigIntegration:
         assert config.dimension == 256
         assert config.task_type == "search_document"
 
-    def test_gantry_builds_lancedb_store(self, tmp_path) -> None:
-        """Test that AgentGantry can build a LanceDB vector store."""
+    def test_fetcher_builds_lancedb_store(self, tmp_path) -> None:
+        """Test that DotFetch can build a LanceDB vector store."""
         pytest.importorskip("lancedb")
         pytest.importorskip("pyarrow")
 
-        from agent_gantry import AgentGantry
-        from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
-        from agent_gantry.schema.config import AgentGantryConfig, VectorStoreConfig
+        from dotfetch import DotFetch
+        from dotfetch.adapters.vector_stores.lancedb import LanceDBVectorStore
+        from dotfetch.schema.config import DotFetchConfig, VectorStoreConfig
 
-        config = AgentGantryConfig(
+        config = DotFetchConfig(
             vector_store=VectorStoreConfig(
                 type="lancedb",
                 db_path=str(tmp_path / "test_db"),
@@ -779,16 +779,16 @@ class TestConfigIntegration:
             )
         )
 
-        gantry = AgentGantry(config=config)
-        assert isinstance(gantry._vector_store, LanceDBVectorStore)
+        fetcher = DotFetch(config=config)
+        assert isinstance(fetcher._vector_store, LanceDBVectorStore)
 
-    def test_gantry_builds_nomic_embedder(self) -> None:
-        """Test that AgentGantry can build a Nomic embedder."""
-        from agent_gantry import AgentGantry
-        from agent_gantry.adapters.embedders.nomic import NomicEmbedder
-        from agent_gantry.schema.config import AgentGantryConfig, EmbedderConfig
+    def test_fetcher_builds_nomic_embedder(self) -> None:
+        """Test that DotFetch can build a Nomic embedder."""
+        from dotfetch import DotFetch
+        from dotfetch.adapters.embedders.nomic import NomicEmbedder
+        from dotfetch.schema.config import DotFetchConfig, EmbedderConfig
 
-        config = AgentGantryConfig(
+        config = DotFetchConfig(
             embedder=EmbedderConfig(
                 type="nomic",
                 model="nomic-ai/nomic-embed-text-v1.5",
@@ -796,6 +796,6 @@ class TestConfigIntegration:
             )
         )
 
-        gantry = AgentGantry(config=config)
-        assert isinstance(gantry._embedder, NomicEmbedder)
-        assert gantry._embedder.dimension == 256
+        fetcher = DotFetch(config=config)
+        assert isinstance(fetcher._embedder, NomicEmbedder)
+        assert fetcher._embedder.dimension == 256

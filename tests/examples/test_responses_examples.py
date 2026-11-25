@@ -23,13 +23,13 @@ ROOT = Path(__file__).resolve().parents[2]
         ("tool_vector_db/main.py", "examples.tool_vector_db.tools"),
     ],
 )
-async def test_responses_round_trip(script, catalogue, gantry, monkeypatch, capsys):
+async def test_responses_round_trip(script, catalogue, fetcher, monkeypatch, capsys):
     pytest.importorskip("openai")
     pytest.importorskip("dotenv")
     monkeypatch.setenv("PYTHON_DOTENV_DISABLED", "1")
     monkeypatch.setenv("OPENAI_API_KEY", "offline-example-test")
 
-    @gantry.register(examples=["what time is it"])
+    @fetcher.register(examples=["what time is it"])
     def lookup_time() -> dict:
         """Return a structured value that plain json.dumps cannot serialize."""
         return {"at": datetime(2026, 10, 16, tzinfo=timezone.utc)}
@@ -37,10 +37,10 @@ async def test_responses_round_trip(script, catalogue, gantry, monkeypatch, caps
     # Supply a tiny catalogue without importing the demo's heavy tool dependencies
     # or touching its persistent database. Load the script under a private name.
     tools_module = ModuleType(catalogue)
-    tools_module.tools = gantry
+    tools_module.tools = fetcher
     monkeypatch.setitem(sys.modules, catalogue, tools_module)
     spec = importlib.util.spec_from_file_location(
-        "_gantry_responses_example", ROOT / "examples" / script
+        "_fetcher_responses_example", ROOT / "examples" / script
     )
     assert spec and spec.loader
     example = importlib.util.module_from_spec(spec)

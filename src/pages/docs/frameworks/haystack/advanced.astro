@@ -2,17 +2,17 @@
 import DocsLayout from '../../../../layouts/DocsLayout.astro';
 import CodeBlock from '../../../../components/CodeBlock.astro';
 ---
-<DocsLayout title="Advanced Haystack guide | Agent-Gantry" description="Approval through ConfirmationHook, per-step selection, run context and error modes for the Agent-Gantry Haystack integration.">
+<DocsLayout title="Advanced Haystack guide | dotfetch" description="Approval through ConfirmationHook, per-step selection, run context and error modes for the dotfetch Haystack integration.">
   <p class="eyebrow">Advanced framework guide</p>
   <h1>Advanced Haystack</h1>
   <p class="lead">Approval with <code>ConfirmationHook</code>, how per-step selection works, and run context.</p>
   <p><a class="pill" href="/Agent-Gantry/docs/frameworks/haystack/">← Basic Haystack usage</a></p>
 
   <h2>Approval with ConfirmationHook</h2>
-  <p>A confirmation-gated tool (<code>requires_confirmation=True</code> or a <code>SecurityPolicy(require_confirmation=[...])</code> pattern) is confirmed through Haystack's human-in-the-loop machinery. <code>adapter.confirmation_hook(ui)</code> is a <code>before_tool</code> hook that asks the <code>ConfirmationUI</code> about gated Gantry tools only.</p>
+  <p>A confirmation-gated tool (<code>requires_confirmation=True</code> or a <code>SecurityPolicy(require_confirmation=[...])</code> pattern) is confirmed through Haystack's human-in-the-loop machinery. <code>adapter.confirmation_hook(ui)</code> is a <code>before_tool</code> hook that asks the <code>ConfirmationUI</code> about gated dotfetch tools only.</p>
   <CodeBlock lang="python" code={`from haystack.hooks.human_in_the_loop import RichConsoleUI
 
-agent = HaystackAdapter(gantry).agent(chat_generator=generator, confirmation_ui=RichConsoleUI())
+agent = HaystackAdapter(fetcher).agent(chat_generator=generator, confirmation_ui=RichConsoleUI())
 
 # Or, with tools you selected yourself:
 agent = Agent(
@@ -20,7 +20,7 @@ agent = Agent(
     tools=await adapter.select("refund an order"),
     hooks={"before_tool": [adapter.confirmation_hook(RichConsoleUI())]},
 )`} />
-  <p>A confirmed call runs once through <code>gantry.execute</code> with only the confirmation gate cleared; a modified one runs once with the new arguments; a rejected one never runs and the model is told. Each approval is tied to that exact call on the run's <code>State</code>. Without a confirmation hook, or when a tool is called directly, a gated call reports that it needs approval.</p>
+  <p>A confirmed call runs once through <code>fetcher.execute</code> with only the confirmation gate cleared; a modified one runs once with the new arguments; a rejected one never runs and the model is told. Each approval is tied to that exact call on the run's <code>State</code>. Without a confirmation hook, or when a tool is called directly, a gated call reports that it needs approval.</p>
 
   <h2>Per-step selection</h2>
   <ul>
@@ -32,5 +32,5 @@ agent = Agent(
   </ul>
 
   <h2>Run context and tracing</h2>
-  <p>Haystack injects the Agent's live <code>State</code> into each Gantry tool (the model's schema never shows it). <code>current_agent_state()</code> returns it; <code>current_tool_invocation()</code> carries it too, with <code>deps</code> set to <code>state.data</code>. Tools have a native <code>async_function</code>, so <code>Agent.run_async</code> does not block. The active OpenTelemetry span becomes the Gantry <code>ToolCall</code>'s trace.</p>
+  <p>Haystack injects the Agent's live <code>State</code> into each dotfetch tool (the model's schema never shows it). <code>current_agent_state()</code> returns it; <code>current_tool_invocation()</code> carries it too, with <code>deps</code> set to <code>state.data</code>. Tools have a native <code>async_function</code>, so <code>Agent.run_async</code> does not block. The active OpenTelemetry span becomes the dotfetch <code>ToolCall</code>'s trace.</p>
 </DocsLayout>

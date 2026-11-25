@@ -1,7 +1,7 @@
 """
-Tests for :mod:`agent_gantry.query` strategies and the
+Tests for :mod:`dotfetch.query` strategies and the
 ``preview`` / ``list_tools_sync`` helpers exposed on
-:class:`agent_gantry.AgentGantry`.
+:class:`dotfetch.DotFetch`.
 
 These tests intentionally avoid importing ``agent_framework`` so they run
 in any environment.
@@ -13,8 +13,8 @@ import warnings
 
 import pytest
 
-from agent_gantry import AgentGantry
-from agent_gantry.query import (
+from dotfetch import DotFetch
+from dotfetch.query import (
     concatenate_recent,
     fallback_chain,
     last_assistant_text,
@@ -118,7 +118,7 @@ def test_msg_text_walks_dict_contents_for_function_result() -> None:
     AF-specific Message/Content coverage lives in
     ``test_agent_framework_orchestration.py``.
     """
-    from agent_gantry.query.strategies import _msg_text
+    from dotfetch.query.strategies import _msg_text
 
     # Mimic an AF tool-role message: function_result Content with
     # items[].text populated; Message.text is empty.
@@ -144,7 +144,7 @@ def test_msg_text_function_result_fallback_is_per_content() -> None:
     ``.result`` via the per-content fallback — not get gated by the
     cumulative ``parts`` list.
     """
-    from agent_gantry.query.strategies import _msg_text
+    from dotfetch.query.strategies import _msg_text
 
     text_c = type("TC", (), {"type": "text", "text": "hi"})()
     empty_fr = type("FR", (), {
@@ -160,13 +160,13 @@ def test_msg_text_function_result_fallback_is_per_content() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AgentGantry.list_tools_sync + preview
+# DotFetch.list_tools_sync + preview
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_list_tools_sync_reads_registry_without_async():
-    g = AgentGantry()
+    g = DotFetch()
 
     @g.register
     def add(a: int, b: int) -> int:
@@ -188,7 +188,7 @@ async def test_list_tools_sync_reads_registry_without_async():
 
 @pytest.mark.asyncio
 async def test_preview_returns_ranked_pairs():
-    g = AgentGantry()
+    g = DotFetch()
 
     @g.register
     def add(a: int, b: int) -> int:
@@ -213,14 +213,14 @@ async def test_preview_returns_ranked_pairs():
 @pytest.mark.asyncio
 async def test_simple_embedder_warning_on_threshold():
     """SimpleEmbedder + non-zero threshold should emit a UserWarning once."""
-    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+    from dotfetch.adapters.embedders.simple import SimpleEmbedder
 
     SimpleEmbedder._warned_about_threshold = False  # reset test-local
 
     # Pin SimpleEmbedder explicitly: without this the default config selects
     # ``sentence_transformers`` whenever that extra is installed, which
     # bypasses the SimpleEmbedder-specific warning code path.
-    g = AgentGantry(embedder=SimpleEmbedder())
+    g = DotFetch(embedder=SimpleEmbedder())
 
     @g.register
     def some_tool(x: int) -> int:
@@ -241,9 +241,9 @@ async def test_simple_embedder_warning_on_threshold():
 
 
 def test_register_accepts_function_tool_like_object():
-    """``gantry.register`` should unwrap ``.func`` / ``.name`` wrappers
+    """``fetcher.register`` should unwrap ``.func`` / ``.name`` wrappers
     such as ``agent_framework.tool``-decorated FunctionTool objects."""
-    g = AgentGantry()
+    g = DotFetch()
 
     def real_handler(x: int) -> int:
         """Doubles the input."""
@@ -273,7 +273,7 @@ def test_register_accepts_function_tool_like_object():
 
 
 def test_embedders_module_exposes_optional_classes_via_dir():
-    import agent_gantry.adapters.embedders as em
+    import dotfetch.adapters.embedders as em
 
     listed = set(dir(em))
     expected = {
@@ -288,7 +288,7 @@ def test_embedders_module_exposes_optional_classes_via_dir():
 
 
 def test_rerankers_module_exposes_optional_classes_via_dir():
-    import agent_gantry.adapters.rerankers as rk
+    import dotfetch.adapters.rerankers as rk
 
     listed = set(dir(rk))
     expected = {"RerankerAdapter", "CohereReranker", "CrossEncoderReranker"}
@@ -303,7 +303,7 @@ def test_rerankers_module_exposes_optional_classes_via_dir():
 def test_keyword_focused_strips_scaffolding_and_keeps_content_words():
     """Imperative scaffolding ("please", "step", "the", …) must be
     dropped so the remaining tokens carry the actual content signal."""
-    from agent_gantry.query import keyword_focused
+    from dotfetch.query import keyword_focused
 
     msg = _Msg(
         "user",
@@ -322,14 +322,14 @@ def test_keyword_focused_strips_scaffolding_and_keeps_content_words():
 
 
 def test_keyword_focused_handles_empty_messages():
-    from agent_gantry.query import keyword_focused
+    from dotfetch.query import keyword_focused
 
     assert keyword_focused([]) == ""
     assert keyword_focused(None) == ""
 
 
 def test_truncated_caps_length_keeping_tail_by_default():
-    from agent_gantry.query import last_user_text, truncated
+    from dotfetch.query import last_user_text, truncated
 
     msg = _Msg("user", "the quick brown fox jumps over the lazy dog")
     gen = truncated(last_user_text, max_chars=10, keep="tail")
@@ -340,7 +340,7 @@ def test_truncated_caps_length_keeping_tail_by_default():
 
 
 def test_truncated_keep_head():
-    from agent_gantry.query import last_user_text, truncated
+    from dotfetch.query import last_user_text, truncated
 
     msg = _Msg("user", "the quick brown fox jumps over the lazy dog")
     gen = truncated(last_user_text, max_chars=10, keep="head")
@@ -354,7 +354,7 @@ def test_truncated_supports_async_generator():
     import asyncio
     import inspect
 
-    from agent_gantry.query import truncated
+    from dotfetch.query import truncated
 
     async def async_gen(_messages):
         return "this is a long async result string"
@@ -366,7 +366,7 @@ def test_truncated_supports_async_generator():
 
 
 # ---------------------------------------------------------------------------
-# New: AgentGantry.analyze_registry + pairwise_similarity
+# New: DotFetch.analyze_registry + pairwise_similarity
 # ---------------------------------------------------------------------------
 
 
@@ -374,7 +374,7 @@ def test_truncated_supports_async_generator():
 async def test_analyze_registry_detects_cross_references():
     """A tool description naming another registered tool is the
     headline mistake from the issue — verify the linter catches it."""
-    g = AgentGantry()
+    g = DotFetch()
 
     @g.register
     def factorial(n: int) -> int:
@@ -396,7 +396,7 @@ async def test_analyze_registry_detects_cross_references():
 
 @pytest.mark.asyncio
 async def test_analyze_registry_clean_registry_reports_empty():
-    g = AgentGantry()
+    g = DotFetch()
 
     @g.register
     def add(a: int, b: int) -> int:
@@ -410,7 +410,7 @@ async def test_analyze_registry_clean_registry_reports_empty():
 
 @pytest.mark.asyncio
 async def test_pairwise_similarity_returns_cosine_score():
-    g = AgentGantry()
+    g = DotFetch()
 
     @g.register
     def add_numbers(a: int, b: int) -> int:
@@ -431,12 +431,12 @@ async def test_pairwise_similarity_returns_cosine_score():
 
 
 # ---------------------------------------------------------------------------
-# New: GantryToolBridge — threshold parsing + RetrievalDecision
+# New: DotFetchToolBridge — threshold parsing + RetrievalDecision
 # ---------------------------------------------------------------------------
 
 
 def test_parse_threshold_accepts_float_relative_and_none():
-    from agent_gantry.integrations.agent_framework_bridge import _parse_threshold
+    from dotfetch.integrations.agent_framework_bridge import _parse_threshold
 
     assert _parse_threshold(None) == ("absolute", None)
     assert _parse_threshold(0.3) == ("absolute", 0.3)
@@ -456,9 +456,9 @@ async def test_bridge_emits_retrieval_decision_with_kept_and_dropped():
     """The bridge's decision-returning API must list both kept and
     dropped candidates so callers can self-diagnose threshold issues
     without re-running retrieval."""
-    from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+    from dotfetch.integrations.agent_framework_bridge import DotFetchToolBridge
 
-    g = AgentGantry()
+    g = DotFetch()
 
     @g.register
     def get_weather(city: str) -> str:
@@ -471,7 +471,7 @@ async def test_bridge_emits_retrieval_decision_with_kept_and_dropped():
         return "x"
 
     await g.sync()
-    bridge = GantryToolBridge(g, score_threshold=0.0)
+    bridge = DotFetchToolBridge(g, score_threshold=0.0)
 
     # Use a very high absolute threshold to force everything to be dropped.
     _tools, decision = await bridge.get_tools_with_decision(
@@ -489,9 +489,9 @@ async def test_bridge_emits_retrieval_decision_with_kept_and_dropped():
 async def test_bridge_relative_threshold_keeps_top_band():
     """``relative:0.9`` should retain only candidates within 90% of the
     top score and report the effective cutoff."""
-    from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+    from dotfetch.integrations.agent_framework_bridge import DotFetchToolBridge
 
-    g = AgentGantry()
+    g = DotFetch()
 
     @g.register
     def get_weather(city: str) -> str:
@@ -509,7 +509,7 @@ async def test_bridge_relative_threshold_keeps_top_band():
         return "x"
 
     await g.sync()
-    bridge = GantryToolBridge(g)
+    bridge = DotFetchToolBridge(g)
     _tools, decision = await bridge.get_tools_with_decision(
         "weather", limit=5, score_threshold="relative:0.9"
     )
@@ -529,8 +529,8 @@ async def test_bridge_relative_threshold_keeps_top_band():
 @pytest.mark.asyncio
 async def test_cached_embedder_persists_across_instances(tmp_path):
     """Re-opening the cache file must yield hits, not re-embed work."""
-    from agent_gantry.adapters.embedders.cached import CachedEmbedder
-    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+    from dotfetch.adapters.embedders.cached import CachedEmbedder
+    from dotfetch.adapters.embedders.simple import SimpleEmbedder
 
     cache = tmp_path / "embed.sqlite"
     first = CachedEmbedder(SimpleEmbedder(), cache_path=cache)
@@ -558,7 +558,7 @@ async def test_cached_embedder_persists_across_instances(tmp_path):
 
 def test_latest_activity_prefers_newest_user_message():
     """Conversational: the most recent user message drives the query."""
-    from agent_gantry.query import latest_activity
+    from dotfetch.query import latest_activity
 
     messages = [
         {"role": "user", "content": "what's the weather?"},
@@ -571,7 +571,7 @@ def test_latest_activity_prefers_newest_user_message():
 
 def test_latest_activity_uses_tool_result_when_it_is_newest():
     """Autonomous: with no newer user message, the latest tool result steers it."""
-    from agent_gantry.query import latest_activity
+    from dotfetch.query import latest_activity
 
     messages = [
         {"role": "user", "content": "build a model from the data"},
@@ -590,7 +590,7 @@ def test_latest_activity_keeps_the_request_beside_a_bare_tool_result():
     Two-step task, step one done: ``"desserts"`` alone surfaced an unrelated
     tool and dropped the one the second half of the request still needed.
     """
-    from agent_gantry.query import latest_activity
+    from dotfetch.query import latest_activity
 
     request = "First reverse the text 'stressed'. Then count how many words it has."
     messages = [
@@ -605,7 +605,7 @@ def test_latest_activity_include_request_false_returns_the_result_alone():
     """The pre-0.23.0 query, for pipelines whose results name the next step."""
     from functools import partial
 
-    from agent_gantry.query import latest_activity
+    from dotfetch.query import latest_activity
 
     messages = [
         {"role": "user", "content": "build a model from the data"},
@@ -628,7 +628,7 @@ def test_latest_activity_reads_a_one_shot_iterator_once():
     latest user message found nothing and the result came back alone (and an
     opaque result came back as an empty query).
     """
-    from agent_gantry.query import latest_activity
+    from dotfetch.query import latest_activity
 
     history = [
         {"role": "user", "content": "build a model from the data"},
@@ -641,7 +641,7 @@ def test_latest_activity_reads_a_one_shot_iterator_once():
 
 def test_latest_activity_tool_result_alone_without_a_user_message():
     """No request in the history: the result is all there is to go on."""
-    from agent_gantry.query import latest_activity
+    from dotfetch.query import latest_activity
 
     messages = [{"role": "tool", "name": "clean_dataset", "content": "dataset ready"}]
     assert latest_activity(messages) == "dataset ready"
@@ -657,7 +657,7 @@ def test_latest_activity_tool_result_alone_without_a_user_message():
 )
 def test_latest_activity_falls_back_from_opaque_tool_result(result: str):
     """Opaque result values must not replace the user's semantic query."""
-    from agent_gantry.query import latest_activity
+    from dotfetch.query import latest_activity
 
     messages = [
         {
@@ -672,7 +672,7 @@ def test_latest_activity_falls_back_from_opaque_tool_result(result: str):
 
 def test_latest_activity_skips_empty_assistant_tool_call_stub():
     """An empty assistant tool-call stub must not blank out the query."""
-    from agent_gantry.query import latest_activity
+    from dotfetch.query import latest_activity
 
     messages = [
         {"role": "user", "content": "summarize this article"},
@@ -682,7 +682,7 @@ def test_latest_activity_skips_empty_assistant_tool_call_stub():
 
 
 def test_latest_activity_truncates_long_tool_result():
-    from agent_gantry.query import latest_activity
+    from dotfetch.query import latest_activity
 
     long_result = "x" * 2000
     messages = [{"role": "tool", "name": "t", "content": long_result}]
@@ -690,7 +690,7 @@ def test_latest_activity_truncates_long_tool_result():
 
 
 def test_latest_activity_empty_history():
-    from agent_gantry.query import latest_activity
+    from dotfetch.query import latest_activity
 
     assert latest_activity([]) == ""
     assert latest_activity(None) == ""
@@ -700,7 +700,7 @@ class _LangChainMessage:
     """Stand-in for a LangChain ``BaseMessage``.
 
     LangChain carries the role in ``.type`` ("human"/"ai"/"tool"), not
-    ``.role`` — see ``_LANGCHAIN_ROLES`` in ``agent_gantry.query.strategies``.
+    ``.role`` — see ``_LANGCHAIN_ROLES`` in ``dotfetch.query.strategies``.
     Built locally so these tests never import ``langchain_core``.
     """
 
@@ -713,7 +713,7 @@ class _LangChainMessage:
 
 def test_msg_role_maps_langchain_type():
     """``.type`` is a role only for the known LangChain values."""
-    from agent_gantry.query.strategies import _msg_role
+    from dotfetch.query.strategies import _msg_role
 
     assert _msg_role(_LangChainMessage("human", "hi")) == "user"
     assert _msg_role(_LangChainMessage("ai", "hello")) == "assistant"
@@ -723,7 +723,7 @@ def test_msg_role_maps_langchain_type():
 
 def test_msg_role_ignores_unrelated_type_attribute():
     """An object whose ``.type`` is not a role must not be misread as one."""
-    from agent_gantry.query.strategies import _msg_role
+    from dotfetch.query.strategies import _msg_role
 
     class ContentBlock:
         type = "text"
@@ -733,7 +733,7 @@ def test_msg_role_ignores_unrelated_type_attribute():
 
 
 def test_msg_role_prefers_explicit_role_over_type():
-    from agent_gantry.query.strategies import _msg_role
+    from dotfetch.query.strategies import _msg_role
 
     assert _msg_role({"role": "user", "type": "ai"}) == "user"
 
@@ -744,7 +744,7 @@ def test_latest_activity_skips_langchain_ai_message():
     Before ``_msg_role`` understood ``.type``, every LangChain message resolved
     to role ``""`` and fell into the user branch, so the assistant's text won.
     """
-    from agent_gantry.query import latest_activity
+    from dotfetch.query import latest_activity
 
     messages = [
         _LangChainMessage("human", "book me a flight to Berlin"),
@@ -755,7 +755,7 @@ def test_latest_activity_skips_langchain_ai_message():
 
 def test_latest_activity_caps_langchain_tool_result():
     """A LangChain ToolMessage is a tool result, so ``max_chars`` applies."""
-    from agent_gantry.query import latest_activity
+    from dotfetch.query import latest_activity
 
     messages = [
         _LangChainMessage("human", "look it up"),
@@ -829,7 +829,7 @@ _SDK_HISTORIES = [
 @pytest.mark.parametrize("history", _SDK_HISTORIES)
 def test_latest_activity_reads_sdk_tool_output(history: list[dict]) -> None:
     """With no newer user message, the tool's output joins the request it serves."""
-    from agent_gantry.query import last_user_text, latest_activity
+    from dotfetch.query import last_user_text, latest_activity
 
     assert latest_activity(history) == f"{last_user_text(history)}\nsunny, 21C"
 
@@ -844,13 +844,13 @@ def test_role_strategies_agree_on_sdk_tool_messages(history: list[dict]) -> None
 @pytest.mark.parametrize("history", _SDK_HISTORIES)
 def test_tool_names_used_reads_the_assistant_call(history: list[dict]) -> None:
     """The name lives on the assistant's call, not on the result message."""
-    from agent_gantry.query import tool_names_used
+    from dotfetch.query import tool_names_used
 
     assert tool_names_used(history) == ["get_weather"]
 
 
 def test_anthropic_tool_result_content_may_be_a_block_list() -> None:
-    from agent_gantry.query import latest_activity
+    from dotfetch.query import latest_activity
 
     msg = {
         "role": "user",
@@ -882,7 +882,7 @@ def test_anthropic_user_turn_mixing_results_and_text_stays_a_user_turn() -> None
 
 def test_tool_names_used_across_object_shaped_messages() -> None:
     """SDK objects (not dicts) from OpenAI, LangChain, Anthropic, AF, Pydantic AI, Strands."""
-    from agent_gantry.query import tool_names_used
+    from dotfetch.query import tool_names_used
 
     class _Fn:
         def __init__(self, name: str) -> None:
@@ -966,7 +966,7 @@ def test_tool_names_used_across_object_shaped_messages() -> None:
 
 
 def test_tool_names_used_with_nothing_called() -> None:
-    from agent_gantry.query import tool_names_used
+    from dotfetch.query import tool_names_used
 
     assert tool_names_used(None) == []
     assert tool_names_used([]) == []
@@ -997,7 +997,7 @@ class _ObjMsg:
 
 def test_anthropic_object_shaped_tool_result_is_read() -> None:
     """A real Anthropic SDK response uses objects, not dicts, for blocks."""
-    from agent_gantry.query import latest_activity, tool_names_used
+    from dotfetch.query import latest_activity, tool_names_used
 
     msgs = [
         _ObjMsg("user", "weather in Paris"),
@@ -1020,7 +1020,7 @@ class _RespItem:
 
 def test_responses_object_shaped_function_call_output_is_read() -> None:
     """The Responses SDK returns items as objects, not the dicts a caller builds."""
-    from agent_gantry.query import latest_activity, tool_names_used
+    from dotfetch.query import latest_activity, tool_names_used
 
     msgs = [
         _ObjMsg("user", "weather in Paris"),
@@ -1040,7 +1040,7 @@ def test_dict_shaped_agent_framework_function_call_contents_is_read() -> None:
     was silently skipped and the tool it called never made it into
     ``tools_already_used`` — the router kept resurfacing it.
     """
-    from agent_gantry.query import tool_names_used
+    from dotfetch.query import tool_names_used
 
     msg = {
         "role": "assistant",

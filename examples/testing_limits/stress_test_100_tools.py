@@ -9,7 +9,7 @@ installed).
 
 Run with::
 
-    pip install agent-gantry[nomic]
+    pip install dotfetch[nomic]
     python examples/testing_limits/stress_test_100_tools.py
 """
 
@@ -18,8 +18,8 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from agent_gantry import AgentGantry
-from agent_gantry.schema.config import AgentGantryConfig, EmbedderConfig
+from dotfetch import DotFetch
+from dotfetch.schema.config import DotFetchConfig, EmbedderConfig
 
 # Categories and Actions to generate 100 distinct tools
 CATEGORIES = [
@@ -76,27 +76,27 @@ def generate_tool_factory(name: str, description: str) -> Callable[..., str]:
 
 
 async def main():
-    print("--- Agent-Gantry Stress Test: 100 Tools ---")
+    print("--- dotfetch Stress Test: 100 Tools ---")
 
-    # 1. Configure Gantry with Nomic Embedder for high accuracy.
+    # 1. Configure dotfetch with Nomic Embedder for high accuracy.
     # NomicEmbedder imports sentence-transformers lazily (at sync), so probe for
-    # it here; without it the default gantry also drops to the hashing
+    # it here; without it the default fetcher also drops to the hashing
     # SimpleEmbedder, which struggles with 100 semantically distinct tools.
-    print("Initializing Agent-Gantry with Nomic Embedder...")
+    print("Initializing dotfetch with Nomic Embedder...")
     try:
         import sentence_transformers  # noqa: F401
 
-        config = AgentGantryConfig(
+        config = DotFetchConfig(
             embedder=EmbedderConfig(type="nomic", model="nomic-ai/nomic-embed-text-v1.5")
         )
-        gantry = AgentGantry(config=config)
+        fetcher = DotFetch(config=config)
     except ImportError:
-        print("Warning: 'sentence-transformers' not found (pip install agent-gantry[nomic]).")
+        print("Warning: 'sentence-transformers' not found (pip install dotfetch[nomic]).")
         print("Falling back to SimpleEmbedder.")
         print(
             "Note: Accuracy will be lower with SimpleEmbedder due to lack of semantic understanding."
         )
-        gantry = AgentGantry()
+        fetcher = DotFetch()
 
     try:
         # 2. Register 100 Tools
@@ -119,7 +119,7 @@ async def main():
 
                 # Create and register the tool
                 func = generate_tool_factory(tool_name, tool_desc)
-                gantry.register(
+                fetcher.register(
                     func,
                     examples=[
                         f"{base_desc.lower()} in {cat_desc}",
@@ -131,7 +131,7 @@ async def main():
                 expected_tools[tool_name] = tool_desc
 
         # Sync to vector store
-        count = await gantry.sync()
+        count = await fetcher.sync()
         end_reg = time.perf_counter()
         print(f"Registered {count} tools in {end_reg - start_reg:.2f}s")
 
@@ -163,7 +163,7 @@ async def main():
             print(f"\nQuery: '{query}'")
 
             # Retrieve top 2 tools
-            tools = await gantry.retrieve_tools(query, limit=2)
+            tools = await fetcher.retrieve_tools(query, limit=2)
 
             if not tools:
                 print("❌ Failed: No tools found.")
@@ -184,13 +184,13 @@ async def main():
         print(f"Test Duration: {end_test - start_test:.2f}s")
 
         if score == total:
-            print(">>> PERFECT SCORE! Agent-Gantry successfully routed 100 tools.")
+            print(">>> PERFECT SCORE! dotfetch successfully routed 100 tools.")
         else:
             print(
                 ">>> Some queries failed. This may happen with ambiguous queries or SimpleEmbedder."
             )
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 if __name__ == "__main__":

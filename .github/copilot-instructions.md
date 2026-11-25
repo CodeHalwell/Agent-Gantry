@@ -1,8 +1,8 @@
-# Agent-Gantry Copilot Instructions
+# dotfetch Copilot Instructions
 
 ## Project Overview
 
-Agent-Gantry is a **Universal Tool Orchestration Platform** for LLM-based agent systems. It provides intelligent, secure tool orchestration with semantic routing, multi-protocol support, and zero-trust security.
+dotfetch is a **Universal Tool Orchestration Platform** for LLM-based agent systems. It provides intelligent, secure tool orchestration with semantic routing, multi-protocol support, and zero-trust security.
 
 **Core Philosophy**: *Context is precious. Execution is sacred. Trust is earned.*
 
@@ -15,7 +15,7 @@ Agent-Gantry is a **Universal Tool Orchestration Platform** for LLM-based agent 
 ## Repository Structure
 
 ```
-agent_gantry/
+dotfetch/
 ├── core/                 # Main facade, registry, router, executor
 ├── schema/               # Pydantic data models (tools, queries, events, config)
 ├── adapters/             # Protocol adapters
@@ -52,17 +52,17 @@ pip install -e ".[all]"
 
 - **Framework**: pytest with async support (`pytest-asyncio`)
 - **Command**: `pytest` to run all tests
-- **Coverage**: `pytest --cov=agent_gantry` for coverage reports
+- **Coverage**: `pytest --cov=dotfetch` for coverage reports
 - **Location**: All tests in `tests/` directory
 - **Fixtures**: Defined in `tests/conftest.py`
 
-**Important**: Always run existing tests before and after changes. We use fixtures like `gantry` and `sample_tools` for consistent test setup.
+**Important**: Always run existing tests before and after changes. We use fixtures like `fetcher` and `sample_tools` for consistent test setup.
 
 **Async Tests**: All core functionality is async. Always use `@pytest.mark.asyncio` decorator:
 ```python
 @pytest.mark.asyncio
-async def test_retrieve_tools_returns_relevant_results(gantry, sample_tools):
-    tools = await gantry.retrieve_tools("calculate sum", limit=5)
+async def test_retrieve_tools_returns_relevant_results(fetcher, sample_tools):
+    tools = await fetcher.retrieve_tools("calculate sum", limit=5)
     assert len(tools) > 0
 ```
 
@@ -75,12 +75,12 @@ async def test_retrieve_tools_returns_relevant_results(gantry, sample_tools):
 
 Run before committing:
 ```bash
-ruff check agent_gantry/ examples/ scripts/ tests/
+ruff check dotfetch/ examples/ scripts/ tests/
 ```
 
-**Auto-fix**: Use `ruff check --fix agent_gantry/ examples/ scripts/ tests/` to automatically fix linting issues.
+**Auto-fix**: Use `ruff check --fix dotfetch/ examples/ scripts/ tests/` to automatically fix linting issues.
 
-**Format**: Use `ruff format agent_gantry/` to format code.
+**Format**: Use `ruff format dotfetch/` to format code.
 
 ### Building
 
@@ -146,12 +146,12 @@ python -m build
    
    from pydantic import BaseModel
    
-   from agent_gantry.schema.tool import ToolDefinition
+   from dotfetch.schema.tool import ToolDefinition
    ```
 
 ### Naming Conventions
 
-- **Classes**: PascalCase (`AgentGantry`, `ToolDefinition`)
+- **Classes**: PascalCase (`DotFetch`, `ToolDefinition`)
 - **Functions/Methods**: snake_case (`retrieve_tools`, `execute_tool`)
 - **Constants**: UPPER_SNAKE_CASE (`DEFAULT_LIMIT`, `MAX_RETRIES`)
 - **Private**: Prefix with underscore (`_internal_method`)
@@ -159,9 +159,9 @@ python -m build
 
 ### Tool Registration Pattern
 
-Always use the `@gantry.register()` decorator with tags for semantic search:
+Always use the `@fetcher.register()` decorator with tags for semantic search:
 ```python
-@gantry.register(tags=["weather", "api"], examples=["What's the weather in Tokyo?"])
+@fetcher.register(tags=["weather", "api"], examples=["What's the weather in Tokyo?"])
 def get_weather(city: str) -> str:
     """Get current weather for a city."""
     return f"Weather in {city}: 72°F and sunny"
@@ -174,16 +174,16 @@ def get_weather(city: str) -> str:
 **Standard Test Pattern**:
 ```python
 import pytest
-from agent_gantry import AgentGantry
+from dotfetch import DotFetch
 
 @pytest.mark.asyncio
-async def test_retrieve_tools_returns_relevant_results(gantry, sample_tools):
+async def test_retrieve_tools_returns_relevant_results(fetcher, sample_tools):
     """Test that retrieve_tools returns semantically relevant tools."""
     # Setup
-    await gantry.sync()
+    await fetcher.sync()
     
     # Execute
-    tools = await gantry.retrieve_tools("calculate sum", limit=5)
+    tools = await fetcher.retrieve_tools("calculate sum", limit=5)
     
     # Assert
     assert len(tools) > 0
@@ -191,7 +191,7 @@ async def test_retrieve_tools_returns_relevant_results(gantry, sample_tools):
 ```
 
 **Test Fixtures Available**:
-- `gantry`: Fresh `AgentGantry` instance
+- `fetcher`: Fresh `DotFetch` instance
 - `sample_tools`: List of `ToolDefinition` objects for testing
 
 **Running Tests**:
@@ -206,7 +206,7 @@ pytest tests/test_tool.py
 pytest tests/test_tool.py::TestToolDefinition::test_create_minimal_tool
 
 # With coverage
-pytest --cov=agent_gantry --cov-report=htmlurn await client.chat.completions.create(
+pytest --cov=dotfetch --cov-report=htmlurn await client.chat.completions.create(
         model="gpt-4o",
         messages=[{"role": "user", "content": prompt}],
         tools=tools  # Automatically injected
@@ -231,10 +231,10 @@ pytest --cov=agent_gantry --cov-report=htmlurn await client.chat.completions.cre
 Example:
 ```python
 import pytest
-from agent_gantry import AgentGantry
+from dotfetch import DotFetch
 
 @pytest.mark.asyncio
-async def test_retrieve_tools_returns_relevant_results(gantry, sample_tools):
+async def test_retrieve_tools_returns_relevant_results(fetcher, sample_tools):
     """Test that retrieve_tools returns semantically relevant tools."""
     # Test implementation
     ...
@@ -244,7 +244,7 @@ async def test_retrieve_tools_returns_relevant_results(gantry, sample_tools):
 
 ### Adding a New Tool Schema Field
 
-1. Update the Pydantic model in `agent_gantry/schema/tool.py`
+1. Update the Pydantic model in `dotfetch/schema/tool.py`
 2. Add migration logic if needed (for backward compatibility)
 3. Update tests in `tests/test_tool.py`
 4. Update documentation
@@ -260,7 +260,7 @@ async def test_retrieve_tools_returns_relevant_results(gantry, sample_tools):
 **Adapter Pattern Example**:
 ```python
 # In adapters/vector_stores/my_store.py
-from agent_gantry.adapters.vector_stores.base import VectorStoreAdapter
+from dotfetch.adapters.vector_stores.base import VectorStoreAdapter
 
 class MyVectorStore(VectorStoreAdapter):
     def __init__(self, config: dict[str, Any]) -> None:
@@ -279,7 +279,7 @@ class MyVectorStore(VectorStoreAdapter):
 ### Adding Framework Integration
 
 1. Create new module in `integrations/`
-2. Follow the pattern of wrapping AgentGantry for the framework
+2. Follow the pattern of wrapping DotFetch for the framework
 3. Add integration tests in `tests/test_framework_adapters.py` or new test file
 4. Create example in `examples/agent_frameworks/`
 5. Update `integrations/README.md` with usage example

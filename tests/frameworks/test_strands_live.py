@@ -1,6 +1,6 @@
 """Tests for the deep, per-turn Strands Agents dynamic-tool hook.
 
-Exercises :class:`GantryStrandsToolHook` against the *real* installed
+Exercises :class:`DotFetchStrandsToolHook` against the *real* installed
 ``strands`` package. Strands fires a ``BeforeModelCallEvent`` immediately
 before every model call and only reads ``agent.tool_registry`` for the tool
 specs sent to the model *afterward* — so a hook that swaps the registry during
@@ -24,14 +24,14 @@ pytest.importorskip("strands")
 from strands import Agent
 from strands.hooks import BeforeModelCallEvent
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-from agent_gantry.strands import StrandsAdapter
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
+from dotfetch.strands import StrandsAdapter
 
 
 @pytest.fixture
-async def gantry():
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+async def fetcher():
+    g = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
     @g.register(tags=["weather", "forecast"])
     def get_weather(city: str) -> str:
@@ -70,16 +70,16 @@ async def _fire_before_model_call(hook, agent: Agent) -> None:
     await hook._on_before_model_call(event)
 
 
-async def test_hook_is_real_hook_provider(gantry):
+async def test_hook_is_real_hook_provider(fetcher):
     from strands.hooks import HookProvider
 
-    hook = StrandsAdapter(gantry).tool_hook(limit=2)
+    hook = StrandsAdapter(fetcher).tool_hook(limit=2)
     assert isinstance(hook, HookProvider)
 
 
-async def test_agent_construction_wires_the_hook(gantry):
-    """``StrandsAdapter(gantry).agent(...)`` builds a real Agent with no static tools."""
-    agent = StrandsAdapter(gantry).agent(limit=2, callback_handler=None)
+async def test_agent_construction_wires_the_hook(fetcher):
+    """``StrandsAdapter(fetcher).agent(...)`` builds a real Agent with no static tools."""
+    agent = StrandsAdapter(fetcher).agent(limit=2, callback_handler=None)
 
     assert isinstance(agent, Agent)
     # No statically registered tools; the hook injects them per turn.
@@ -87,8 +87,8 @@ async def test_agent_construction_wires_the_hook(gantry):
     assert agent.hooks.has_callbacks()
 
 
-async def test_before_model_call_injects_tools_for_weather_turn(gantry):
-    hook = StrandsAdapter(gantry).tool_hook(limit=2)
+async def test_before_model_call_injects_tools_for_weather_turn(fetcher):
+    hook = StrandsAdapter(fetcher).tool_hook(limit=2)
     agent = _agent_with_user_text("what is the weather forecast for the city")
 
     await _fire_before_model_call(hook, agent)
@@ -104,9 +104,9 @@ async def test_before_model_call_injects_tools_for_weather_turn(gantry):
     assert "city" in schema["required"]
 
 
-async def test_before_model_call_reselects_across_turns(gantry):
+async def test_before_model_call_reselects_across_turns(fetcher):
     """Each model call re-derives the query from the latest message and swaps tools."""
-    hook = StrandsAdapter(gantry).tool_hook(limit=1)
+    hook = StrandsAdapter(fetcher).tool_hook(limit=1)
 
     weather_agent = _agent_with_user_text("weather forecast for the city")
     await _fire_before_model_call(hook, weather_agent)
@@ -123,9 +123,9 @@ async def test_before_model_call_reselects_across_turns(gantry):
     assert names == {"send_email"}, f"expected only send_email, got {names}"
 
 
-async def test_tool_call_through_swapped_registry_executes_via_gantry(gantry):
-    """A tool injected by the hook actually routes execution through gantry.execute."""
-    hook = StrandsAdapter(gantry).tool_hook(limit=1)
+async def test_tool_call_through_swapped_registry_executes_via_fetcher(fetcher):
+    """A tool injected by the hook actually routes execution through fetcher.execute."""
+    hook = StrandsAdapter(fetcher).tool_hook(limit=1)
     agent = _agent_with_user_text("send an email to a recipient")
 
     await _fire_before_model_call(hook, agent)
@@ -135,8 +135,8 @@ async def test_tool_call_through_swapped_registry_executes_via_gantry(gantry):
     assert result == "sent:boss@x.com"
 
 
-async def test_empty_query_leaves_registry_untouched(gantry):
-    hook = StrandsAdapter(gantry).tool_hook(limit=2)
+async def test_empty_query_leaves_registry_untouched(fetcher):
+    hook = StrandsAdapter(fetcher).tool_hook(limit=2)
     agent = Agent(tools=[], callback_handler=None, messages=[])
 
     await _fire_before_model_call(hook, agent)
@@ -144,7 +144,7 @@ async def test_empty_query_leaves_registry_untouched(gantry):
     assert list(agent.tool_registry.registry) == []
 
 
-async def test_empty_query_retracts_stale_tools(gantry):
+async def test_empty_query_retracts_stale_tools(fetcher):
     """A turn with no query signal retracts the previous turn's tools.
 
     Regression test: an early return on an empty query used to leave the
@@ -152,7 +152,7 @@ async def test_empty_query_retracts_stale_tools(gantry):
     instead of retracting them — inconsistent with the other stateful live
     providers (e.g. a plugin-refresh provider clears its plugin on a blank query).
     """
-    hook = StrandsAdapter(gantry).tool_hook(limit=1)
+    hook = StrandsAdapter(fetcher).tool_hook(limit=1)
     agent = _agent_with_user_text("weather forecast for the city")
     await _fire_before_model_call(hook, agent)
     assert set(agent.tool_registry.registry) == {"get_weather"}
@@ -162,25 +162,25 @@ async def test_empty_query_retracts_stale_tools(gantry):
     assert list(agent.tool_registry.registry) == []
 
 
-async def test_tool_failure_is_an_error_tool_result(gantry):
-    """A failed Gantry call returns an error ``ToolResult`` the model can read.
+async def test_tool_failure_is_an_error_tool_result(fetcher):
+    """A failed dotfetch call returns an error ``ToolResult`` the model can read.
 
     Both a direct call and ``.stream()`` (what the Strands agent loop uses for
     a model-issued call) get ``{"status": "error", ...}`` with the
     ``<type>: <message>`` text; ``error_mode="raise"`` raises instead, which
     ``.stream()`` then turns into Strands' own error result.
     """
-    from agent_gantry.integrations.frameworks.base import ToolExecutionError
-    from agent_gantry.strands import StrandsAdapter
+    from dotfetch.integrations.frameworks.base import ToolExecutionError
+    from dotfetch.strands import StrandsAdapter
 
-    @gantry.register(tags=["danger"])
+    @fetcher.register(tags=["danger"])
     def explode() -> str:
         "Always raises."
         raise RuntimeError("boom")
 
-    await gantry.sync()
+    await fetcher.sync()
 
-    [tool] = await StrandsAdapter(gantry).select("always raises", limit=1)
+    [tool] = await StrandsAdapter(fetcher).select("always raises", limit=1)
     direct = await tool()
     assert direct["status"] == "error"
     assert direct["content"][0]["text"] == "RuntimeError: boom"
@@ -191,7 +191,7 @@ async def test_tool_failure_is_an_error_tool_result(gantry):
     assert events[-1].tool_result["status"] == "error"
     assert events[-1].tool_result["content"][0]["text"] == "RuntimeError: boom"
 
-    [raising] = await StrandsAdapter(gantry, error_mode="raise").select("always raises", limit=1)
+    [raising] = await StrandsAdapter(fetcher, error_mode="raise").select("always raises", limit=1)
     with pytest.raises(ToolExecutionError):
         await raising()
     events = [event async for event in raising.stream(tool_use, state)]

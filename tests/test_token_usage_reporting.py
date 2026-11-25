@@ -8,7 +8,7 @@ these layers target returns a ``usage`` block, so the actual cost of each call
 is now recorded.
 
 Savings are deliberately *not* inferred here: that needs a real baseline (the
-same prompt with every tool injected), and ``agent_gantry.metrics.token_usage``
+same prompt with every tool injected), and ``dotfetch.metrics.token_usage``
 refuses approximate estimators so reported numbers stay auditable.
 """
 
@@ -20,8 +20,8 @@ from typing import Any
 
 import pytest
 
-from agent_gantry import AgentGantry
-from agent_gantry.metrics.token_usage import ProviderUsage, calculate_token_savings
+from dotfetch import DotFetch
+from dotfetch.metrics.token_usage import ProviderUsage, calculate_token_savings
 
 
 class _RecordingTelemetry:
@@ -115,19 +115,19 @@ class TestCacheTokenAccounting:
 
 class TestDecoratorRecordsUsage:
     @pytest.fixture
-    def gantry(self) -> AgentGantry:
-        return AgentGantry(telemetry=_RecordingTelemetry())
+    def fetcher(self) -> DotFetch:
+        return DotFetch(telemetry=_RecordingTelemetry())
 
-    async def test_usage_is_reported_after_the_call(self, gantry: AgentGantry) -> None:
-        from agent_gantry.integrations.semantic_tools import with_semantic_tools
+    async def test_usage_is_reported_after_the_call(self, fetcher: DotFetch) -> None:
+        from dotfetch.integrations.semantic_tools import with_semantic_tools
 
-        @with_semantic_tools(gantry)
+        @with_semantic_tools(fetcher)
         async def generate(prompt: str, *, tools: list[Any] | None = None) -> Any:
             return _OpenAIResponse()
 
         await generate("what is the weather")
 
-        recorded = gantry.telemetry.usages
+        recorded = fetcher.telemetry.usages
         assert len(recorded) == 1
         usage, model = recorded[0]
         assert usage.prompt_tokens == 420
@@ -135,50 +135,50 @@ class TestDecoratorRecordsUsage:
         assert model == "gpt-4.1"
 
     async def test_a_response_without_usage_is_not_an_error(
-        self, gantry: AgentGantry
+        self, fetcher: DotFetch
     ) -> None:
-        from agent_gantry.integrations.semantic_tools import with_semantic_tools
+        from dotfetch.integrations.semantic_tools import with_semantic_tools
 
-        @with_semantic_tools(gantry)
+        @with_semantic_tools(fetcher)
         async def generate(prompt: str, *, tools: list[Any] | None = None) -> str:
             return "a plain string response"
 
         assert await generate("hello") == "a plain string response"
-        assert gantry.telemetry.usages == []
+        assert fetcher.telemetry.usages == []
 
     async def test_accounting_failure_never_breaks_the_call(
-        self, gantry: AgentGantry
+        self, fetcher: DotFetch
     ) -> None:
         """Telemetry is observability; it must not take a user's request down."""
-        from agent_gantry.integrations.semantic_tools import with_semantic_tools
+        from dotfetch.integrations.semantic_tools import with_semantic_tools
 
         async def exploding(*args: Any, **kwargs: Any) -> None:
             raise RuntimeError("telemetry backend down")
 
-        gantry.telemetry.record_token_usage = exploding  # type: ignore[method-assign]
+        fetcher.telemetry.record_token_usage = exploding  # type: ignore[method-assign]
 
-        @with_semantic_tools(gantry)
+        @with_semantic_tools(fetcher)
         async def generate(prompt: str, *, tools: list[Any] | None = None) -> Any:
             return _OpenAIResponse()
 
         assert isinstance(await generate("hello"), _OpenAIResponse)
 
-    async def test_dict_shaped_usage_is_understood(self, gantry: AgentGantry) -> None:
-        from agent_gantry.integrations.semantic_tools import with_semantic_tools
+    async def test_dict_shaped_usage_is_understood(self, fetcher: DotFetch) -> None:
+        from dotfetch.integrations.semantic_tools import with_semantic_tools
 
-        @with_semantic_tools(gantry)
+        @with_semantic_tools(fetcher)
         async def generate(prompt: str, *, tools: list[Any] | None = None) -> dict[str, Any]:
             return {"model": "x", "usage": {"prompt_tokens": 10, "completion_tokens": 2}}
 
         await generate("hello")
 
-        assert gantry.telemetry.usages[0][0].prompt_tokens == 10
+        assert fetcher.telemetry.usages[0][0].prompt_tokens == 10
 
 
-class TestGantryExposesTelemetry:
+class TestDotFetchExposesTelemetry:
     def test_telemetry_is_reachable_without_touching_privates(self) -> None:
         adapter = _RecordingTelemetry()
-        assert AgentGantry(telemetry=adapter).telemetry is adapter
+        assert DotFetch(telemetry=adapter).telemetry is adapter
 
 
 class TestSyncWrapperRecordsUsage:
@@ -190,32 +190,32 @@ class TestSyncWrapperRecordsUsage:
     """
 
     def test_sync_wrapper_reports_usage(self) -> None:
-        from agent_gantry.integrations.semantic_tools import with_semantic_tools
+        from dotfetch.integrations.semantic_tools import with_semantic_tools
 
-        gantry = AgentGantry(telemetry=_RecordingTelemetry())
+        fetcher = DotFetch(telemetry=_RecordingTelemetry())
 
-        @with_semantic_tools(gantry)
+        @with_semantic_tools(fetcher)
         def generate(prompt: str, *, tools: list[Any] | None = None) -> Any:
             return _OpenAIResponse()
 
         generate("what is the weather")
 
-        assert len(gantry.telemetry.usages) == 1
-        usage, model = gantry.telemetry.usages[0]
+        assert len(fetcher.telemetry.usages) == 1
+        usage, model = fetcher.telemetry.usages[0]
         assert usage.prompt_tokens == 420
         assert model == "gpt-4.1"
 
     def test_sync_accounting_failure_never_breaks_the_call(self) -> None:
-        from agent_gantry.integrations.semantic_tools import with_semantic_tools
+        from dotfetch.integrations.semantic_tools import with_semantic_tools
 
-        gantry = AgentGantry(telemetry=_RecordingTelemetry())
+        fetcher = DotFetch(telemetry=_RecordingTelemetry())
 
         async def exploding(*args: Any, **kwargs: Any) -> None:
             raise RuntimeError("telemetry backend down")
 
-        gantry.telemetry.record_token_usage = exploding  # type: ignore[method-assign]
+        fetcher.telemetry.record_token_usage = exploding  # type: ignore[method-assign]
 
-        @with_semantic_tools(gantry)
+        @with_semantic_tools(fetcher)
         def generate(prompt: str, *, tools: list[Any] | None = None) -> Any:
             return _OpenAIResponse()
 
@@ -229,30 +229,30 @@ class TestModelNameExtraction:
         Falling straight through to the dialect recorded "openai" in place of
         the real model name. Reported on PR #367.
         """
-        from agent_gantry.integrations.semantic_tools import with_semantic_tools
+        from dotfetch.integrations.semantic_tools import with_semantic_tools
 
-        gantry = AgentGantry(telemetry=_RecordingTelemetry())
+        fetcher = DotFetch(telemetry=_RecordingTelemetry())
 
-        @with_semantic_tools(gantry)
+        @with_semantic_tools(fetcher)
         async def generate(prompt: str, *, tools: list[Any] | None = None) -> dict[str, Any]:
             return {"model": "gpt-4.1-mini", "usage": {"prompt_tokens": 10}}
 
         await generate("hello")
 
-        assert gantry.telemetry.usages[0][1] == "gpt-4.1-mini"
+        assert fetcher.telemetry.usages[0][1] == "gpt-4.1-mini"
 
     async def test_missing_model_still_falls_back_to_the_dialect(self) -> None:
-        from agent_gantry.integrations.semantic_tools import with_semantic_tools
+        from dotfetch.integrations.semantic_tools import with_semantic_tools
 
-        gantry = AgentGantry(telemetry=_RecordingTelemetry())
+        fetcher = DotFetch(telemetry=_RecordingTelemetry())
 
-        @with_semantic_tools(gantry)
+        @with_semantic_tools(fetcher)
         async def generate(prompt: str, *, tools: list[Any] | None = None) -> dict[str, Any]:
             return {"usage": {"prompt_tokens": 10}}
 
         await generate("hello")
 
-        assert gantry.telemetry.usages[0][1] == "openai"
+        assert fetcher.telemetry.usages[0][1] == "openai"
 
 
 class _GeminiUsage:
@@ -282,16 +282,16 @@ class TestResponseUsageLookup:
         assert ProviderUsage.from_response_usage(type("R", (), {"usage": object()})()) is None
 
     async def test_decorator_records_gemini_usage(self) -> None:
-        from agent_gantry.integrations.semantic_tools import with_semantic_tools
+        from dotfetch.integrations.semantic_tools import with_semantic_tools
 
-        gantry = AgentGantry(telemetry=_RecordingTelemetry())
+        fetcher = DotFetch(telemetry=_RecordingTelemetry())
 
-        @with_semantic_tools(gantry, dialect="gemini")
+        @with_semantic_tools(fetcher, dialect="gemini")
         async def generate(prompt: str, *, tools: list[Any] | None = None) -> Any:
             return type("R", (), {"usage_metadata": _GeminiUsage()})()
 
         await generate("hello")
 
-        usage, model = gantry.telemetry.usages[0]
+        usage, model = fetcher.telemetry.usages[0]
         assert usage.prompt_tokens == 30
         assert model == "gemini"

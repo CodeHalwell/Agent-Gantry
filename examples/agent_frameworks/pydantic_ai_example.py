@@ -1,6 +1,6 @@
-"""Pydantic AI + Agent-Gantry integration example.
+"""Pydantic AI + dotfetch integration example.
 
-Walks through each way Gantry plugs into Pydantic AI:
+Walks through each way dotfetch plugs into Pydantic AI:
 
 1. **Static tools** -- ``adapter.select(query)`` selects once and returns native
    ``pydantic_ai.Tool`` objects for ``Agent(model, tools=[...])``.
@@ -9,11 +9,11 @@ Walks through each way Gantry plugs into Pydantic AI:
    because the next selection reads the tool result.
 3. **Approval** -- a ``requires_confirmation`` tool pauses the run with Pydantic
    AI's ``DeferredToolRequests``; approving it via ``DeferredToolResults``
-   executes it exactly once through ``gantry.execute``.
-4. **Run context** -- a Gantry tool reads ``RunContext.deps`` with
+   executes it exactly once through ``fetcher.execute``.
+4. **Run context** -- a dotfetch tool reads ``RunContext.deps`` with
    ``current_run_context()``.
 5. **Tool search** -- ``adapter.capability(mode="search")`` hides the catalogue
-   behind Pydantic AI's ``search_tools``, backed by Gantry's semantic router.
+   behind Pydantic AI's ``search_tools``, backed by dotfetch's semantic router.
 
 Everything runs **offline**: ``FunctionModel`` scripts the model's tool calls,
 so no API key is needed. Swap in a real model string (``"openai:gpt-5.5"``,
@@ -21,7 +21,7 @@ so no API key is needed. Swap in a real model string (``"openai:gpt-5.5"``,
 
 Install:
 
-    pip install 'agent-gantry[pydantic-ai]'
+    pip install 'dotfetch[pydantic-ai]'
 
 Run:
 
@@ -34,8 +34,8 @@ import asyncio
 import os
 from dataclasses import dataclass
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
 
 os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
 
@@ -47,20 +47,20 @@ class Deps:
     user: str
 
 
-def build_gantry() -> AgentGantry:
-    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
+def build_fetcher() -> DotFetch:
+    fetcher = DotFetch(embedder=SimpleEmbedder(dimension=256))
 
-    @gantry.register(tags=["weather"], examples=["what's the weather in London"])
+    @fetcher.register(tags=["weather"], examples=["what's the weather in London"])
     def get_weather(city: str) -> str:
         """Get the current weather forecast for a city."""
         return f"It is 21C and sunny in {city}."
 
-    @gantry.register(tags=["crm"], examples=["find the customer record for Jo"])
+    @fetcher.register(tags=["crm"], examples=["find the customer record for Jo"])
     def lookup_customer(name: str) -> str:
         """Look up a customer record by name."""
         return f"Customer {name} found. Next step: send an email message to jo@example.com"
 
-    @gantry.register(
+    @fetcher.register(
         tags=["email"],
         examples=["email the team about the delay"],
         requires_confirmation=True,
@@ -69,15 +69,15 @@ def build_gantry() -> AgentGantry:
         """Send an email message to a recipient."""
         return f"Email sent to {to}."
 
-    @gantry.register(tags=["identity"], examples=["who am I signed in as"])
+    @fetcher.register(tags=["identity"], examples=["who am I signed in as"])
     def whoami() -> str:
         """Return the name of the signed-in user."""
-        from agent_gantry.pydantic_ai import current_run_context
+        from dotfetch.pydantic_ai import current_run_context
 
         ctx = current_run_context()
         return f"You are signed in as {ctx.deps.user}." if ctx else "Unknown user."
 
-    return gantry
+    return fetcher
 
 
 def scripted(*steps):
@@ -103,20 +103,20 @@ def scripted(*steps):
 
 
 async def main() -> None:
-    gantry = build_gantry()
+    fetcher = build_fetcher()
     try:
-        await gantry.sync()
+        await fetcher.sync()
 
         try:
             from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults
         except ImportError as exc:
             print(
                 f"Pydantic AI is not installed ({exc}).\n"
-                "Install it with `pip install 'agent-gantry[pydantic-ai]'` to run this example."
+                "Install it with `pip install 'dotfetch[pydantic-ai]'` to run this example."
             )
             return
 
-        adapter = gantry.framework("pydantic_ai")
+        adapter = fetcher.framework("pydantic_ai")
 
         # 1. Static tools: select once ------------------------------------- #
         tools = await adapter.select("what's the weather in Paris?", limit=1)
@@ -133,7 +133,7 @@ async def main() -> None:
         print(f"[per-turn] tools offered at step 1: {model.seen[0]}")
         print(f"[per-turn] tools offered at step 2: {model.seen[1]}  <- after the lookup result\n")
 
-        # 3. Approval: Gantry's confirmation gate -> DeferredToolRequests ---- #
+        # 3. Approval: dotfetch's confirmation gate -> DeferredToolRequests ---- #
         agent = Agent(
             scripted([("send_email", {"to": "jo@example.com"})]),
             output_type=[str, DeferredToolRequests],
@@ -149,7 +149,7 @@ async def main() -> None:
         )
         print(f"[approval] approved -> {resumed.output}\n")
 
-        # 4. Run context: deps reach the Gantry handler -------------------- #
+        # 4. Run context: deps reach the dotfetch handler -------------------- #
         agent = Agent(
             scripted([("whoami", {})]),
             deps_type=Deps,
@@ -158,7 +158,7 @@ async def main() -> None:
         result = await agent.run("who am I signed in as?", deps=Deps(user="Dan"))
         print(f"[deps] {result.output}\n")
 
-        # 5. Tool search: Gantry ranks what search_tools returns ------------ #
+        # 5. Tool search: dotfetch ranks what search_tools returns ------------ #
         model = scripted(
             [("search_tools", {"queries": ["weather forecast"]})],
             [("get_weather", {"city": "Leeds"})],
@@ -177,11 +177,11 @@ async def main() -> None:
         print(f"[search] {result.output}")
 
         print(
-            "\nEvery tool call above went through gantry.execute, so the security "
+            "\nEvery tool call above went through fetcher.execute, so the security "
             "policy, retries, timeouts and circuit breakers all applied."
         )
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 if __name__ == "__main__":

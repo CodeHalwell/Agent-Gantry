@@ -1,0 +1,3764 @@
+"""
+Main DotFetch facade.
+
+Primary entry point for the dotfetch library.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import importlib
+import inspect
+import logging
+import uuid
+import warnings
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from time import perf_counter
+from typing import TYPE_CHECKING, Any, Literal, overload
+
+from dotfetch.adapters.embedders.base import embed_query
+from dotfetch.adapters.embedders.openai import OpenAIEmbedder
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
+from dotfetch.adapters.rerankers.base import rerank_texts
+from dotfetch.adapters.selectors.base import SelectorFallbackError
+from dotfetch.core.a2a_manager import A2AManager
+from dotfetch.core.chunks import (
+    chunk_parent,
+    delete_skill_chunks,
+    delete_tool_chunks,
+    sync_skill_chunks,
+)
+from dotfetch.core.executor import ExecutionEngine
+from dotfetch.core.factories import (
+    build_embedder,
+    build_reranker,
+    build_selector,
+    build_telemetry,
+    build_vector_store,
+)
+from dotfetch.core.registry import ToolRegistry, reject_reserved_namespace
+from dotfetch.core.router import (
+    UNAVAILABLE_SERVER_PENALTY,
+    RoutingWeights,
+    SemanticRouter,
+    conversation_penalty,
+    mmr_order,
+)
+from dotfetch.core.security import SecurityPolicy
+from dotfetch.schema.a2a import A2AAgentDefinition
+from dotfetch.schema.config import (
+    A2AAgentConfig,
+    DotFetchConfig,
+    EmbedderConfig,
+    MCPServerConfig,
+)
+from dotfetch.schema.execution import (
+    BatchToolCall,
+    BatchToolResult,
+    ExecutionStatus,
+    ToolCall,
+    ToolCallEvent,
+    ToolResult,
+)
+from dotfetch.schema.introspection import _callable_target, build_parameters_schema
+from dotfetch.schema.mcp import MCPServerDefinition
+from dotfetch.schema.query import (
+    ContextEntry,
+    ContextResult,
+    ConversationContext,
+    RetrievalResult,
+    ScoredTool,
+    ToolQuery,
+)
+from dotfetch.schema.selection import SelectionCandidate
+from dotfetch.schema.skill import Skill, SkillSearchResult
+from dotfetch.schema.tool import (
+    A2A_AGENT_NAMESPACE,
+    MCP_SERVER_NAMESPACE,
+    ToolCapability,
+    ToolDefinition,
+    chunk_namespace,
+    is_reserved_namespace,
+)
+from dotfetch.utils.async_utils import is_coroutine_function
+
+if TYPE_CHECKING:
+    from dotfetch.adapters.embedders.base import EmbeddingAdapter
+    from dotfetch.adapters.rerankers.base import RerankerAdapter
+    from dotfetch.adapters.selectors.base import SelectorAdapter
+    from dotfetch.adapters.vector_stores.base import VectorStoreAdapter
+    from dotfetch.core.rate_limiter import RateLimiter
+    from dotfetch.integrations import frameworks as framework_adapters
+    from dotfetch.integrations.agent_framework_adapter import AgentFrameworkAdapter
+    from dotfetch.integrations.frameworks.base import BaseFrameworkAdapter
+    from dotfetch.observability.telemetry import TelemetryAdapter
+
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _SelectorFallback:
+    """A selector is configured, and the semantic router is answering instead."""
+
+    reason: str
+
+#: Ceiling on how many skills are read into memory for selection. Well above
+#: any selector's own ``max_candidates`` (512 by default), so in practice the
+#: selector declines first; this only stops an enormous store being paged into
+#: memory before that happens.
+_MAX_SELECTABLE_SKILLS = 10_000
+
+# The Streamable HTTP endpoint default. Named so ``serve_mcp`` can tell a
+# caller's own path from the default it never asked for.
+_DEFAULT_MCP_PATH = "/mcp"
+
+
+async def _close_adapter(adapter: Any) -> None:
+    """Call an adapter's ``aclose()`` or ``close()`` if it has one, sync or async."""
+    for name in ("aclose", "close"):
+        method = getattr(adapter, name, None)
+        if method is None:
+            continue
+        try:
+            result = method()
+            if inspect.isawaitable(result):
+                await result
+        except Exception:
+            logger.debug(f"Error closing {type(adapter).__name__}", exc_info=True)
+        return
+
+
+def _check_diversity(diversity_factor: float) -> None:
+    """Reject a diversity factor outside ``[0, 1]``."""
+    if not 0.0 <= diversity_factor <= 1.0:
+        raise ValueError(f"diversity_factor must be between 0 and 1, got {diversity_factor!r}")
+
+
+class DotFetch:
+    """
+    Main facade for dotfetch.
+
+    Provides intelligent, secure tool orchestration for LLM-based agent systems.
+
+    Example:
+        fetcher = DotFetch()
+
+        @fetcher.register
+        def my_tool(x: int) -> str:
+            '''Does something useful.'''
+            return str(x * 2)
+
+        tools = await fetcher.retrieve_tools("double a number")
+    """
+
+    def __init__(
+        self,
+        config: DotFetchConfig | None = None,
+        vector_store: VectorStoreAdapter | None = None,
+        embedder: EmbeddingAdapter | None = None,
+        reranker: RerankerAdapter | None = None,
+        telemetry: TelemetryAdapter | None = None,
+        security_policy: SecurityPolicy | None = None,
+        modules: Sequence[str] | None = None,
+        module_attr: str = "tools",
+        # Appended rather than slotted in beside ``reranker`` where it belongs
+        # by subject: this signature is public and takes positional arguments,
+        # so inserting a parameter mid-list silently rebinds every later one.
+        # A caller passing telemetry fifth would have had it stored as the
+        # selector, and retrieval would then have called ``.select()`` on it.
+        selector: SelectorAdapter | None = None,
+        # Keyword-only from here on, for the reason above: nothing added after
+        # this point can ever shift what a positional argument means.
+        *,
+        on_selector_fallback: Literal["semantic", "raise"] | None = None,
+    ) -> None:
+        """
+        Initialize DotFetch.
+
+        Args:
+            config: Configuration for the fetcher instance
+            vector_store: Custom vector store adapter
+            embedder: Custom embedding adapter
+            reranker: Custom reranker adapter
+            telemetry: Custom telemetry adapter
+            security_policy: Security policy for permission checks
+            selector: Custom selector adapter. A selector replaces semantic
+                matching: the catalogue is put to a decision model directly,
+                with no embeddings and no vector search. Retrieval falls back
+                to the semantic router whenever it cannot answer, and the
+                result says so (``RetrievalResult.selector_fallback``). Last in
+                the list to keep existing positional calls meaning what they
+                did; pass it by keyword.
+            on_selector_fallback: What retrieval does when the selector is
+                asked and does not answer. ``"semantic"`` fails open to the
+                semantic router (the default, from
+                ``config.selector.on_fallback``); the result then says so in
+                ``RetrievalResult.selector_fallback``. ``"raise"`` raises
+                :class:`~dotfetch.adapters.selectors.base.SelectorFallbackError`
+                instead, for evals and CI that must not pass on a different
+                backend. Keyword-only.
+
+        Raises:
+            ValueError: If ``on_selector_fallback`` is not one of the two values.
+        """
+        self._config = config or DotFetchConfig()
+        self._vector_store = vector_store or build_vector_store(self._config.vector_store)
+        self._embedder = embedder or build_embedder(self._config.embedder)
+        self._reranker = reranker or build_reranker(self._config.reranker)
+        self._selector = selector or build_selector(self._config.selector)
+        self._on_selector_fallback = on_selector_fallback or self._config.selector.on_fallback
+        if self._on_selector_fallback not in ("semantic", "raise"):
+            raise ValueError(
+                "on_selector_fallback must be 'semantic' or 'raise', "
+                f"got {on_selector_fallback!r}"
+            )
+        # The reason last warned about, per catalogue kind, so a selector that
+        # cannot answer says so once rather than on every retrieval.
+        self._selector_fallback_warned: dict[str, str] = {}
+        self._telemetry = telemetry or build_telemetry(self._config.telemetry)
+        self._security_policy = security_policy or SecurityPolicy()
+        self._registry = ToolRegistry()
+
+        # SyncManager has no optional-dependency requirements and the MCP
+        # manager depends on it, so build it before wiring MCP support.
+        from dotfetch.core.sync_manager import SyncManager
+
+        self._sync_manager = SyncManager(
+            vector_store=self._vector_store,
+            embedder=self._embedder,
+            registry=self._registry,
+            chunk_long_text=self._config.routing.chunk_long_text,
+        )
+
+        self._create_mcp_components()
+        self._a2a_manager = A2AManager(self._vector_store, self._embedder, self._sync_manager)
+        self._llm_client = self._create_llm_client()
+        self._router = self._create_router()
+        self._rate_limiter = self._create_rate_limiter()
+        self._executor = self._create_executor()
+        self._init_runtime_state(modules, module_attr)
+
+    def _create_mcp_components(self) -> None:
+        """Wire the optional MCP registry/router/manager trio.
+
+        MCP is an optional dependency: if the ``mcp`` package is unavailable the
+        three attributes stay ``None`` and MCP features degrade gracefully. The
+        manager depends on :attr:`_sync_manager`, so this runs after it exists.
+        """
+        self._mcp_registry = None
+        self._mcp_router = None
+        self._mcp_manager = None
+
+        # Tier 1 — the optional 'mcp' package being absent is the expected, quiet
+        # path: log at DEBUG and leave MCP disabled.
+        try:
+            from dotfetch.core.mcp_manager import MCPManager
+            from dotfetch.core.mcp_registry import MCPRegistry
+            from dotfetch.core.mcp_router import MCPRouter
+        except ImportError:
+            logger.debug("MCP support not available (install 'mcp' package to enable)")
+            return
+
+        # Tier 2 — with the package importable, a construction failure is
+        # unexpected (broken/partial install). Surface it at WARNING rather than
+        # hiding it at DEBUG, but still degrade to no-MCP across the board so a
+        # bad MCP stack never crashes DotFetch() construction.
+        try:
+            self._mcp_registry = MCPRegistry()
+            self._mcp_router = MCPRouter(
+                vector_store=self._vector_store,
+                embedder=self._embedder,
+                registry=self._mcp_registry,
+            )
+            self._mcp_manager = MCPManager(
+                vector_store=self._vector_store,
+                embedder=self._embedder,
+                registry=self._mcp_registry,
+                sync_manager=self._sync_manager,
+            )
+        except Exception:
+            logger.warning("MCP components failed to initialize; MCP disabled.", exc_info=True)
+            self._mcp_registry = None
+            self._mcp_router = None
+            self._mcp_manager = None
+
+    def _create_llm_client(self) -> Any:
+        """Build the optional LLM client used for intent classification."""
+        if not self._config.routing.use_llm_for_intent:
+            return None
+        from dotfetch.adapters.llm_client import LLMClient
+
+        try:
+            return LLMClient(self._config.routing.llm)
+        except Exception as e:
+            logger.warning(f"Failed to initialize LLM client for intent classification: {e}")
+            return None
+
+    def _create_router(self) -> SemanticRouter:
+        """Build the semantic router from routing config."""
+        return SemanticRouter(
+            vector_store=self._vector_store,
+            embedder=self._embedder,
+            reranker=self._reranker,
+            weights=RoutingWeights(**self._config.routing.weights),
+            llm_client=self._llm_client,
+            use_llm_for_intent=self._config.routing.use_llm_for_intent,
+        )
+
+    def _create_rate_limiter(self) -> RateLimiter | None:
+        """Build the optional rate limiter from execution config."""
+        if not self._config.execution.rate_limit.enabled:
+            return None
+        from dotfetch.core.rate_limiter import RateLimiter
+
+        return RateLimiter(self._config.execution.rate_limit)
+
+    def _create_executor(self) -> ExecutionEngine:
+        """Build the execution engine from execution config."""
+        return ExecutionEngine(
+            registry=self._registry,
+            default_timeout_ms=self._config.execution.default_timeout_ms,
+            max_retries=self._config.execution.max_retries,
+            circuit_breaker_threshold=self._config.execution.circuit_breaker_threshold,
+            circuit_breaker_timeout_s=self._config.execution.circuit_breaker_timeout_s,
+            security_policy=self._security_policy,
+            telemetry=self._telemetry,
+            rate_limiter=self._rate_limiter,
+        )
+
+    def _init_runtime_state(
+        self, modules: Sequence[str] | None, module_attr: str
+    ) -> None:
+        """Initialise the mutable buffers, callbacks, and flags.
+
+        ``modules`` is stored for explicit async initialization later (via
+        ``collect_tools_from_modules`` or ``DotFetch.from_modules``); it is
+        not loaded here because import + embedding is async.
+        """
+        self._pending_tools: list[ToolDefinition] = []
+        # What each MCP server listed when last asked, keyed by
+        # (namespace, name), so part of it can be adopted without asking again.
+        self._mcp_catalogues: dict[tuple[str, str], list[ToolDefinition]] = {}
+        # Locks are created lazily, inside a running loop, on first use.
+        self._init_lock: asyncio.Lock | None = None
+        # One-shot guard for _ensure_skill_vectors_current (embedder is fixed
+        # for this instance's lifetime)
+        self._skill_vectors_checked = False
+        self._skill_vectors_lock: asyncio.Lock | None = None
+        # MCP clients created by add_mcp_server (immediate discovery), kept so
+        # their persistent connections can be reused by handlers and closed on
+        # close(). Keyed by namespace-qualified config name.
+        self._direct_mcp_clients: dict[str, Any] = {}
+        # Framework-agnostic post-execution callbacks (see on_tool_call).
+        self._tool_call_callbacks: list[Callable[..., Any]] = []
+        self._initialized = False
+        self._synced = False  # Track if we've done initial sync check
+        self._mcp_synced = False  # Track if MCP servers are synced
+        self._modules: Sequence[str] | None = modules or None
+        self._module_attr: str | None = module_attr if modules else None
+
+    async def close(self) -> None:
+        """
+        Release all resources held by this DotFetch instance.
+
+        Closes the MCP clients, the executor's A2A clients, and every adapter
+        with a ``close``/``aclose`` (store, embedder, selector, reranker,
+        telemetry), whether injected or built from config. Share one adapter
+        between gantries only if you close the gantries last. Safe to call
+        more than once. Do not count on using the instance afterwards: an
+        adapter that closed a connection (a ``CachedEmbedder``, a Qdrant or
+        pgvector store) stays closed, and only the connectionless ones come
+        back on the next call.
+        """
+        # Close MCP clients (persistent server connections)
+        for client in list(self._direct_mcp_clients.values()):
+            try:
+                await client.close()
+            except Exception:
+                logger.debug("Error closing MCP client", exc_info=True)
+        self._direct_mcp_clients.clear()
+        if self._mcp_registry is not None:
+            close_clients = getattr(self._mcp_registry, "close_all_clients", None)
+            if close_clients is not None:
+                await close_clients()
+
+        # Close the execution engine (cached A2A clients, etc.)
+        await self._executor.close()
+
+        # Adapters may hold HTTP clients, model threads or file handles.
+        for adapter in (
+            self._selector,
+            self._reranker,
+            self._embedder,
+            self._vector_store,
+            self._telemetry,
+        ):
+            await _close_adapter(adapter)
+
+        self._initialized = False
+        # Locks bind to the loop that first used them; a fetcher reused under a
+        # new loop (repeated asyncio.run) must not meet a stale one.
+        self._init_lock = None
+        self._skill_vectors_lock = None
+
+    async def __aenter__(self) -> DotFetch:
+        """Enter async context manager."""
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
+        """Exit async context manager, releasing resources."""
+        await self.close()
+        return False
+
+    @classmethod
+    def from_config(cls, path: str) -> DotFetch:
+        """
+        Create an DotFetch instance from a YAML config file.
+
+        Args:
+            path: Path to the YAML configuration file
+
+        Returns:
+            Configured DotFetch instance
+        """
+        config = DotFetchConfig.from_yaml(path)
+        return cls(config=config)
+
+    @classmethod
+    def quick_start(
+        cls,
+        embedder: str = "auto",
+        dimension: int = 256,
+        **kwargs: Any,
+    ) -> DotFetch:
+        """
+        Quick setup with sensible defaults for getting started.
+
+        Automatically detects the best available embedder and sets up
+        an in-memory vector store for immediate use.
+
+        Args:
+            embedder: Embedder type - "auto", "nomic", "openai", or "simple"
+            dimension: Embedding dimension (for Nomic, default 256)
+            **kwargs: Additional DotFetch constructor arguments
+
+        Returns:
+            Ready-to-use DotFetch instance
+
+        Example:
+            >>> fetcher = DotFetch.quick_start()
+            >>>
+            >>> @fetcher.register
+            ... def my_tool(x: int) -> int:
+            ...     '''Double a number.'''
+            ...     return x * 2
+            >>>
+            >>> await fetcher.sync()
+            >>> tools = await fetcher.retrieve_tools("double a number")
+        """
+        config = DotFetchConfig()
+        embedder_instance: EmbeddingAdapter
+
+        if embedder == "auto":
+            # Try Nomic first (best for local use)
+            try:
+                # Test that sentence-transformers is actually available
+                import sentence_transformers  # noqa: F401
+
+                from dotfetch.adapters.embedders.nomic import NomicEmbedder
+
+                embedder_instance = NomicEmbedder(dimension=dimension)
+            except ImportError:
+                warnings.warn(
+                    "Nomic embedder not available. Using SimpleEmbedder (hash-based, low accuracy). "
+                    "For better semantic search: pip install dotfetch[nomic] (or uv add 'dotfetch[nomic]')",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                embedder_instance = SimpleEmbedder()
+        elif embedder == "nomic":
+            try:
+                import sentence_transformers  # noqa: F401
+            except ImportError as exc:
+                raise ImportError(
+                    "sentence-transformers is required for the Nomic embedder. Install it with:\n"
+                    "  pip install dotfetch[nomic] (or uv add 'dotfetch[nomic]')"
+                ) from exc
+            from dotfetch.adapters.embedders.nomic import NomicEmbedder
+
+            embedder_instance = NomicEmbedder(dimension=dimension)
+        elif embedder == "openai":
+            api_key = kwargs.pop("openai_api_key", None)
+            if not api_key:
+                raise ValueError(
+                    "OpenAI embedder requires a valid API key. "
+                    "Pass openai_api_key=... to quick_start() or configure DotFetchConfig."
+                )
+            embedder_config = EmbedderConfig(type="openai", api_key=api_key)
+            try:
+                embedder_instance = OpenAIEmbedder(embedder_config)
+            except Exception as exc:
+                raise RuntimeError(
+                    "Failed to initialize OpenAI embedder. Ensure optional dependencies are "
+                    'installed with "pip install dotfetch[openai]" and that your OpenAI '
+                    "API key is valid."
+                ) from exc
+        else:  # "simple" or unknown
+            embedder_instance = SimpleEmbedder()
+
+        return cls(config=config, embedder=embedder_instance, **kwargs)
+
+    @classmethod
+    async def from_modules(
+        cls,
+        modules: Sequence[str],
+        *,
+        attr: str = "tools",
+        config: DotFetchConfig | None = None,
+        vector_store: VectorStoreAdapter | None = None,
+        embedder: EmbeddingAdapter | None = None,
+        reranker: RerankerAdapter | None = None,
+        selector: SelectorAdapter | None = None,
+        telemetry: TelemetryAdapter | None = None,
+        security_policy: SecurityPolicy | None = None,
+        on_selector_fallback: Literal["semantic", "raise"] | None = None,
+    ) -> DotFetch:
+        """
+        Build a dotfetch instance and populate it by importing tool-bearing modules.
+
+        Args:
+            modules: Iterable of module paths (dot-notation) to import.
+            attr: Attribute on each module that holds an DotFetch instance (default "tools").
+            config/vector_store/embedder/reranker/selector/telemetry/security_policy/
+            on_selector_fallback:
+                Optional overrides for the constructed fetcher instance.
+
+        Returns:
+            A populated DotFetch instance.
+        """
+
+        fetcher = cls(
+            config=config,
+            vector_store=vector_store,
+            embedder=embedder,
+            reranker=reranker,
+            selector=selector,
+            telemetry=telemetry,
+            security_policy=security_policy,
+            on_selector_fallback=on_selector_fallback,
+        )
+        await fetcher.collect_tools_from_modules(modules, module_attr=attr)
+        return fetcher
+
+    def register(
+        self,
+        func: Callable[..., Any] | None = None,
+        *,
+        name: str | None = None,
+        namespace: str = "default",
+        capabilities: list[ToolCapability] | None = None,
+        requires_confirmation: bool = False,
+        tags: list[str] | None = None,
+        examples: list[str] | None = None,
+    ) -> Callable[..., Any]:
+        """
+        Decorator to register Python functions as tools.
+
+        Args:
+            func: The function to register (when used without parentheses)
+            name: Custom name for the tool (defaults to function name)
+            namespace: Namespace for organizing tools
+            capabilities: List of capabilities this tool has
+            requires_confirmation: Whether to require human confirmation
+            tags: Tags for categorizing the tool
+            examples: Example queries that this tool handles
+
+        Returns:
+            The decorated function
+        """
+
+        def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
+            # Accept agent_framework FunctionTool (or any tool-spec wrapper
+            # exposing .name + .func). AF's @tool decorator produces an
+            # object without ``__name__``, which would otherwise break the
+            # legacy ``fn.__name__`` lookup. Unwrap to the bare callable
+            # while remembering the original wrapper so the decorator's
+            # return value still matches what the caller passed in.
+            original = fn
+            wrapper_name = getattr(fn, "name", None)
+            wrapper_func = getattr(fn, "func", None)
+            wrapper_desc = getattr(fn, "description", None)
+            if isinstance(wrapper_name, str) and wrapper_name and callable(wrapper_func):
+                underlying = wrapper_func
+            else:
+                underlying = fn
+
+            tool_name = (
+                name
+                or wrapper_name
+                or getattr(underlying, "__name__", None)
+                or getattr(original, "__name__", None)
+            )
+            if not tool_name:
+                raise TypeError(
+                    "DotFetch.register() could not determine a tool name. "
+                    "Pass `name=...` explicitly, or supply a callable with a "
+                    "__name__ (or an agent_framework FunctionTool with .name)."
+                )
+
+            tool_description = (
+                getattr(_callable_target(underlying), "__doc__", None)
+                or getattr(underlying, "__doc__", None)
+                or wrapper_desc
+                or f"Tool: {tool_name}"
+            )
+
+            # Build parameters schema from the underlying callable's signature.
+            parameters_schema = build_parameters_schema(underlying)
+
+            tool = ToolDefinition(
+                name=tool_name,
+                namespace=namespace,
+                description=tool_description.strip(),
+                parameters_schema=parameters_schema,
+                capabilities=capabilities or [],
+                requires_confirmation=requires_confirmation,
+                tags=tags or [],
+                examples=examples or [],
+            )
+
+            self._enqueue([tool])
+            # Definition and handler go into the registry right away, so the
+            # tool is executable before the next sync().
+            self._registry.register_tool(tool, underlying)
+
+            return original
+
+        if func is not None:
+            return decorator(func)
+        return decorator
+
+    async def _ensure_initialized(self) -> None:
+        """Initialize backing services once, serialising concurrent first calls."""
+        if self._initialized:
+            return
+        if self._init_lock is None:
+            self._init_lock = asyncio.Lock()
+        async with self._init_lock:
+            if not self._initialized:
+                await self._vector_store.initialize()
+                self._initialized = True
+
+    async def add_tool(
+        self, tool: ToolDefinition, handler: Callable[..., Any] | None = None
+    ) -> None:
+        """
+        Add a tool definition directly, optionally wiring an execution handler.
+
+        Args:
+            tool: The tool definition to add
+            handler: Optional callable that executes the tool. When provided,
+                it is registered exactly like the ``register()`` decorator wires
+                a decorated function's handler, so the tool is immediately
+                executable via :meth:`execute` (security, retries, telemetry —
+                the same path as ``@fetcher.register``ed tools). Omit this for
+                sources that dispatch through their own executor instead of a
+                registry-held handler (MCP/A2A discovery already do this, and
+                keep working unchanged since ``handler`` defaults to ``None``).
+        """
+        self._enqueue([tool])
+        if handler is not None:
+            # Mirror register(): the definition goes into the registry right
+            # away (not just _pending_tools) so the tool is executable before
+            # the next sync() even with auto_sync=False.
+            self._registry.register_tool(tool, handler)
+        if self._config.auto_sync:
+            await self.sync()
+
+    async def sync(
+        self, batch_size: int = 100, force: bool = False, prune: bool | None = None
+    ) -> int:
+        """
+        Sync pending registrations to vector store with smart change detection.
+
+        This method uses fingerprinting to detect which tools have actually changed
+        and only re-embeds those tools. On subsequent runs with the same tools,
+        this operation is nearly instant.
+
+        Args:
+            batch_size: Number of tools to embed and sync in each batch
+            force: If True, re-embed all tools regardless of fingerprints
+            prune: Also delete stored tools that this fetcher no longer
+                registers, so a tool removed from the code stops being
+                retrievable on a persistent store. ``None`` defers to
+                ``config.prune_on_sync`` (off by default, because several
+                gantries may share one store and register different subsets).
+
+        Returns:
+            Number of tools synced (0 if nothing changed)
+        """
+        # If modules were provided in constructor but not yet loaded, load them now
+        if self._modules is not None:
+            await self.collect_tools_from_modules(
+                self._modules, module_attr=self._module_attr or "tools"
+            )
+            self._modules = None
+            self._module_attr = None
+
+        await self._ensure_initialized()
+
+        # Get all registered tools (pending + already registered)
+        all_tools = self.export_tools()
+        # The pending entries *this* sync is answerable for. A register() that
+        # lands while the awaits below are in flight appends to the buffer but
+        # is not in this snapshot, so it must survive the drain.
+        pending_snapshot = list(self._pending_tools)
+        # Only prune against a registry that actually says what belongs here;
+        # ``prune_stale_tools`` refuses an empty keep set as well, but the
+        # ordering used to put the call *before* the empty check below, so a
+        # sync on a not-yet-populated fetcher asked it to delete everything.
+        #
+        # Known non-atomic window: the prune commits before the embed/store
+        # pass below. If a tool is renamed (old name pruned, new one pending)
+        # and the embed then fails transiently, the deletion is not rolled
+        # back even though this sync reports failure. The next successful sync
+        # re-embeds the new name, so the store converges; the gap is that the
+        # old name is gone meanwhile. Pruning afterwards instead would leave
+        # both names live for the duration of every sync, which is the worse
+        # trade for the far more common case.
+        if all_tools and (prune if prune is not None else self._config.prune_on_sync):
+            await self.prune_stale_tools(keep=all_tools)
+        if not all_tools:
+            self._synced = True
+            return 0
+
+        # Determine which tools need syncing
+        tools_to_sync = await self._sync_manager.detect_changes(all_tools, force)
+
+        # Nothing to sync
+        if not tools_to_sync:
+            logger.debug(f"All {len(all_tools)} tools up-to-date, skipping sync")
+            self._synced = True
+
+            # Ensure handlers are registered even if tools are already in DB
+            for tool in all_tools:
+                self._registry.register_tool(tool)
+            # Every pending definition in the snapshot is now known to the
+            # registry and the store, so drain it — otherwise ensure_synced()
+            # would re-run the fingerprint scan on every retrieval.
+            self._drain_pending(pending_snapshot)
+
+            return 0
+
+        logger.info(f"Syncing {len(tools_to_sync)}/{len(all_tools)} tools to vector store...")
+
+        # The pending buffer is drained only once the work behind it has
+        # succeeded. Clearing it first lost a late registration outright: on a
+        # transient embedder or store failure the buffer was already empty and
+        # ``_synced`` still True from the previous successful sync, so
+        # ``ensure_synced`` saw nothing to do and the tool stayed invisible
+        # even after the backend recovered. ``_synced`` is likewise cleared on
+        # the way out, so a first-ever sync that fails is retried too.
+        try:
+            total_synced = await self._sync_manager.sync_batches(tools_to_sync, batch_size)
+
+            # Update sync metadata (if supported)
+            await self._sync_manager.update_metadata()
+        except BaseException:
+            self._synced = False
+            raise
+
+        # Ensure all tools are registered (even those not synced). Compare by
+        # qualified name — `tool in tools_to_sync` would deep-compare Pydantic
+        # models pairwise (O(N²) over full schemas).
+        synced_keys = {f"{t.namespace}.{t.name}" for t in tools_to_sync}
+        for tool in all_tools:
+            if f"{tool.namespace}.{tool.name}" not in synced_keys:
+                self._registry.register_tool(tool)
+
+        # After the registry writes above, so a definition that superseded the
+        # snapshot mid-sync is the one left standing.
+        self._drain_pending(pending_snapshot)
+
+        self._synced = True
+        logger.info(f"Synced {total_synced} tools")
+        return total_synced
+
+    def _drain_pending(self, covered: Sequence[ToolDefinition]) -> None:
+        """Drop exactly the pending entries a completed sync covered.
+
+        Clearing the whole buffer discards a ``register()`` that landed while
+        ``sync()`` was awaiting the embedder or the store: such a tool is not
+        in the snapshot that was embedded, but ``_synced`` is set to ``True``
+        on the way out, so ``ensure_synced`` would then see nothing to do and
+        the tool would never become retrievable.
+
+        Identity, not qualified name, decides what was covered. Re-registering
+        a tool mid-sync appends a *new* definition under a name the snapshot
+        already carries; matching by name would drop that update and leave the
+        superseded version in the store.
+        """
+        done = {id(tool) for tool in covered}
+        self._pending_tools = [tool for tool in self._pending_tools if id(tool) not in done]
+        # Whatever is left arrived mid-sync, so it is newer than the snapshot
+        # this sync just wrote into the registry. Re-assert it, or
+        # ``export_tools`` would keep serving the superseded definition it
+        # finds in the registry and the next sync would store that instead.
+        for tool in self._pending_tools:
+            self._registry.register_tool(tool)
+
+    def _enqueue(self, tools: Sequence[ToolDefinition]) -> None:
+        """Queue ``tools`` for the next sync, refusing any in a reserved namespace.
+
+        All are checked before any is queued: a tool that would never be found
+        must not be left in the queue to fail every later sync.
+        """
+        for tool in tools:
+            reject_reserved_namespace(tool.namespace, f"tool '{tool.name}'")
+        self._pending_tools.extend(tools)
+
+    async def prune_stale_tools(self, keep: Sequence[ToolDefinition] | None = None) -> int:
+        """
+        Delete stored tools that this fetcher no longer registers.
+
+        Fingerprint sync only ever adds and updates, so on a persistent store
+        a tool deleted from the code stayed retrievable forever — the router
+        kept offering the model a tool ``execute()`` could not run. MCP
+        server pseudo-entries (namespace ``__mcp_servers__``) are left alone;
+        :meth:`sync_mcp_servers` owns those.
+
+        Nothing is pruned when the keep set is empty. An empty registry means
+        "this fetcher does not know what belongs here" far more often than it
+        means "the store should be empty" — a lazily-registering or
+        not-yet-populated fetcher hits it — and on a store shared between
+        gantries, as the note above contemplates, acting on it would delete
+        every tool the *other* instances registered.
+
+        Args:
+            keep: The tools to keep; defaults to everything currently
+                registered or pending on this fetcher.
+
+        Returns:
+            Number of tools removed from the store.
+        """
+        await self._ensure_initialized()
+        wanted = {f"{t.namespace}.{t.name}" for t in (keep if keep is not None else self.export_tools())}
+        if not wanted:
+            logger.warning(
+                "Refusing to prune: this fetcher registers no tools, so pruning "
+                "would delete every stored tool, including any registered by "
+                "other gantries sharing this store. Clear the store directly if "
+                "that is what you want."
+            )
+            return 0
+        stored = await self._list_all_pages(self._vector_store.list_all)
+        removed = 0
+        for tool in stored:
+            if tool.namespace in (MCP_SERVER_NAMESPACE, A2A_AGENT_NAMESPACE):
+                # Routed by their own registries, which prune their own.
+                continue
+            # A chunk lives and dies with the tool it was cut from.
+            parent = chunk_parent(tool)
+            if parent is not None and f"{parent[0]}.{parent[1]}" in wanted:
+                continue
+            if f"{tool.namespace}.{tool.name}" in wanted:
+                continue
+            if await self._vector_store.delete(tool.name, tool.namespace):
+                removed += 1
+        if removed:
+            logger.info(f"Pruned {removed} stale tool(s) no longer registered with this fetcher")
+        return removed
+
+    async def ensure_synced(self) -> None:
+        """
+        Ensure tools are synced to the vector store.
+
+        This is called automatically before retrieval operations.
+        Uses smart fingerprinting to avoid unnecessary re-embedding.
+
+        A registration made *after* the first sync (``@fetcher.register`` on a
+        running fetcher, ``add_mcp_server`` with ``auto_sync=False``, ...) sits
+        in the pending buffer, so the buffer is checked as well as the
+        ``_synced`` flag — the flag alone left late registrations unembedded,
+        hence unretrievable, until someone called ``sync()`` by hand.
+        """
+        if not self._synced or self._pending_tools:
+            await self.sync()
+
+    async def _ensure_mcp_synced(self) -> None:
+        """
+        Ensure MCP servers are synced to the vector store.
+
+        Similar to ensure_synced() but for MCP server metadata: a server
+        registered after the first MCP sync is pending in the MCP registry
+        and triggers a re-sync here.
+        """
+        pending = self._mcp_registry.get_pending() if self._mcp_registry is not None else []
+        if not self._mcp_synced or pending:
+            await self.sync_mcp_servers()
+
+    async def sync_mcp_servers(self, batch_size: int = 100, force: bool = False) -> int:
+        """
+        Sync pending MCP server registrations to vector store.
+
+        Uses smart fingerprinting to avoid unnecessary re-embedding. The work
+        is done by :class:`~dotfetch.core.mcp_manager.MCPManager`; this
+        facade method only initialises the store and tracks the synced flag.
+
+        Args:
+            batch_size: Number of servers to embed and sync in each batch
+            force: If True, re-embed all servers regardless of fingerprints
+
+        Returns:
+            Number of servers synced
+        """
+        await self._ensure_initialized()
+
+        if self._mcp_manager is None:
+            self._mcp_synced = True
+            return 0
+
+        count = await self._mcp_manager.sync_servers(batch_size=batch_size, force=force)
+        self._mcp_synced = True
+        return count
+
+    async def collect_tools_from_modules(
+        self,
+        modules: Sequence[str],
+        module_attr: str = "tools",
+        *,
+        persist: bool = True,
+    ) -> int:
+        """
+        Import DotFetch instances from other modules and register their tools locally.
+
+        This is useful when you split tools across multiple files (e.g., a tools/ package). The
+        tools are re-embedded with this fetcher's embedder and added to its vector store and
+        registry so they can be retrieved and executed without sharing vector stores.
+
+        Args:
+            modules: Iterable of module specs to import. Each is a dot-notation
+                module path, optionally suffixed ``:attr`` to name the
+                attribute holding that module's instance — so modules using
+                different attribute names can be collected in one call, and
+                duplicate detection spans all of them.
+            module_attr: Attribute name for specs that carry no ``:attr``
+                (default "tools").
+            persist: Embed the collected tools and write them to the vector
+                store. Pass ``False`` to register them in memory only, leaving
+                the store untouched — for read-only inspection of somebody's
+                configured backend. They stay pending, so the next
+                ``sync()`` (which ``retrieve()`` triggers) embeds them.
+
+        Returns:
+            Number of tools imported into this fetcher.
+
+        Raises:
+            ValueError: If a module doesn't expose an DotFetch at the specified attribute.
+        """
+
+        imported = 0
+        seen: set[str] = set()
+        tools_to_add: list[ToolDefinition] = []
+
+        for spec in modules:
+            # A module path cannot contain ":", so the split is unambiguous.
+            module_path, _, spec_attr = spec.partition(":")
+            module_path = module_path.strip()
+            attr = spec_attr.strip() or module_attr
+            module = importlib.import_module(module_path)
+            other = getattr(module, attr, None)
+            if not isinstance(other, DotFetch):
+                raise ValueError(
+                    f"Module '{module_path}' does not expose an DotFetch instance at '{attr}'. "
+                    f"Found: {type(other).__name__ if other else 'None'}"
+                )
+
+            # Collect tools from the source fetcher using the public API
+            all_tools = other.export_tools()
+
+            for tool in all_tools:
+                key = f"{tool.namespace}.{tool.name}"
+
+                # Check for duplicates across modules
+                if key in seen:
+                    logger.warning(
+                        f"Skipping duplicate tool '{key}' from module '{module_path}'. "
+                        f"A tool with this name was already imported from another module."
+                    )
+                    continue
+
+                # Get the tool handler from the source fetcher
+                handler = other._registry.get_handler(key)
+                tools_to_add.append(tool)
+                if handler:
+                    self._registry.register_handler(key, handler)
+                else:
+                    logger.debug(f"No handler found for tool '{key}' in module '{module_path}'")
+
+                seen.add(key)
+                imported += 1
+
+            logger.info(f"Imported {len(all_tools)} tools from module '{module_path}'")
+
+        if tools_to_add and not persist:
+            # Registry only: `list_tools_sync`, the linter and `sim` all read
+            # from there, so inspection works without writing a row. They stay
+            # pending as well, so the first retrieval embeds them.
+            for tool in tools_to_add:
+                self._registry.register_tool(tool)
+            self._enqueue(tools_to_add)
+        elif tools_to_add:
+            await self._ensure_initialized()
+            await self._sync_manager.sync_batches(tools_to_add, batch_size=100)
+
+        return imported
+
+    # ------------------------------------------------------------------
+    # Selection — the alternative to semantic matching.
+    #
+    # A selector puts the catalogue to a decision model directly: no query
+    # embedding, no vector search, no sync. Each helper hands the semantic
+    # path the work when the selector is absent, has nothing to work with, or
+    # could not answer. Failing open is the default, not an error path: a
+    # provider hiccup must cost precision, never the catalogue. But it is
+    # never silent. Two words are kept apart throughout:
+    #
+    # - a selector *declines* when it answers with nothing: it looked at the
+    #   catalogue and found no entry that serves the query. That is a result.
+    # - a selector *falls back* when it did not answer at all. That is
+    #   reported to the caller, logged, and in strict mode raised.
+    # ------------------------------------------------------------------
+
+    def _selector_fell_back(
+        self, kind: str, reason: str | None, *, failed: bool
+    ) -> _SelectorFallback:
+        """Record that the semantic path is answering instead of the selector.
+
+        Args:
+            kind: ``"tool"``, ``"skill"`` or ``"mcp_server"``.
+            reason: Why the selector did not answer.
+            failed: ``True`` when the selector was asked and did not answer, or
+                could not be asked because the catalogue is over a ceiling: a
+                fault or a misconfiguration, logged at WARNING and raised in
+                strict mode. ``False`` when there was simply nothing to select
+                on (an empty query, an empty catalogue), which is logged at
+                DEBUG and never raised.
+
+        Raises:
+            SelectorFallbackError: When ``failed`` and
+                ``on_selector_fallback="raise"``.
+        """
+        reason = reason or "no reason given"
+        if not failed:
+            logger.debug(
+                f"Selector not consulted for {kind} selection ({reason}); using semantic routing"
+            )
+            return _SelectorFallback(reason)
+        if self._on_selector_fallback == "raise":
+            raise SelectorFallbackError(kind, reason)
+        message = f"Selector failed for {kind} selection ({reason}); using semantic routing"
+        if self._selector_fallback_warned.get(kind) != reason:
+            # Once per reason, not once per call: a catalogue over the
+            # selector's ceiling falls back on every retrieval, for good, and
+            # must be visible without burying everything else in the log.
+            self._selector_fallback_warned[kind] = reason
+            logger.warning(
+                f"{message}. Results say so in selector_fallback; repeats of this "
+                "reason are logged at DEBUG."
+            )
+        else:
+            logger.debug(message)
+        return _SelectorFallback(reason)
+
+    def _selector_answered(self, kind: str) -> None:
+        """The selector answered: a later fallback is news again."""
+        self._selector_fallback_warned.pop(kind, None)
+
+    async def _select_tools(
+        self, query: ToolQuery
+    ) -> tuple[list[ScoredTool], float, int] | _SelectorFallback | None:
+        """Choose tools with the configured selector.
+
+        Returns:
+            ``(scored tools, selection milliseconds, candidates considered)``
+            when the selector answered; a :class:`_SelectorFallback` when one
+            is configured but the semantic router must answer instead; ``None``
+            when no selector is configured.
+        """
+        if self._selector is None:
+            return None
+        text = query.context.query
+        if not text.strip():
+            # No signal to select on, and unlike a zero vector this would put
+            # the whole catalogue to the model at full price.
+            return self._selector_fell_back("tool", "the query is empty", failed=False)
+
+        # Lazy ``modules=`` are normally imported by ``sync()``, but a selector
+        # that answers means ``sync()`` is never reached — so without this the
+        # module tools would stay absent on every call, for as long as the
+        # selector keeps answering (#422). Importing only populates the
+        # registry, so it costs nothing that the selector path was avoiding.
+        if self._modules is not None:
+            await self.collect_tools_from_modules(
+                self._modules, module_attr=self._module_attr or "tools"
+            )
+            self._modules = None
+
+        # Registry *and* pending buffer. ``add_tool`` without a handler — which
+        # is how MCP and A2A discovery add theirs — appends only to
+        # ``_pending_tools``, so a registry-only view makes those tools
+        # invisible to selection. Worse than invisible: if anything else
+        # answers, the semantic fallback never runs and they stay unreachable
+        # until something forces a sync.
+        #
+        # Keyed the way the registry itself is keyed — ``namespace.name``, no
+        # version — with the pending copy winning (#423). ``qualified_name``
+        # carries the version, so keying on it did two wrong things at once:
+        # an *update* to a registered tool (same version, new description) was
+        # dropped in favour of the stale registered copy, and a *re-versioned*
+        # tool survived twice, so the selector could hand the agent v1's
+        # schema while ``execute()`` resolved v2's handler. ``_pending_tools``
+        # preserves registration order, so the last write is the newest.
+        by_name = {f"{t.namespace}.{t.name}": t for t in self._registry.list_tools()}
+        by_name.update({f"{t.namespace}.{t.name}": t for t in self._pending_tools})
+        known = list(by_name.values())
+        if not known:
+            # Nothing registered in memory at all. The store may still hold
+            # tools from an earlier process, and only the semantic path can
+            # see those, so this is a genuine "cannot answer".
+            return self._selector_fell_back(
+                "tool", "no tools are registered in memory", failed=False
+            )
+
+        # Through the router's own filter, not a second copy of it: a selector
+        # surfacing a deprecated or circuit-broken tool that the semantic path
+        # hides would quietly widen what the agent can reach.
+        tools = self._router.filter_tools(known, query)
+        if not tools:
+            # Every tool was filtered out — a namespace with nothing in it, a
+            # capability nothing has. That is a *successful* determination that
+            # nothing is eligible, made entirely from the in-memory catalogue,
+            # not a decline. Returning ``None`` here sent retrieval through
+            # ``ensure_synced()`` and the vector store to learn the same thing,
+            # which in a selector-only deployment is a failure rather than a
+            # slower path (#423).
+            return [], 0.0, 0
+
+        by_id = {tool.qualified_name: tool for tool in tools}
+        candidates = [SelectionCandidate.from_tool(tool) for tool in tools]
+
+        # What the conversation knows about each tool: called already, failed,
+        # deprecated. The selector judges relevance and cannot see any of it,
+        # so a tool that failed twice this turn would rank exactly where its
+        # description put it. Ask for as many extra as could be demoted, so
+        # that demoting one lets the next best take its place.
+        used = set(query.context.tools_already_used)
+        failed = set(query.context.tools_failed)
+        penalties = {
+            tool.qualified_name: penalty
+            for tool in tools
+            if (penalty := conversation_penalty(tool, used, failed))
+        }
+
+        start = perf_counter()
+        result = await self._selector.select(text, candidates, query.limit + len(penalties))
+        elapsed_ms = (perf_counter() - start) * 1000
+        if result.fallback:
+            return self._selector_fell_back("tool", result.reason, failed=True)
+        self._selector_answered("tool")
+
+        # Not ``query.score_threshold``: that is a cosine cutoff, and its
+        # schema default of 0.5 is kept for direct ``ToolQuery`` callers. Read
+        # as a minimum *probability* it silently tightened selection for
+        # exactly those callers (#428). The selector has already applied its
+        # own configured threshold; ``selection_threshold`` is the per-query
+        # override on top of that, on the probability scale, and off by
+        # default.
+        threshold = query.selection_threshold or 0.0
+        scored = [
+            ScoredTool(
+                tool=by_id[candidate_id],
+                # The probability, less what the conversation holds against
+                # the tool. The threshold is applied to the probability
+                # itself: a penalty reorders, it does not make a relevant
+                # tool irrelevant.
+                semantic_score=max(
+                    0.0, result.scores.get(candidate_id, 0.0) - penalties.get(candidate_id, 0.0)
+                ),
+                rerank_score=None,
+            )
+            for candidate_id in result.selected
+            if candidate_id in by_id and result.scores.get(candidate_id, 0.0) >= threshold
+        ]
+        if penalties:
+            # Stable: tools the conversation says nothing about keep the
+            # selector's own order among themselves.
+            scored.sort(key=lambda entry: entry.semantic_score, reverse=True)
+        return scored[: query.limit], elapsed_ms, len(candidates)
+
+    async def _select_skills(
+        self,
+        query: str,
+        limit: int,
+        namespace: str | list[str] | None,
+        category: str | None,
+        score_threshold: float | None,
+    ) -> list[SkillSearchResult] | None:
+        """Choose skills with the configured selector, or ``None`` to fall back."""
+        if self._selector is None:
+            return None
+        store = self._skills_store()
+        # Unlike tools and MCP servers, the skill catalogue lives in the store
+        # itself rather than in an in-memory registry, so reading it needs the
+        # store open. Only the *embedding* is skipped on this path.
+        await self._ensure_initialized()
+
+        # Paged, not a single call: both skill stores default
+        # ``list_all_skills()`` to ``limit=1000``, so one call silently reads
+        # the first page. The selector would then answer confidently from a
+        # truncated catalogue, report success, and keep the semantic fallback
+        # from ever running — the same silent-truncation failure the selector's
+        # own candidate ceiling was just fixed for.
+        #
+        # Filtered at the store, not after (#426): the ceiling is a property
+        # of the *eligible* catalogue. Measured against the whole store, a
+        # request scoped to a twelve-skill namespace gave up because some other
+        # namespace was large — and in a selector-only deployment the semantic
+        # fallback is not a slower path but a failure. The facade allows a
+        # list of namespaces where the stores take one, so page once per
+        # namespace.
+        store_kwargs: dict[str, Any] = {}
+        if category is not None:
+            store_kwargs["category"] = category
+        namespaces: list[str | None]
+        if namespace is None:
+            namespaces = [None]
+        elif isinstance(namespace, str):
+            namespaces = [namespace]
+        else:
+            namespaces = list(dict.fromkeys(namespace))
+
+        skills: list[Skill] = []
+        page_size = 1000
+        over_ceiling = False
+        for ns in namespaces:
+            offset = 0
+            while True:
+                page = await store.list_all_skills(
+                    namespace=ns, limit=page_size, offset=offset, **store_kwargs
+                )
+                # The pieces a skill's content is indexed in are not skills.
+                skills.extend(s for s in page if not is_reserved_namespace(s.namespace))
+                offset += len(page)
+                if len(skills) > _MAX_SELECTABLE_SKILLS:
+                    over_ceiling = True
+                    break
+                if len(page) < page_size:
+                    break
+            if over_ceiling:
+                break
+        # An explicit check on the collected result, not ``while/else``: the
+        # ``else`` only ran when the loop condition went false, never after a
+        # ``break`` — and the end of the catalogue is reached by ``break``. A
+        # catalogue that crossed the cap on a short final page (anything in
+        # (10_000, 11_000)) therefore skipped the ceiling entirely.
+        if over_ceiling:
+            # Selecting over a prefix here would be the truncation this loop
+            # exists to avoid, so hand it to the semantic path, which has no
+            # such ceiling.
+            self._selector_fell_back(
+                "skill",
+                f"the skill catalogue exceeds {_MAX_SELECTABLE_SKILLS} entries",
+                failed=True,
+            )
+            return None
+
+        # Belt and braces for a store that ignores the kwargs it was given.
+        if namespace is not None:
+            allowed = {namespace} if isinstance(namespace, str) else set(namespace)
+            skills = [skill for skill in skills if skill.namespace in allowed]
+        if category is not None:
+            skills = [
+                skill
+                for skill in skills
+                if str(getattr(skill.category, "value", skill.category)) == category
+            ]
+        if not skills:
+            return None
+
+        by_id = {f"{skill.namespace}.{skill.name}": skill for skill in skills}
+        candidates = [SelectionCandidate.from_skill(skill) for skill in skills]
+        result = await self._selector.select(query, candidates, limit, kind="skill")
+        if result.fallback:
+            self._selector_fell_back("skill", result.reason, failed=True)
+            return None
+        self._selector_answered("skill")
+
+        threshold = score_threshold or 0.0
+        return [
+            SkillSearchResult(
+                skill=by_id[candidate_id],
+                score=min(1.0, max(0.0, result.scores.get(candidate_id, 0.0))),
+            )
+            for candidate_id in result.selected
+            if candidate_id in by_id and result.scores.get(candidate_id, 0.0) >= threshold
+        ]
+
+    async def _select_a2a_agents(
+        self,
+        query: str,
+        limit: int,
+        score_threshold: float | None,
+        namespaces: list[str] | None,
+    ) -> list[A2AAgentDefinition] | None:
+        """Choose A2A agents with the configured selector, or ``None`` to fall back."""
+        if self._selector is None:
+            return None
+        agents = self._a2a_manager.list()
+        if namespaces:
+            allowed = set(namespaces)
+            agents = [agent for agent in agents if agent.namespace in allowed]
+        if not agents:
+            return None
+
+        by_id = {agent.qualified_name: agent for agent in agents}
+        candidates = [SelectionCandidate.from_a2a_agent(agent) for agent in agents]
+        result = await self._selector.select(query, candidates, limit, kind="a2a_agent")
+        if result.fallback:
+            self._selector_fell_back("a2a_agent", result.reason, failed=True)
+            return None
+        self._selector_answered("a2a_agent")
+        threshold = score_threshold or 0.0
+        return [
+            by_id[candidate_id]
+            for candidate_id in result.selected
+            if candidate_id in by_id and result.scores.get(candidate_id, 0.0) >= threshold
+        ]
+
+    async def _select_mcp_servers(
+        self,
+        query: str,
+        limit: int,
+        score_threshold: float | None,
+        namespaces: list[str] | None,
+    ) -> list[MCPServerDefinition] | None:
+        """Choose MCP servers with the configured selector, or ``None`` to fall back."""
+        if self._selector is None or self._mcp_registry is None:
+            return None
+        if not query.strip():
+            return None
+
+        servers = self._mcp_registry.list_servers()
+        if namespaces:
+            allowed = set(namespaces)
+            servers = [server for server in servers if server.namespace in allowed]
+        if not servers:
+            return None
+
+        by_id = {f"{server.namespace}.{server.name}": server for server in servers}
+        candidates = [SelectionCandidate.from_mcp_server(server) for server in servers]
+        # As for tools: ask for as many extra as could be demoted, so that a
+        # server which cannot be reached has a healthy one to give way to.
+        unavailable = sum(1 for server in servers if not server.health.available)
+        result = await self._selector.select(
+            query, candidates, limit + unavailable, kind="mcp_server"
+        )
+        if result.fallback:
+            self._selector_fell_back("mcp_server", result.reason, failed=True)
+            return None
+        self._selector_answered("mcp_server")
+
+        threshold = score_threshold or 0.0
+        chosen = [
+            candidate_id
+            for candidate_id in result.selected
+            if candidate_id in by_id and result.scores.get(candidate_id, 0.0) >= threshold
+        ]
+        if any(not by_id[candidate_id].health.available for candidate_id in chosen):
+            # As on the semantic path: a server whose last connection attempt
+            # failed is still offered, below a healthy one of like relevance.
+            chosen.sort(
+                key=lambda candidate_id: result.scores.get(candidate_id, 0.0)
+                - (0.0 if by_id[candidate_id].health.available else UNAVAILABLE_SERVER_PENALTY),
+                reverse=True,
+            )
+        return [by_id[candidate_id] for candidate_id in chosen[:limit]]
+
+    def _reranker_for(self, rerank: bool) -> Any:
+        """The configured reranker when ``rerank`` is asked for, else ``None``."""
+        if not rerank:
+            return None
+        if self._reranker is None:
+            raise ValueError(
+                "rerank=True needs a reranker: pass reranker=... to DotFetch, "
+                "or enable one in RerankerConfig."
+            )
+        return self._reranker
+
+    def _embedder_name(self) -> str | None:
+        """``model_name`` of the embedder in use, for result provenance.
+
+        ``None`` for a duck-typed embedder that does not name itself: this is
+        reporting, and must not be what makes a retrieval fail.
+        """
+        name = getattr(self._embedder, "model_name", None)
+        return name if isinstance(name, str) and name else None
+
+    async def retrieve(self, query: ToolQuery) -> RetrievalResult:
+        """
+        Core semantic routing function.
+
+        Automatically ensures tools are synced before retrieval using smart
+        fingerprint-based change detection.
+
+        Args:
+            query: The tool query with context and filters
+
+        Returns:
+            RetrievalResult with scored tools
+        """
+        # Deliberately no ``_ensure_initialized()`` up here: it opens the
+        # vector store, which the selector path never reads. The router
+        # fallback below opens it itself, as the skills/MCP paths do, so a
+        # selector-only deployment can run without a store being reachable
+        # at all — which is the point of having one.
+
+        # SimpleEmbedder produces hash-based scores that cluster tightly
+        # regardless of semantic relevance. Pairing it with a non-zero
+        # score_threshold typically results in "0 tools surfaced" silently
+        # (which integrators report as a frustrating first-day failure).
+        # Warn loudly on the first such retrieval call — but only when
+        # something is actually going to embed: a selector-only deployment
+        # never touches the embedder, so the warning would be noise.
+        if (
+            self._selector is None
+            and isinstance(self._embedder, SimpleEmbedder)
+            and not SimpleEmbedder._warned_about_threshold
+        ):
+            threshold = getattr(query, "score_threshold", None) or 0.0
+            if threshold > 0.0:
+                SimpleEmbedder._warned_about_threshold = True
+                warnings.warn(
+                    "SimpleEmbedder produces hash-based similarity scores with "
+                    "no semantic understanding; pairing it with "
+                    f"score_threshold={threshold} will likely filter all "
+                    "tools out. Set score_threshold=0.0 for SimpleEmbedder, "
+                    "or install a real embedder: "
+                    "pip install dotfetch[nomic] (or uv add 'dotfetch[nomic]')",
+                    UserWarning,
+                    stacklevel=3,
+                )
+
+        overall_start = perf_counter()
+        if self._reranker is not None and query.enable_reranking is None:
+            # A reranker exists either because the config enabled one (the
+            # factory returns None otherwise) or because the caller injected
+            # one via ``DotFetch(reranker=...)`` — and an injected reranker
+            # is as configured as it gets, so it runs by default too. Gating
+            # this on ``config.reranker.enabled`` made the injected form a
+            # silent no-op unless the caller also flipped a config flag that
+            # only governs the factory.
+            #
+            # Copy rather than assign: a caller reusing one ToolQuery (a
+            # cached template, say) must not have the field flipped underneath
+            # it.
+            query = query.model_copy(update={"enable_reranking": True})
+
+        async with self._telemetry.span("tool_retrieval", {"query": query.context.query}):
+            selection = await self._select_tools(query)
+            fell_back = selection if isinstance(selection, _SelectorFallback) else None
+            if fell_back is not None:
+                selection = None
+            if selection is None:
+                # Only now: syncing embeds every changed tool into the vector
+                # store, and a selector that answers has just made that work
+                # pointless. The registry is already complete without it —
+                # ``add_tool`` populates it directly, and the pending list it
+                # also appends to is purely the vector store's backlog — so
+                # deferring the sync cannot hide a tool from selection.
+                # Opened here, not only inside ``sync()``: after ``close()``
+                # the registry is still synced, so a retrieve would otherwise
+                # search a store nobody reopened.
+                await self._ensure_initialized()
+                await self.ensure_synced()
+                routing_result = await self._router.route(query)
+            else:
+                routing_result = None
+
+        if selection is not None:
+            selected, selection_time_ms, candidate_count = selection
+            retrieval = RetrievalResult(
+                tools=selected,
+                # Both zero, and honestly so: neither step ran.
+                query_embedding_time_ms=0.0,
+                vector_search_time_ms=0.0,
+                selection_time_ms=selection_time_ms,
+                total_time_ms=(perf_counter() - overall_start) * 1000,
+                candidate_count=candidate_count,
+                filtered_count=len(selected),
+                trace_id=str(uuid.uuid4()),
+                backend="selector",
+            )
+            await self._telemetry.record_retrieval(query, retrieval)
+            return retrieval
+
+        # routing_result.tools is a list of (tool, semantic_score) tuples
+        scored = []
+        for tool, semantic_score in routing_result.tools:
+            scored.append(
+                ScoredTool(
+                    tool=tool,
+                    semantic_score=semantic_score,
+                    rerank_score=None,  # Rerank scores handled separately if needed
+                )
+            )
+
+        total_time_ms = (perf_counter() - overall_start) * 1000
+        retrieval = RetrievalResult(
+            tools=scored,
+            query_embedding_time_ms=routing_result.query_embedding_time_ms,
+            vector_search_time_ms=routing_result.vector_search_time_ms,
+            rerank_time_ms=routing_result.rerank_time_ms,
+            total_time_ms=total_time_ms,
+            candidate_count=routing_result.candidate_count,
+            filtered_count=routing_result.filtered_count,
+            trace_id=str(uuid.uuid4()),
+            # A selector is configured and this is still the router's answer:
+            # say so, so a caller can tell which backend it is looking at.
+            selector_fallback=fell_back is not None,
+            selector_fallback_reason=fell_back.reason if fell_back is not None else None,
+            embedder=self._embedder_name(),
+        )
+        await self._telemetry.record_retrieval(query, retrieval)
+        return retrieval
+
+    @property
+    def telemetry(self) -> Any:
+        """The configured telemetry adapter (a no-op adapter when disabled).
+
+        Exposed so the integration layers can report provider-reported token
+        usage without reaching into a private attribute.
+        """
+        return self._telemetry
+
+    async def retrieve_tools(
+        self,
+        query: str,
+        limit: int = 5,
+        dialect: str = "openai",
+        score_threshold: float = 0.0,
+        dialect_options: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> list[dict[str, Any]]:
+        """
+        Convenience wrapper: returns provider-specific tool schemas.
+
+        Args:
+            query: The natural language query
+            limit: Maximum number of tools to return
+            dialect: Target dialect/provider name (default: 'openai')
+                Supported: 'openai', 'openai_responses', 'anthropic', 'gemini',
+                'mistral', 'groq', 'agent_framework', 'auto'
+            score_threshold: Minimum cosine score to keep a tool. Defaults to
+                ``0.0`` (no filtering) — unlike the raw :class:`ToolQuery`
+                default of ``0.5``. A 0.5 absolute cutoff silently drops correct
+                tools for embedders whose scores sit below it (e.g. MiniLM), so
+                the high-level convenience API opts out of filtering by default
+                and lets ranking + ``limit`` do the work.
+            dialect_options: Options forwarded to the dialect adapter rather
+                than the query — e.g. ``{"strict": True}`` for OpenAI. Any
+                keyword in ``**kwargs`` that is not a :class:`ToolQuery` field
+                is routed here too, so ``retrieve_tools(..., strict=True)``
+                works; this explicit dict wins on conflict.
+            **kwargs: Additional query parameters. Keywords matching a
+                ``ToolQuery`` field configure retrieval; the rest are treated
+                as dialect options (see ``dialect_options``). Previously any
+                non-``ToolQuery`` keyword was silently discarded, so ``strict``
+                never reached the adapter.
+
+        Returns:
+            List of provider-specific tool schemas
+        """
+        # Split retrieval parameters from per-dialect adapter options so that
+        # neither silently swallows the other's keywords.
+        query_fields = set(ToolQuery.model_fields)
+        query_kwargs = {k: v for k, v in kwargs.items() if k in query_fields}
+        adapter_options = {k: v for k, v in kwargs.items() if k not in query_fields}
+        if dialect_options:
+            adapter_options.update(dialect_options)
+
+        context = ConversationContext(query=query)
+        tool_query = ToolQuery(
+            context=context, limit=limit, score_threshold=score_threshold, **query_kwargs
+        )
+        result = await self.retrieve(tool_query)
+        return result.to_dialect(dialect, **adapter_options)
+
+    async def retrieve_context(
+        self,
+        query: str,
+        *,
+        tools: int = 5,
+        skills: int = 2,
+        servers: int = 1,
+        agents: int = 1,
+        score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
+    ) -> ContextResult:
+        """
+        Retrieve tools, skills, MCP servers and A2A agents for one query, in one ranked view.
+
+        The catalogues are otherwise separate calls with separate score scales
+        and nothing that ranks across them. This runs the searches
+        concurrently and merges them by rank: every kind's best match first,
+        then every kind's second, and so on. See
+        :class:`~dotfetch.schema.query.ContextResult` for why by rank and
+        not by score.
+
+        A kind this fetcher has no means to search (MCP support not installed,
+        a vector store without skills) is left out and named in
+        ``result.skipped``, so the call still answers with what it has. An
+        error from a search that did run, such as an unreachable store, is
+        raised as it would be from that search called on its own: reporting
+        it as "nothing matched" would hide it.
+
+        Args:
+            query: The natural language query
+            tools: How many tools to retrieve; ``0`` for none
+            skills: How many skills to retrieve; ``0`` for none
+            servers: How many MCP servers to retrieve; ``0`` for none
+            agents: How many A2A agents to retrieve; ``0`` for none
+            score_threshold: Minimum score for a tool. Defaults to ``0.0``
+                (no filtering), as for :meth:`retrieve_tools`. Skills and
+                servers are not thresholded here: their scales differ, and
+                :func:`~dotfetch.evaluation.calibrate_threshold` is the
+                way to find one for each.
+            namespaces: Restrict all three searches to these namespaces
+
+        Returns:
+            A :class:`~dotfetch.schema.query.ContextResult`
+        """
+        started = perf_counter()
+        skipped: dict[str, str] = {}
+
+        async def find_tools() -> RetrievalResult | None:
+            if tools <= 0:
+                return None
+            return await self.retrieve(
+                ToolQuery(
+                    context=ConversationContext(query=query),
+                    limit=tools,
+                    score_threshold=score_threshold,
+                    namespaces=namespaces,
+                )
+            )
+
+        async def find_skills() -> list[SkillSearchResult]:
+            if skills <= 0:
+                return []
+            try:
+                self._skills_store()
+            except Exception as exc:  # noqa: BLE001 - reported, not raised
+                skipped["skill"] = str(exc)
+                return []
+            return await self.retrieve_skills(query, limit=skills, namespace=namespaces)
+
+        async def find_servers() -> list[MCPServerDefinition]:
+            if servers <= 0:
+                return []
+            if self._mcp_manager is None:
+                skipped["mcp_server"] = "MCP support is not installed"
+                return []
+            if self._mcp_registry is None or not self._mcp_registry.list_servers():
+                return []
+            return await self.retrieve_mcp_servers(query, limit=servers, namespaces=namespaces)
+
+        async def find_agents() -> list[A2AAgentDefinition]:
+            if agents <= 0:
+                return []
+            return await self.retrieve_a2a_agents(query, limit=agents, namespaces=namespaces)
+
+        tool_result, skill_results, server_results, agent_results = await asyncio.gather(
+            find_tools(), find_skills(), find_servers(), find_agents()
+        )
+
+        ranked: list[list[ContextEntry]] = [
+            [
+                ContextEntry(
+                    kind="tool",
+                    id=f"{scored.tool.namespace}.{scored.tool.name}",
+                    rank=rank,
+                    score=scored.final_score,
+                    entry=scored.tool,
+                )
+                for rank, scored in enumerate(tool_result.tools if tool_result else [], 1)
+            ],
+            [
+                ContextEntry(
+                    kind="skill",
+                    id=f"{found.skill.namespace}.{found.skill.name}",
+                    rank=rank,
+                    score=found.score,
+                    entry=found.skill,
+                )
+                for rank, found in enumerate(skill_results, 1)
+            ],
+            [
+                ContextEntry(
+                    kind="mcp_server",
+                    id=f"{server.namespace}.{server.name}",
+                    rank=rank,
+                    entry=server,
+                )
+                for rank, server in enumerate(server_results, 1)
+            ],
+            [
+                ContextEntry(kind="a2a_agent", id=agent.qualified_name, rank=rank, entry=agent)
+                for rank, agent in enumerate(agent_results, 1)
+            ],
+        ]
+        # By rank, then by kind in the order above. ``sorted`` is stable, so
+        # flattening kind by kind and sorting on rank alone gives exactly that.
+        entries = sorted((entry for group in ranked for entry in group), key=lambda e: e.rank)
+        return ContextResult(
+            entries=entries,
+            tool_retrieval=tool_result,
+            skipped=skipped,
+            total_time_ms=(perf_counter() - started) * 1000,
+        )
+
+    async def retrieve_tools_from_server(
+        self,
+        server_name: str,
+        query: str,
+        limit: int = 5,
+        dialect: str = "openai",
+        score_threshold: float = 0.0,
+        dialect_options: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> list[dict[str, Any]]:
+        """
+        Retrieve tools from one MCP server only.
+
+        The search runs within that server's tools, not across the registry and
+        then narrowed, so the result is what searching that server on its own
+        would return however many other tools are registered. The tools must
+        already be discovered (``add_mcp_server`` or
+        ``discover_tools_from_server``).
+
+        Args:
+            server_name: The MCP server's name, as given in its
+                :class:`~dotfetch.schema.config.MCPServerConfig`.
+            query: The natural language query
+            limit: Maximum number of tools to return
+            dialect: Target dialect/provider name (default: 'openai')
+            score_threshold: Minimum cosine score to keep a tool (default
+                ``0.0``, as for :meth:`retrieve_tools`)
+            dialect_options: Options forwarded to the dialect adapter
+            **kwargs: As for :meth:`retrieve_tools`. For several servers at
+                once, call that with ``mcp_servers=[...]`` instead.
+
+        Returns:
+            List of provider-specific tool schemas, all from ``server_name``
+        """
+        return await self.retrieve_tools(
+            query,
+            limit=limit,
+            dialect=dialect,
+            score_threshold=score_threshold,
+            dialect_options=dialect_options,
+            mcp_servers=[server_name],
+            **kwargs,
+        )
+
+    async def execute(self, call: ToolCall) -> ToolResult:
+        """
+        Execute a tool call with full protections.
+
+        Args:
+            call: The tool call to execute
+
+        Returns:
+            Result of the tool execution
+        """
+        await self._ensure_initialized()
+
+        # Auto-sync to ensure handlers are registered
+        await self.ensure_synced()
+
+        async with self._telemetry.span("tool_execution", {"tool_name": call.tool_name}):
+            result = await self._executor.execute(call)
+
+        await self._emit_tool_call(call, result)
+        return result
+
+    def on_tool_call(self, callback: Callable[..., Any]) -> Callable[[], None]:
+        """Register a callback fired after every tool execution.
+
+        This is the framework-agnostic observability seam: every call routed
+        through :meth:`execute` (and each call in :meth:`execute_batch`) invokes
+        the registered callbacks with a single
+        :class:`~dotfetch.schema.execution.ToolCallEvent` once the call
+        finishes — whether it succeeded, failed, timed out, or was denied.
+        Because ``execute`` is the single choke point every framework adapter
+        flows through, one ``on_tool_call`` registration yields logging/metrics
+        across LangChain, CrewAI, Agent Framework, direct calls, and the rest —
+        no per-framework middleware required.
+
+        Callbacks may be sync or async and are invoked in registration order.
+        Exceptions raised by a callback are caught and logged (never propagated
+        into the tool run), so a broken listener cannot break execution.
+
+        .. note::
+           **Batch timing differs from single execute.** In :meth:`execute`
+           the event fires the instant that call finishes. In
+           :meth:`execute_batch` events are emitted *after the whole batch
+           completes* — one per call, paired with its result by index — so for
+           a ``parallel`` batch they all arrive together at the end rather than
+           in completion order. The per-call ``ToolCallEvent.latency_ms`` is
+           still accurate; only the *delivery* time is batched, which matters
+           if you timestamp events for latency dashboards.
+
+        Registering the same callable twice registers it twice (it will fire
+        twice); the returned unsubscribe removes one registration.
+
+        Args:
+            callback: A callable accepting a single ``ToolCallEvent`` argument.
+
+        Returns:
+            An unsubscribe function; call it to remove the registration.
+        """
+        self._tool_call_callbacks.append(callback)
+
+        def _unsubscribe() -> None:
+            try:
+                self._tool_call_callbacks.remove(callback)
+            except ValueError:
+                pass
+
+        return _unsubscribe
+
+    async def _emit_tool_call(self, call: ToolCall, result: ToolResult) -> None:
+        """Build a ``ToolCallEvent`` and dispatch it to registered callbacks.
+
+        Error-isolated: a callback raising must never affect the tool result or
+        sibling callbacks. Awaitable return values are awaited so async
+        listeners work transparently.
+        """
+        if not self._tool_call_callbacks:
+            return
+        event = ToolCallEvent(call=call, result=result)
+        for callback in list(self._tool_call_callbacks):
+            try:
+                outcome = callback(event)
+                if inspect.isawaitable(outcome):
+                    await outcome
+            except Exception:
+                logger.exception(
+                    "on_tool_call callback %r raised; continuing.",
+                    getattr(callback, "__name__", callback),
+                )
+
+    async def search_and_execute(
+        self,
+        query: str,
+        arguments: dict[str, Any] | None = None,
+        limit: int = 1,
+        score_threshold: float = 0.0,
+        **kwargs: Any,
+    ) -> ToolResult:
+        """
+        One-shot convenience: search for a tool and execute it.
+
+        Combines retrieve_tools() and execute() into a single operation.
+        Useful for simple scripting and quick tool invocation.
+
+        Args:
+            query: Natural language query to find the tool
+            arguments: Arguments to pass to the tool (optional)
+            limit: Number of tools to retrieve (default: 1, uses best match)
+            **kwargs: Additional retrieval parameters (score_threshold, etc.)
+
+        Returns:
+            Result of executing the best matching tool
+
+        Raises:
+            ValueError: If no matching tools found
+
+        Example:
+            >>> result = await fetcher.search_and_execute(
+            ...     "calculate tax on 100",
+            ...     arguments={"amount": 100.0}
+            ... )
+            >>> print(result.result)
+            8.0
+        """
+        # Retrieve best matching tool
+        context = ConversationContext(query=query)
+        tool_query = ToolQuery(
+            context=context, limit=limit, score_threshold=score_threshold, **kwargs
+        )
+        result = await self.retrieve(tool_query)
+
+        if not result.tools:
+            raise ValueError(
+                f"No tools found matching query: '{query}'. "
+                f"Try a different query or check registered tools."
+            )
+
+        # Use the best scoring tool
+        best_tool = result.tools[0].tool
+
+        # Use provided arguments or empty dict
+        if arguments is None:
+            arguments = {}
+
+        # Execute the tool we actually selected: passing the namespace keeps a
+        # same-named tool in another namespace from being run instead.
+        return await self.execute(
+            ToolCall(
+                tool_name=best_tool.name,
+                namespace=best_tool.namespace,
+                arguments=arguments,
+            )
+        )
+
+    async def execute_tool_calls(
+        self,
+        response: Any,
+        *,
+        dialect: str = "openai",
+        timeout_ms: int | None = None,
+        parallel: bool = True,
+        retry_count: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Run every tool call in ``response`` and format the results to send back.
+
+        Closes the loop that the dialect adapters could already describe but
+        nothing drove: extract the calls (including parallel ones), execute
+        each through the full protection stack, and format each result in the
+        provider's own reply shape, ready to append to the conversation.
+
+        Failures are reported to the model rather than raised: a tool that
+        errors comes back as an error-flagged result so the model can react,
+        which is what a tool-use loop needs. Genuine programming errors — an
+        unknown dialect, a malformed response — still raise.
+
+        Args:
+            response: The provider response, an equivalent dict, or an already
+                extracted list of ``ToolCallPayload`` (e.g. from
+                :class:`~dotfetch.adapters.tool_spec.round_trip.StreamingToolCallAccumulator`).
+            dialect: Which provider shape to read and reply in.
+            timeout_ms: Per-call timeout override; omitted uses execution configuration.
+            parallel: Execute the calls concurrently (default). Set ``False``
+                to run them in the order the model emitted, for tools that
+                share mutable state.
+            retry_count: Per-call retry override; omitted uses execution configuration.
+                Set to zero to disable retries for this turn.
+
+        Returns:
+            One provider-formatted tool result per call, in emission order.
+            Empty when the model called no tools.
+
+        Example:
+            >>> response = await client.chat.completions.create(...)  # doctest: +SKIP
+            >>> results = await fetcher.execute_tool_calls(response)  # doctest: +SKIP
+            >>> messages.extend(results)  # doctest: +SKIP
+        """
+        from dotfetch.adapters.tool_spec.base import ToolCallPayload
+        from dotfetch.adapters.tool_spec.registry import get_adapter
+        from dotfetch.adapters.tool_spec.round_trip import extract_tool_calls
+
+        adapter = get_adapter(dialect)
+        if isinstance(response, list) and all(
+            isinstance(item, ToolCallPayload) for item in response
+        ):
+            payloads = response
+        else:
+            payloads = extract_tool_calls(response, dialect)
+        if not payloads:
+            return []
+
+        overrides: dict[str, Any] = {}
+        if timeout_ms is not None:
+            overrides["timeout_ms"] = timeout_ms
+        if retry_count is not None:
+            overrides["retry_count"] = retry_count
+        calls = [adapter.to_tool_call(p, **overrides) for p in payloads]
+
+        if parallel and len(calls) > 1:
+            results = await asyncio.gather(*(self.execute(call) for call in calls))
+        else:
+            results = [await self.execute(call) for call in calls]
+
+        formatted: list[dict[str, Any]] = []
+        for payload, result in zip(payloads, results):
+            is_error = result.status != ExecutionStatus.SUCCESS
+            formatted.append(
+                adapter.format_tool_result(
+                    payload.tool_name,
+                    f"Error: {result.error}" if is_error else result.result,
+                    payload.tool_call_id,
+                    is_error=is_error,
+                )
+            )
+        return formatted
+
+    async def execute_batch(self, batch: BatchToolCall) -> BatchToolResult:
+        """
+        Execute multiple tool calls.
+
+        Args:
+            batch: The batch of tool calls
+
+        Returns:
+            Results of all tool executions
+        """
+        await self._ensure_initialized()
+
+        # Auto-sync to ensure handlers are registered
+        await self.ensure_synced()
+
+        async with self._telemetry.span("batch_execution", {"count": len(batch.calls)}):
+            batch_result = await self._executor.execute_batch(batch)
+
+        if self._tool_call_callbacks:
+            # Results align with calls by index for every strategy: parallel
+            # gather preserves order, and sequential (incl. fail_fast early
+            # break) yields an aligned prefix, so zip pairs them correctly.
+            # Events are delivered here, after the whole batch finishes — but
+            # each ToolResult.latency_ms was measured by the executor at that
+            # call's own completion, so per-call latency stays accurate even
+            # though delivery is batched. Don't timestamp events at this point.
+            for call, result in zip(batch.calls, batch_result.results):
+                await self._emit_tool_call(call, result)
+        return batch_result
+
+    async def add_mcp_server(self, config: MCPServerConfig) -> int:
+        """
+        Add an MCP server to discover and register its tools.
+
+        Note: This method immediately discovers and registers ALL tools from the server.
+        For dynamic server selection, use register_mcp_server() instead.
+
+        Args:
+            config: Configuration for the MCP server
+
+        Returns:
+            Number of tools discovered and registered
+        """
+        from dotfetch.adapters.executors.mcp_client import MCPClient
+
+        await self._ensure_initialized()
+
+        # Reuse the client (and its persistent connection) across repeat
+        # calls. Keyed by namespace-qualified name — the same identity the
+        # MCP registry uses — and invalidated when the config itself changed
+        # (same name, different command/env/etc.), so a re-add never keeps
+        # executing against the old server process.
+        client_key = f"{config.namespace}.{config.name}"
+        existing = self._direct_mcp_clients.get(client_key)
+        if existing is not None and existing.config == config:
+            client = existing
+            tools = await client.list_tools()
+        else:
+            # New or reconfigured server: verify the replacement can discover
+            # BEFORE committing the swap. Closing/evicting the old client
+            # first would, on discovery failure, leave registry handlers
+            # closing over a client that fetcher.close() can no longer reach
+            # — still executing against the obsolete command.
+            client = MCPClient(config)
+            try:
+                tools = await client.list_tools()
+            except BaseException:
+                try:
+                    await client.close()
+                except Exception:
+                    logger.debug("Error closing failed MCP client", exc_info=True)
+                raise
+            if existing is not None:
+                try:
+                    await existing.close()
+                except Exception:
+                    logger.debug("Error closing reconfigured MCP client", exc_info=True)
+            self._direct_mcp_clients[client_key] = client
+
+        # Wire execution handlers so discovered tools run through
+        # fetcher.execute() (security, retries, telemetry) via the MCP client.
+        # Resolved from the client map at call time, so a later re-add with a
+        # different command or url is picked up by handlers made here.
+        self._register_mcp_tool_handlers(
+            client, tools, resolve_client=lambda: self._direct_mcp_clients.get(client_key)
+        )
+        await self._remove_stale_mcp_tools(client, tools)
+
+        # Add all tools first, then sync once — per-tool add_tool() would
+        # trigger a full sync (and a size-1 embedding batch) per tool when
+        # auto_sync is enabled.
+        self._enqueue(tools)
+        if self._config.auto_sync:
+            await self.sync()
+
+        return len(tools)
+
+    def _register_mcp_tool_handlers(
+        self,
+        client: Any,
+        tools: list[ToolDefinition],
+        resolve_client: Callable[[], Any] | None = None,
+    ) -> None:
+        """Register execution handlers that proxy tool calls to an MCP client.
+
+        Without a handler, MCP-discovered tools are retrievable but fail with
+        "No handler found" when executed through the engine.
+
+        Args:
+            client: The client discovery ran against, used when no resolver is
+                given (and as the fallback when a resolver returns nothing).
+            tools: The discovered tool definitions to wire up.
+            resolve_client: Looks the *current* client up at call time. A
+                handler that closed over the client forever went on executing
+                against a replaced endpoint: re-registering a server with a
+                new url drops the registry's cached client, but the handlers
+                already created held the old one directly.
+        """
+
+        def make_handler(tool: ToolDefinition) -> Callable[..., Any]:
+            # Dispatch with the name the *server* knows: discovery normalises
+            # ``searchWeb`` to ``search_web`` for dotfetch's identifier rules
+            # and keeps the original in metadata.
+            server_tool_name = str(tool.metadata.get("mcp_tool_name") or tool.name)
+
+            async def mcp_tool_handler(**arguments: Any) -> Any:
+                current = resolve_client() if resolve_client is not None else None
+                return await (current or client).call_tool(server_tool_name, arguments)
+
+            mcp_tool_handler.__name__ = f"mcp_{tool.name}"
+            return mcp_tool_handler
+
+        for tool in tools:
+            key = f"{tool.namespace}.{tool.name}"
+            # Qualified-name dedup (export_tools) keeps the first-seen
+            # definition, so overwriting only the handler on a collision would
+            # validate and authorize against one tool while dispatching to
+            # another. Keep first-wins for definition AND handler: skip when
+            # the name is already owned by a different source. Re-discovery
+            # from the same MCP server stays idempotent.
+            registered = self._registry.get_tool(tool.name, tool.namespace)
+            existing = registered or next(
+                (
+                    t
+                    for t in self._pending_tools
+                    if t.name == tool.name and t.namespace == tool.namespace
+                ),
+                None,
+            )
+            if existing is not None and existing.metadata.get("mcp_server") != client.config.name:
+                logger.warning(
+                    f"MCP server '{client.config.name}' exposes tool '{key}', which is "
+                    f"already registered by a different source; keeping the existing "
+                    f"tool. Use a distinct namespace to register both."
+                )
+                continue
+            if existing is not None:
+                # Same-server re-discovery: the schema may have changed (e.g.
+                # add_mcp_server re-called with a reconfigured server), and
+                # first-wins dedup would otherwise keep the stale definition
+                # while the handler dispatches to the new server. Drop stale
+                # pending copies (the caller re-appends the fresh ones); the
+                # register_tool below refreshes the registered copy.
+                self._pending_tools[:] = [
+                    t
+                    for t in self._pending_tools
+                    if not (t.name == tool.name and t.namespace == tool.namespace)
+                ]
+            # Register the definition immediately, mirroring add_tool(): the
+            # tool must be executable before the next sync() even with
+            # auto_sync=False — a handler alone isn't enough, execute() looks
+            # the definition up in the registry.
+            self._registry.register_tool(tool, make_handler(tool))
+
+    async def _remove_stale_mcp_tools(self, client: Any, tools: list[ToolDefinition]) -> None:
+        """Remove this server's previously registered tools that its latest
+        discovery no longer exposes.
+
+        A stale tool's handler closes over the replaced client, so executing
+        it would reconnect using the old server command — retrieval could
+        silently dispatch work to the obsolete process.
+
+        An empty listing is authoritative like any other: it removes every
+        tool the server had. See the comment below for why.
+        """
+        server_name = client.config.name
+        namespace = client.config.namespace
+        fresh = {tool.name for tool in tools}
+
+        def is_stale(t: ToolDefinition) -> bool:
+            return (
+                t.namespace == namespace
+                and t.metadata.get("mcp_server") == server_name
+                and t.name not in fresh
+            )
+
+        stale = [t for t in self._registry.list_tools(namespace) if is_stale(t)]
+        if not fresh and stale:
+            # An empty ``tools/list`` is the server's complete catalogue, so
+            # it removes everything like any other answer. This deliberately
+            # does *not* mirror ``prune_stale_tools``' empty-keep-set guard:
+            # there the empty set comes from this fetcher ("I do not know what
+            # belongs here"), here it comes from the server itself. Discovery
+            # failures never arrive this way — ``MCPClient.list_tools()``
+            # invalidates the session and re-raises — so the only readings are
+            # "withdrew everything" and a server answering early, and only the
+            # first is unrecoverable if ignored: refusing to prune leaves the
+            # tools retrievable with no path that ever removes them, since
+            # every later empty answer takes the same branch, while a wipe is
+            # undone by the next discovery that lists them. Logged because it
+            # is worth noticing.
+            logger.warning(
+                f"MCP server '{namespace}.{server_name}' listed no tools; removing the "
+                f"{len(stale)} it had registered."
+            )
+        for t in stale:
+            self._registry.delete_tool(t.name, t.namespace)
+            try:
+                await self._vector_store.delete(t.name, t.namespace)
+            except Exception:
+                logger.debug("Error removing stale MCP tool from vector store", exc_info=True)
+            await delete_tool_chunks(self._vector_store, t.name, t.namespace)
+        self._pending_tools[:] = [t for t in self._pending_tools if not is_stale(t)]
+        if stale:
+            logger.info(
+                f"Removed {len(stale)} stale tool(s) no longer exposed by "
+                f"MCP server '{namespace}.{server_name}'"
+            )
+
+    def register_mcp_server(
+        self,
+        name: str,
+        command: list[str] | None = None,
+        *,
+        description: str,
+        namespace: str = "default",
+        args: list[str] | None = None,
+        env: dict[str, str] | None = None,
+        tags: list[str] | None = None,
+        examples: list[str] | None = None,
+        capabilities: list[str] | None = None,
+        url: str | None = None,
+        headers: dict[str, str] | None = None,
+        transport: str | None = None,
+    ) -> None:
+        """
+        Register an MCP server for dynamic selection via semantic routing.
+
+        Unlike add_mcp_server(), this method does NOT immediately connect to the server.
+        Instead, it registers the server metadata for semantic search, and tools are
+        discovered on-demand when the server is selected.
+
+        Args:
+            name: Unique name for the server
+            command: Command to start a local stdio MCP server (e.g.
+                ``["npx", "@modelcontextprotocol/server-filesystem"]``). Give
+                either this or ``url``.
+            description: Description of what the server provides
+            namespace: Namespace for organizing servers
+            args: Additional command-line arguments
+            env: Environment variables for the server process
+            tags: Tags for categorizing the server
+            examples: Example queries this server handles
+            capabilities: Server capabilities (e.g., "read_files", "write_files")
+            url: Endpoint of a remote MCP server (Streamable HTTP, or SSE with
+                ``transport="sse"``)
+            headers: Extra HTTP headers for a remote server (auth tokens)
+            transport: ``"stdio"``, ``"streamable_http"`` or ``"sse"``;
+                inferred from ``command``/``url`` when omitted
+
+        Raises:
+            RuntimeError: If MCP support is unavailable (``pip install dotfetch[mcp]`` (or ``uv add 'dotfetch[mcp]'``))
+
+        Example:
+            >>> fetcher.register_mcp_server(
+            ...     name="filesystem",
+            ...     command=["npx", "-y", "@modelcontextprotocol/server-filesystem"],
+            ...     description="Provides tools for reading and writing files on the local filesystem",
+            ...     args=["--path", "/tmp"],
+            ...     tags=["filesystem", "files", "io"],
+            ...     examples=["read a file", "write to a file", "list directory contents"],
+            ...     capabilities=["read_files", "write_files", "list_directory"],
+            ... )
+            >>> fetcher.register_mcp_server(
+            ...     name="search",
+            ...     url="https://mcp.example.com/mcp",
+            ...     headers={"Authorization": "Bearer ..."},
+            ...     description="Web search and page fetching",
+            ... )
+        """
+        manager = self._require_mcp_manager()
+        manager.register_server(
+            name,
+            command,
+            description=description,
+            namespace=namespace,
+            args=args,
+            env=env,
+            tags=tags,
+            examples=examples,
+            capabilities=capabilities,
+            url=url,
+            headers=headers,
+            transport=transport,
+        )
+        # A server registered after the first MCP sync must be embedded before
+        # the next retrieval; ``_ensure_mcp_synced`` also checks the pending
+        # list, this just keeps the flag honest.
+        self._mcp_synced = False
+        # A listing made under the previous registration may be another
+        # server's by now.
+        self._mcp_catalogues.pop((namespace, name), None)
+
+    def _require_mcp_manager(self) -> Any:
+        """Return the MCP manager, or explain how to enable MCP support."""
+        if self._mcp_manager is None:
+            raise RuntimeError(
+                "MCP support is not available. Install it with "
+                "'pip install dotfetch[mcp]' (or 'uv add \"dotfetch[mcp]\"')."
+            )
+        return self._mcp_manager
+
+    async def retrieve_mcp_servers(
+        self,
+        query: str,
+        limit: int = 3,
+        score_threshold: float | None = None,
+        namespaces: list[str] | None = None,
+        *,
+        diversity_factor: float = 0.0,
+        rerank: bool = False,
+    ) -> list[MCPServerDefinition]:
+        """
+        Retrieve relevant MCP servers based on a query using semantic search.
+
+        Args:
+            query: Natural language query describing needed functionality
+            limit: Maximum number of servers to return
+            score_threshold: Minimum similarity score (0-1)
+            namespaces: Filter by server namespaces
+            diversity_factor: ``0`` ranks by relevance alone. Above it, a
+                server much like one already picked gives way to a different
+                one (maximal marginal relevance). Not applied when a selector
+                answers, or together with ``rerank``, which decides the order.
+            rerank: Rescore the best candidates with the fetcher's reranker,
+                the one tool retrieval uses, and return its top ``limit``.
+                Off unless asked for. Not applied when a selector answers.
+
+        Returns:
+            List of relevant MCP server definitions
+
+        Raises:
+            ValueError: If ``rerank`` is set and no reranker is configured.
+
+        Example:
+            >>> servers = await fetcher.retrieve_mcp_servers(
+            ...     "read and write files",
+            ...     limit=2
+            ... )
+            >>> for server in servers:
+            ...     print(f"Server: {server.name} - {server.description}")
+        """
+        self._require_mcp_manager()
+        _check_diversity(diversity_factor)
+        reranker = self._reranker_for(rerank)
+
+        # Before the sync, not after. ``register_server()`` puts the definition
+        # straight into the registry that ``_select_mcp_servers`` reads; the
+        # pending buffer it also appends to is purely the vector store's
+        # backlog. So syncing first embedded every server for a path that never
+        # reads those vectors, and made the embedding-free route fail whenever
+        # the embedder or store was unavailable.
+        selected = await self._select_mcp_servers(query, limit, score_threshold, namespaces)
+        if selected is not None:
+            return selected
+
+        await self._ensure_initialized()
+        await self._ensure_mcp_synced()
+
+        result = await self._mcp_router.route(
+            query=query,
+            # A reranker chooses among more candidates than it returns.
+            limit=limit * 4 if reranker is not None else limit,
+            score_threshold=score_threshold,
+            namespaces=namespaces,
+            diversity_factor=0.0 if reranker is not None else diversity_factor,
+        )
+        if reranker is not None and result.servers:
+            # A server's own text says nothing of the tools it lists, which
+            # may be all that matched: show the reranker that passage too.
+            ranked = await rerank_texts(
+                reranker,
+                query,
+                [
+                    " ".join(
+                        part
+                        for part in (scored.server.to_searchable_text(), scored.passage)
+                        if part
+                    )
+                    for scored in result.servers
+                ],
+                limit,
+                names=[scored.server.name for scored in result.servers],
+                scores=[scored.score for scored in result.servers],
+            )
+            return [result.servers[index].server for index, _ in ranked]
+
+        return [scored.server for scored in result.servers]
+
+    async def _fetch_mcp_catalogue(
+        self, server_name: str, namespace: str, timeout: float
+    ) -> tuple[Any, list[ToolDefinition]]:
+        """Connect to a registered MCP server and list its tools, recording its health.
+
+        Registers nothing and embeds nothing. The listing is remembered so
+        that :meth:`adopt_server_tools` can commit part of it without asking
+        the server again.
+        """
+        self._require_mcp_manager()
+        await self._ensure_initialized()
+
+        client = self._mcp_registry.get_client(server_name, namespace)
+        if not client:
+            raise ValueError(
+                f"MCP server '{namespace}.{server_name}' not found. "
+                f"Register it first with register_mcp_server()."
+            )
+
+        def _mark_failed() -> None:
+            server = self._mcp_registry.get_server(server_name, namespace)
+            self._mcp_registry.update_health(
+                server_name,
+                namespace,
+                available=False,
+                last_failure=datetime.now(timezone.utc),
+                consecutive_failures=server.health.consecutive_failures + 1 if server else 1,
+            )
+
+        try:
+            tools = await asyncio.wait_for(client.list_tools(), timeout=timeout)
+        except asyncio.TimeoutError:
+            _mark_failed()
+            logger.error(
+                f"Timeout while discovering tools from MCP server {namespace}.{server_name} "
+                f"(timeout: {timeout}s)"
+            )
+            raise TimeoutError(
+                f"MCP server {namespace}.{server_name} did not respond within {timeout}s"
+            )
+        except Exception as e:
+            _mark_failed()
+            logger.error(f"Failed to discover tools from MCP server {namespace}.{server_name}: {e}")
+            raise
+
+        self._mcp_registry.update_health(
+            server_name,
+            namespace,
+            available=True,
+            last_success=datetime.now(timezone.utc),
+            consecutive_failures=0,
+        )
+        self._mcp_catalogues[(namespace, server_name)] = list(tools)
+        # The server is routed to by what it lists as well as by what its
+        # registration says; the pieces are embedded at the next server sync.
+        self._mcp_manager.set_catalogue(server_name, namespace, tools)
+        self._mcp_synced = False
+        return client, tools
+
+    async def list_server_tools(
+        self,
+        server_name: str,
+        namespace: str = "default",
+        timeout: float = 30.0,
+    ) -> list[ToolDefinition]:
+        """
+        List the tools a registered MCP server offers, without committing any of them.
+
+        This is discovery without the cost: the server is asked what it has,
+        and nothing is registered, embedded or given a handler, so the tools
+        do not compete with the rest of the registry and cannot be retrieved
+        or executed yet. Commit the ones you want with
+        :meth:`adopt_server_tools`. A server with several hundred tools can be
+        catalogued this way for the price of one request.
+
+        Args:
+            server_name: Name of the registered MCP server
+            namespace: Server namespace
+            timeout: Connection timeout in seconds (default: 30.0)
+
+        Returns:
+            The server's tools as :class:`~dotfetch.schema.tool.ToolDefinition`
+            objects: names, descriptions and schemas.
+
+        Raises:
+            ValueError: If the server is not registered
+            TimeoutError: If the connection or tool discovery times out
+            Exception: If tool discovery fails
+        """
+        _, tools = await self._fetch_mcp_catalogue(server_name, namespace, timeout)
+        return list(tools)
+
+    async def adopt_server_tools(
+        self,
+        server_name: str,
+        names: Sequence[str] | None = None,
+        *,
+        namespace: str = "default",
+        timeout: float = 30.0,
+        refresh: bool = False,
+    ) -> int:
+        """
+        Register and embed tools from a registered MCP server: all of them, or some.
+
+        Adoption adds to what was adopted before; it does not replace it. A
+        tool the server no longer lists is removed, whether or not it is named
+        here.
+
+        Args:
+            server_name: Name of the registered MCP server
+            names: The tools to adopt, by the name dotfetch gives them or the
+                name the server knows them by. ``None`` adopts every tool the
+                server lists, which is what
+                :meth:`discover_tools_from_server` does.
+            namespace: Server namespace
+            timeout: Connection timeout in seconds (default: 30.0)
+            refresh: Ask the server for its tools again even if
+                :meth:`list_server_tools` already has. Without it, a listing
+                made earlier in this process is reused, however old: a tool
+                the server has dropped since can still be adopted from it and
+                will fail when called, and is not removed until the server is
+                asked again. Pass ``True`` when the listing may be stale.
+
+        Returns:
+            Number of tools adopted
+
+        Raises:
+            ValueError: If the server is not registered, or a name in
+                ``names`` is not one of its tools
+            TimeoutError: If the connection or tool discovery times out
+            Exception: If tool discovery fails
+
+        Example:
+            >>> catalogue = await fetcher.list_server_tools("datadog")
+            >>> wanted = [t.name for t in catalogue if "log" in t.name]
+            >>> await fetcher.adopt_server_tools("datadog", wanted)
+        """
+        self._require_mcp_manager()
+        catalogue = None if refresh else self._mcp_catalogues.get((namespace, server_name))
+        client = self._mcp_registry.get_client(server_name, namespace)
+        if catalogue is None or client is None:
+            client, catalogue = await self._fetch_mcp_catalogue(server_name, namespace, timeout)
+        else:
+            await self._ensure_initialized()
+
+        # Before the names are checked, and against the whole listing, not the
+        # adopted part. A tool adopted earlier and still offered stays; one
+        # the server has dropped goes, even when this call then fails on a
+        # name, because what the server no longer has cannot be called.
+        await self._remove_stale_mcp_tools(client, catalogue)
+
+        if names is None:
+            tools = list(catalogue)
+        else:
+            from dotfetch.adapters.executors.mcp_client import MCPClient
+
+            wanted = set(names)
+            tools = [
+                t for t in catalogue if t.name in wanted or MCPClient.server_tool_name(t) in wanted
+            ]
+            found = {t.name for t in tools} | {MCPClient.server_tool_name(t) for t in tools}
+            missing = sorted(wanted - found)
+            if missing:
+                raise ValueError(
+                    f"MCP server '{namespace}.{server_name}' has no tool named "
+                    f"{', '.join(repr(name) for name in missing)}."
+                )
+
+        registry = self._mcp_registry
+
+        def _current_client() -> Any:
+            return registry.get_client(server_name, namespace) if registry else None
+
+        self._register_mcp_tool_handlers(client, tools, resolve_client=_current_client)
+
+        self._enqueue(tools)
+        if self._config.auto_sync:
+            await self.sync()
+
+        logger.info(
+            f"Adopted {len(tools)} of {len(catalogue)} tools from MCP server: "
+            f"{namespace}.{server_name}"
+        )
+        return len(tools)
+
+    async def discover_tools_from_server(
+        self,
+        server_name: str,
+        namespace: str = "default",
+        timeout: float = 30.0,
+    ) -> int:
+        """
+        Dynamically discover and register tools from a previously registered MCP server.
+
+        This method connects to the server, discovers its tools, and adds
+        every one of them to the fetcher's tool registry. For a server with
+        many tools, :meth:`list_server_tools` and :meth:`adopt_server_tools`
+        commit only the ones you choose.
+
+        Args:
+            server_name: Name of the registered MCP server
+            namespace: Server namespace
+            timeout: Connection timeout in seconds (default: 30.0)
+
+        Returns:
+            Number of tools discovered and registered
+
+        Raises:
+            ValueError: If the server is not registered
+            TimeoutError: If the connection or tool discovery times out
+            Exception: If tool discovery fails
+
+        Example:
+            >>> # First register the server metadata
+            >>> fetcher.register_mcp_server(...)
+            >>> await fetcher.sync()
+            >>>
+            >>> # Later, discover tools on-demand
+            >>> count = await fetcher.discover_tools_from_server("filesystem")
+            >>> print(f"Discovered {count} tools")
+        """
+        return await self.adopt_server_tools(
+            server_name, None, namespace=namespace, timeout=timeout, refresh=True
+        )
+
+    async def serve_mcp(
+        self,
+        transport: str = "stdio",
+        mode: str = "dynamic",
+        name: str = "dotfetch",
+        *,
+        host: str = "127.0.0.1",
+        port: int = 8000,
+        path: str | None = None,
+        expose: Sequence[str] | None = None,
+        **transport_options: Any,
+    ) -> None:
+        """
+        Start serving as an MCP server.
+
+        Args:
+            transport: ``"stdio"`` (local clients such as Claude Desktop or
+                Claude Code), ``"streamable_http"`` (alias ``"http"``; the
+                current MCP spec transport) or ``"sse"`` (legacy).
+            mode: Server mode (``"dynamic"``, ``"static"`` or ``"hybrid"``)
+            name: Server name for identification
+            host: Interface to bind for the HTTP transports (loopback by default)
+            port: Port for the HTTP transports
+            path: Endpoint path, or ``None`` for each transport's own
+                default. For Streamable HTTP that is ``/mcp``; for ``sse`` it
+                is ``/sse``, and a value given here becomes the event-stream
+                path.
+            expose: Tools listed directly in ``hybrid`` mode (``name`` or
+                ``namespace.name``)
+            **transport_options: Forwarded to the transport runner — e.g.
+                ``allowed_hosts=[...]`` / ``allowed_origins=[...]`` to enable
+                DNS-rebinding protection, ``stateless=True`` or
+                ``json_response=True`` for Streamable HTTP.
+
+        Example:
+            >>> await fetcher.serve_mcp()  # stdio, dynamic meta-tools
+            >>> await fetcher.serve_mcp("http", port=8765, mode="hybrid", expose=["get_weather"])
+        """
+        from dotfetch.servers.mcp_server import create_mcp_server
+
+        await self._ensure_initialized()
+        await self.ensure_synced()
+
+        server = create_mcp_server(self, mode=mode, name=name, expose=expose)
+
+        if transport == "stdio":
+            await server.run_stdio()
+        elif transport in ("streamable_http", "http"):
+            await server.run_http(
+                host=host,
+                port=port,
+                path=_DEFAULT_MCP_PATH if path is None else path,
+                **transport_options,
+            )
+        elif transport == "sse":
+            # SSE takes its endpoint as ``sse_path`` and defaults to ``/sse``,
+            # so ``path`` was accepted and silently dropped here: ``serve_mcp(
+            # transport="sse", path="/custom")`` served ``/sse`` regardless.
+            # ``None`` means "whatever this transport defaults to", which is why
+            # it is the signature default: comparing against ``/mcp`` instead
+            # could not tell an explicit ``path="/mcp"`` from an absent one.
+            if path is not None:
+                transport_options.setdefault("sse_path", path)
+            await server.run_sse(host=host, port=port, **transport_options)
+        else:
+            raise ValueError(
+                f"Unsupported transport: {transport} (stdio, streamable_http/http or sse)"
+            )
+
+    async def add_a2a_agent(self, config: A2AAgentConfig) -> int:
+        """
+        Add an A2A agent to discover and register its skills as tools.
+
+        Args:
+            config: Configuration for the A2A agent
+
+        Returns:
+            Number of skills discovered and registered as tools
+        """
+        from dotfetch.providers.a2a_client import A2AClient
+
+        reject_reserved_namespace(config.namespace, f"the skills of agent '{config.name}'")
+        await self._ensure_initialized()
+
+        # Discovery-only client: close it when done so its persistent HTTP
+        # connections are released deterministically (execution goes through
+        # the engine's own A2AExecutor clients, not this one).
+        client = A2AClient(config)
+        try:
+            await client.discover()
+            tools = await client.list_tools()
+        finally:
+            await client.close()
+
+        # The agent itself becomes routable, described by its own card. A
+        # registration made by hand keeps its wording and gains the card's
+        # skills.
+        card = client._agent_card
+        if card is not None:
+            known = self._a2a_manager.get(config.name, config.namespace)
+            description = (known.description if known else card.description).strip()
+            self._a2a_manager.register(
+                A2AAgentDefinition(
+                    name=config.name,
+                    namespace=config.namespace,
+                    url=config.url,
+                    description=(
+                        description if len(description) >= 10 else f"A2A agent {config.name}. {description}"
+                    )[:2000],
+                    tags=known.tags if known else [],
+                    examples=known.examples if known else [],
+                    skills=[f"{skill.name}: {skill.description}" for skill in card.skills],
+                    input_modes=sorted({m for skill in card.skills for m in skill.input_modes}),
+                    output_modes=sorted({m for skill in card.skills for m in skill.output_modes}),
+                )
+            )
+
+        # Add all tools first, then sync once (avoids per-tool full syncs)
+        self._enqueue(tools)
+        if self._config.auto_sync:
+            await self.sync()
+
+        return len(tools)
+
+    def register_a2a_agent(
+        self,
+        name: str,
+        url: str,
+        *,
+        description: str,
+        namespace: str = "default",
+        tags: list[str] | None = None,
+        examples: list[str] | None = None,
+    ) -> None:
+        """
+        Register an A2A agent for routing, without contacting it.
+
+        The agent becomes findable with :meth:`retrieve_a2a_agents` by this
+        description. None of its skills is a tool until
+        :meth:`discover_skills_from_agent` (or :meth:`add_a2a_agent`) reads
+        its card, which also adds the card's skills to what the agent is
+        found by.
+
+        Args:
+            name: Name for the agent
+            url: Base URL of the agent
+            description: What the agent does (at least 10 characters)
+            namespace: Namespace for the agent and its skills' tools
+            tags: Tags for categorising the agent
+            examples: Example requests the agent handles
+        """
+        # Validates the URL exactly as a discovery would.
+        A2AAgentConfig(name=name, url=url, namespace=namespace)
+        self._a2a_manager.register(
+            A2AAgentDefinition(
+                name=name,
+                namespace=namespace,
+                url=url,
+                description=description,
+                tags=tags or [],
+                examples=examples or [],
+            )
+        )
+
+    async def discover_skills_from_agent(self, name: str, namespace: str = "default") -> int:
+        """
+        Read a registered A2A agent's card and register its skills as tools.
+
+        Args:
+            name: Name of the registered agent
+            namespace: Its namespace
+
+        Returns:
+            Number of skills discovered and registered as tools
+
+        Raises:
+            ValueError: If the agent is not registered
+        """
+        agent = self._a2a_manager.get(name, namespace)
+        if agent is None:
+            raise ValueError(
+                f"A2A agent '{namespace}.{name}' not found. "
+                f"Register it first with register_a2a_agent()."
+            )
+        return await self.add_a2a_agent(
+            A2AAgentConfig(name=agent.name, url=agent.url, namespace=agent.namespace)
+        )
+
+    async def retrieve_a2a_agents(
+        self,
+        query: str,
+        limit: int = 3,
+        score_threshold: float | None = None,
+        namespaces: list[str] | None = None,
+    ) -> list[A2AAgentDefinition]:
+        """
+        Retrieve the registered A2A agents most relevant to a query.
+
+        Args:
+            query: Natural language query describing what is needed
+            limit: Maximum number of agents to return
+            score_threshold: Minimum similarity score (0-1)
+            namespaces: Filter by agent namespaces
+
+        Returns:
+            Agent definitions, most relevant first
+        """
+        if not query.strip() or not self._a2a_manager.list():
+            return []
+        selected = await self._select_a2a_agents(query, limit, score_threshold, namespaces)
+        if selected is not None:
+            return selected
+
+        await self._ensure_initialized()
+        if self._a2a_manager.needs_sync:
+            await self._a2a_manager.sync()
+        routed = await self._a2a_manager.route(
+            query, limit=limit, score_threshold=score_threshold, namespaces=namespaces
+        )
+        return [agent for agent, _ in routed]
+
+    def list_a2a_agents(self, namespace: str | None = None) -> list[A2AAgentDefinition]:
+        """The registered A2A agents, optionally those of one namespace."""
+        return self._a2a_manager.list(namespace)
+
+    def serve_a2a(self, host: str = "0.0.0.0", port: int = 8080) -> None:
+        """
+        Start serving as an A2A agent.
+
+        Args:
+            host: Host to bind to
+            port: Port to listen on
+
+        Note:
+            This method requires FastAPI and uvicorn to be installed.
+            Install with: pip install fastapi uvicorn (or uv add fastapi uvicorn)
+        """
+        try:
+            import uvicorn
+        except ImportError as e:
+            raise ImportError(
+                "uvicorn is required for A2A server. Install with: pip install fastapi uvicorn (or uv add fastapi uvicorn)"
+            ) from e
+
+        from dotfetch.servers.a2a_server import create_a2a_server
+
+        # Create FastAPI app
+        base_url = f"http://{host}:{port}"
+        app = create_a2a_server(self, base_url=base_url)
+
+        # Run server
+        uvicorn.run(app, host=host, port=port)
+
+    @property
+    def tool_count(self) -> int:
+        """Return the number of registered tools that have an execution handler."""
+        return self._registry.handler_count
+
+    @property
+    def embedder(self) -> EmbeddingAdapter:
+        """Return the embedder this fetcher is using.
+
+        Public accessor exposed so sibling modules (CLI helpers,
+        the registry linter, custom tooling) can perform their own
+        embedding work without reaching into ``_embedder``.
+        """
+        return self._embedder
+
+    async def get_tool(self, name: str, namespace: str = "default") -> ToolDefinition | None:
+        """
+        Get a tool by name.
+
+        Args:
+            name: Tool name
+            namespace: Tool namespace
+
+        Returns:
+            The tool definition if found
+        """
+        await self._ensure_initialized()
+        await self.ensure_synced()
+        return await self._vector_store.get_by_name(name, namespace)
+
+    async def list_tools(
+        self,
+        namespace: str | None = None,
+    ) -> list[ToolDefinition]:
+        """
+        List all registered tools.
+
+        Args:
+            namespace: Filter by namespace
+
+        Returns:
+            List of tool definitions
+        """
+        await self._ensure_initialized()
+        await self.ensure_synced()
+        stored = await self._list_all_pages(self._vector_store.list_all, namespace=namespace)
+        # Index bookkeeping (chunks of long descriptions, the entries MCP
+        # servers are routed by) shares the store and is not a tool; it is
+        # listed only when its namespace is asked for by name.
+        return [
+            t for t in stored if t.namespace == namespace or not is_reserved_namespace(t.namespace)
+        ]
+
+    @staticmethod
+    async def _list_all_pages(
+        list_page: Callable[..., Any], *, page_size: int = 1000, **kwargs: Any
+    ) -> list[Any]:
+        """Drain a paginated ``list_all``-style store method.
+
+        Every store's ``list_all`` defaults to ``limit=1000``, so calling it
+        once silently truncated registries past a thousand tools. Pages are
+        fetched until one comes back short.
+        """
+        items: list[Any] = []
+        offset = 0
+        while True:
+            page = list(await list_page(limit=page_size, offset=offset, **kwargs))
+            items.extend(page)
+            if len(page) < page_size:
+                return items
+            offset += page_size
+
+    def list_tools_sync(
+        self,
+        namespace: str | None = None,
+    ) -> list[ToolDefinition]:
+        """
+        Synchronously list locally-registered tools.
+
+        Reads from the in-memory registry only — does not hit the vector
+        store and does not trigger sync. This is the natural API for
+        read-only inspection (telemetry, debug printers, validators) where
+        going through ``await`` is awkward and the in-memory view is
+        sufficient.
+
+        Args:
+            namespace: Filter by namespace.
+
+        Returns:
+            List of tool definitions known to the registry.
+        """
+        registered = self._registry.list_tools()
+        pending = self._pending_tools
+
+        seen: set[str] = set()
+        out: list[ToolDefinition] = []
+        for tool in (*registered, *pending):
+            key = f"{tool.namespace}.{tool.name}"
+            if key in seen:
+                continue
+            if namespace is not None and tool.namespace != namespace:
+                continue
+            seen.add(key)
+            out.append(tool)
+        return out
+
+    def requires_confirmation(
+        self,
+        tool: ToolDefinition | str,
+        namespace: str | None = None,
+    ) -> bool:
+        """Whether a call to ``tool`` would stop at dotfetch's confirmation gate.
+
+        Answers without executing or charging anything, so framework adapters can
+        route a call into their own human-approval flow *before* running it
+        (OpenAI Agents SDK ``needs_approval``, LangGraph interrupts, ...). True when
+        the tool sets ``requires_confirmation`` or its name matches one of the
+        security policy's ``require_confirmation`` patterns -- the two gates
+        :meth:`execute` applies up front. A custom policy that decides only at
+        call time is still enforced by :meth:`execute`, which then returns
+        ``PENDING_CONFIRMATION`` without running the tool.
+
+        Args:
+            tool: The tool definition, or its bare name to look up in the registry.
+            namespace: Namespace for a name lookup; ``None`` matches any.
+
+        Returns:
+            ``True`` if the call needs human approval first.
+        """
+        import fnmatch
+
+        if isinstance(tool, str):
+            name = tool
+            found = next((t for t in self.list_tools_sync(namespace) if t.name == name), None)
+            if found is not None and found.requires_confirmation:
+                return True
+        else:
+            name = tool.name
+            if tool.requires_confirmation:
+                return True
+        patterns = getattr(self._security_policy, "require_confirmation", None) or ()
+        return any(fnmatch.fnmatch(name, pattern) for pattern in patterns)
+
+    async def preview(
+        self,
+        query: str,
+        *,
+        limit: int = 10,
+        score_threshold: float | None = None,
+        **query_kwargs: Any,
+    ) -> list[tuple[str, float]]:
+        """
+        Preview which tools would surface for a given query.
+
+        Read-only helper for calibrating ``score_threshold`` and ``top_k``
+        without spinning up the full agent. Returns ``(tool_name, score)``
+        pairs sorted by descending score.
+
+        Args:
+            query: Natural-language query to retrieve against.
+            limit: Maximum number of candidates to return (default 10).
+            score_threshold: Override the score threshold. ``None`` uses
+                the configured default of ``0.0`` so you can see the full
+                ranking, including tools that would be filtered out.
+            **query_kwargs: Forwarded to :class:`ToolQuery` /
+                :class:`ConversationContext` (``namespaces``, etc.).
+
+        Returns:
+            List of ``(qualified_name, semantic_score)`` tuples sorted
+            descending by score. Qualified name is ``namespace.name``.
+
+        Example:
+            >>> ranked = await fetcher.preview(
+            ...     "find boundaries in OCR text",
+            ...     limit=10,
+            ...     score_threshold=0.0,
+            ... )
+            >>> for name, score in ranked:
+            ...     print(f"{score:.3f}  {name}")
+        """
+        threshold = 0.0 if score_threshold is None else score_threshold
+        context = ConversationContext(query=query)
+        tool_query = ToolQuery(
+            context=context,
+            limit=limit,
+            score_threshold=threshold,
+            **query_kwargs,
+        )
+        result = await self.retrieve(tool_query)
+        return [
+            (f"{st.tool.namespace}.{st.tool.name}", st.semantic_score)
+            for st in result.tools
+        ]
+
+    async def analyze_registry(
+        self,
+        *,
+        similarity_threshold: float = 0.85,
+        tag_overlap_share: float = 0.5,
+    ) -> Any:
+        """Lint the registry for common tool-description mistakes.
+
+        Convenience wrapper around
+        :func:`dotfetch.utils.registry_linter.analyze_registry`.
+        Returns a :class:`RegistryAnalysis` listing tools whose
+        descriptions name other registered tools (which pulls them
+        toward the wrong queries via embedding similarity), pairs of
+        tools whose searchable text is too similar to disambiguate,
+        and tags that appear on so many tools they no longer carry
+        discriminative value.
+        """
+        from dotfetch.utils.registry_linter import (
+            analyze_registry as _analyze,
+        )
+
+        return await _analyze(
+            self,
+            similarity_threshold=similarity_threshold,
+            tag_overlap_share=tag_overlap_share,
+        )
+
+    async def pairwise_similarity(self, tool_a: str, tool_b: str) -> float:
+        """Cosine similarity between two registered tools' searchable text."""
+        from dotfetch.utils.registry_linter import (
+            pairwise_similarity as _sim,
+        )
+
+        return await _sim(self, tool_a, tool_b)
+
+    @overload
+    def framework(
+        self, name: Literal["agno"], *, default_limit: int = 5
+    ) -> framework_adapters.AgnoAdapter: ...
+
+    @overload
+    def framework(
+        self, name: Literal["agent_framework", "agent-framework"], *, default_limit: int = 5
+    ) -> AgentFrameworkAdapter: ...
+
+    @overload
+    def framework(
+        self, name: Literal["crewai", "crew_ai"], *, default_limit: int = 5
+    ) -> framework_adapters.CrewAIAdapter: ...
+
+    @overload
+    def framework(
+        self, name: Literal["dspy"], *, default_limit: int = 5
+    ) -> framework_adapters.DSPyAdapter: ...
+
+    @overload
+    def framework(
+        self, name: Literal["google_adk", "google-adk"], *, default_limit: int = 5
+    ) -> framework_adapters.GoogleADKAdapter: ...
+
+    @overload
+    def framework(
+        self, name: Literal["haystack"], *, default_limit: int = 5
+    ) -> framework_adapters.HaystackAdapter: ...
+
+    @overload
+    def framework(
+        self, name: Literal["langchain"], *, default_limit: int = 5
+    ) -> framework_adapters.LangChainAdapter: ...
+
+    @overload
+    def framework(
+        self, name: Literal["langgraph"], *, default_limit: int = 5
+    ) -> framework_adapters.LangGraphAdapter: ...
+
+    @overload
+    def framework(
+        self, name: Literal["llamaindex", "llama_index", "llama-index"], *, default_limit: int = 5
+    ) -> framework_adapters.LlamaIndexAdapter: ...
+
+    @overload
+    def framework(
+        self, name: Literal["openai_agents", "openai-agents"], *, default_limit: int = 5
+    ) -> framework_adapters.OpenAIAgentsAdapter: ...
+
+    @overload
+    def framework(
+        self, name: Literal["pydantic_ai", "pydantic-ai"], *, default_limit: int = 5
+    ) -> framework_adapters.PydanticAIAdapter: ...
+
+    @overload
+    def framework(
+        self, name: Literal["strands"], *, default_limit: int = 5
+    ) -> framework_adapters.StrandsAdapter: ...
+
+    @overload
+    def framework(
+        self, name: str, *, default_limit: int = 5
+    ) -> BaseFrameworkAdapter | AgentFrameworkAdapter: ...
+
+    def framework(
+        self, name: str, *, default_limit: int = 5
+    ) -> BaseFrameworkAdapter | AgentFrameworkAdapter:
+        """Access a native framework adapter without a framework-specific import.
+
+        Examples:
+            tools = await fetcher.framework("langchain").select("send an email")
+            toolset = fetcher.framework("pydantic-ai").live(limit=3)
+            provider = fetcher.framework("agent-framework").live(limit=3)
+
+        Literal names preserve the concrete adapter type for editor completion.
+        Names are case-insensitive; hyphens and underscores are interchangeable.
+        Use `dotfetch.supported_frameworks()` to discover canonical names.
+        SDKs are imported only when selecting tools or building live integrations,
+        with installation instructions if a required SDK is missing.
+
+        Args:
+            name: Framework name, such as "langchain", "pydantic_ai" or "strands".
+            default_limit: Default selection budget (1–50) for this adapter.
+
+        Returns:
+            A fresh adapter bound to this registry. Keep it to configure live
+            selection or reuse it across calls. All adapters expose `select(query)`
+            for static selection and `live(...)` for framework lifecycle hooks.
+
+        Raises:
+            ValueError: The framework name or default selection budget is invalid.
+        """
+        from dotfetch.integrations.frameworks.registry import create_framework_adapter
+
+        return create_framework_adapter(self, name, default_limit=default_limit)
+
+    def export_tools(self) -> list[ToolDefinition]:
+        """
+        Export all registered and pending tools.
+
+        Useful for importing tools into another DotFetch instance
+        without accessing private attributes. Same view as
+        :meth:`list_tools_sync` without a namespace filter.
+
+        Returns:
+            List of all tool definitions (registered + pending)
+        """
+        return self.list_tools_sync()
+
+    # ------------------------------------------------------------------
+    # Skills — semantic procedural memory alongside tools: registered
+    # once, retrieved by meaning per prompt, and injected as context
+    # (never executed). Same embedder and vector store as tools.
+    # ------------------------------------------------------------------
+
+    _SKILL_STORE_METHODS = (
+        "add_skills",
+        "search_skills",
+        "get_skill_by_name",
+        "delete_skill",
+        "list_all_skills",
+        "count_skills",
+    )
+
+    def _skills_store(self) -> Any:
+        """Return the vector store if it supports skills, else raise.
+
+        Checks the full skill API surface up front so a partially
+        implemented adapter fails with this clear message instead of an
+        AttributeError from deep inside a later call. ``list_all_skills``
+        must take ``namespace``, ``category``, ``limit`` and ``offset``:
+        the facade passes a requested category through, so a store that
+        cannot filter by it fails loudly rather than handing the selector
+        skills outside it.
+        """
+        store = self._vector_store
+        missing = [m for m in self._SKILL_STORE_METHODS if not hasattr(store, m)]
+        if missing:
+            raise NotImplementedError(
+                f"{type(store).__name__} does not support skills "
+                f"(missing: {', '.join(missing)}). "
+                f"InMemoryVectorStore (default) and LanceDBVectorStore do."
+            )
+        return store
+
+    async def add_skill(self, skill: Skill) -> None:
+        """
+        Add a single skill. See :meth:`add_skills`.
+
+        Args:
+            skill: The skill to add
+        """
+        await self.add_skills([skill])
+
+    async def _ensure_skill_vectors_current(self, store: Any) -> None:
+        """Re-embed persisted skills if they were made by a different embedder.
+
+        Tools get this via SyncManager's fingerprint/embedder-id machinery;
+        skills need the equivalent or reopening a persistent store with a new
+        embedding model silently searches the old model's vectors. Runs once
+        per fetcher instance — the embedder is fixed for the instance's
+        lifetime. Stores without the metadata API skip the check (nothing to
+        compare against).
+
+        Limitations: switching to an embedder of a *different dimension*
+        cannot be migrated in place on fixed-schema stores (LanceDB tables
+        have a fixed vector width) — recreate the store instead; the failure
+        is surfaced with that guidance. Concurrent fetcher instances using
+        *different* embedders against one shared store are unsupported: each
+        would re-migrate to its own vector space, thrashing the other's.
+        And the lock here serializes tasks within this process only —
+        multiple worker *processes* sharing one embedded store path follow
+        the backend's multi-writer semantics (LanceDB's upsert is a
+        non-atomic delete-then-add), so serialize the first post-model-switch
+        access externally when running multiple workers, or let one worker
+        warm the store before the others start.
+        """
+        if self._skill_vectors_checked:
+            return
+        # Serialize: concurrent first calls must not skip past an in-flight
+        # migration and search stale vectors, and the flag is only set after
+        # full success so a transient failure gets retried instead of
+        # permanently bypassing migration.
+        if self._skill_vectors_lock is None:
+            self._skill_vectors_lock = asyncio.Lock()
+        async with self._skill_vectors_lock:
+            if self._skill_vectors_checked:
+                return
+            get_meta = getattr(store, "get_metadata", None)
+            set_meta = getattr(store, "set_metadata", None)
+            if get_meta is not None and set_meta is not None:
+                # Scope the marker to the skills table where the store names
+                # one: multiple configured skills tables can share a single
+                # metadata table (LanceDB), and an unscoped key would let one
+                # table's migration mark the others as migrated too. Adapter
+                # contract: stores whose metadata table is shared across
+                # differently-configured skills tables should expose
+                # _skills_table_name; stores without it get a store-wide
+                # marker, which is correct when metadata is per-store.
+                table_id = getattr(store, "_skills_table_name", None)
+                marker_key = (
+                    f"skills_embedder_id:{table_id}" if table_id else "skills_embedder_id"
+                )
+                current = self._sync_manager.get_embedder_id()
+                stored = await get_meta(marker_key)
+                if stored != current:
+                    # Unknown or different embedder: re-embed whatever is
+                    # stored (covers both a model switch and pre-existing
+                    # skills with no recorded id)
+                    skills = await store.list_all_skills(limit=1_000_000)
+                    if skills:
+                        embeddings = await self._embedder.embed_batch(
+                            [skill.to_embedding_text() for skill in skills]
+                        )
+                        try:
+                            await store.add_skills(skills, embeddings, upsert=True)
+                        except Exception as exc:
+                            raise RuntimeError(
+                                f"Failed to re-embed stored skills for the current "
+                                f"embedder ({current!r}). If the new embedder has a "
+                                f"different dimension, fixed-schema stores (e.g. "
+                                f"LanceDB) cannot be migrated in place — recreate the "
+                                f"store, or use a same-dimension model."
+                            ) from exc
+                        logger.info(
+                            f"Re-embedded {len(skills)} skill(s): stored embedder id "
+                            f"{stored!r} != current {current!r}"
+                        )
+                    await set_meta(marker_key, current)
+            self._skill_vectors_checked = True
+
+    async def add_skills(self, skills: list[Skill]) -> int:
+        """
+        Embed and store skills for semantic retrieval.
+
+        Args:
+            skills: Skills to add (upserted by ``namespace.name``)
+
+        Returns:
+            Number of skills stored
+
+        Raises:
+            ValueError: If a skill's namespace is one the index keeps for the
+                pieces of skill bodies; nothing there is ever retrieved.
+        """
+        if not skills:
+            return 0
+        for skill in skills:
+            reject_reserved_namespace(skill.namespace, f"skill '{skill.name}'")
+        store = self._skills_store()
+        await self._ensure_initialized()
+        await self._ensure_skill_vectors_current(store)
+        embeddings = await self._embedder.embed_batch(
+            [skill.to_embedding_text() for skill in skills]
+        )
+        stored = int(await store.add_skills(skills, embeddings, upsert=True))
+        # With chunking off this still runs, to remove the pieces an earlier
+        # configuration indexed for these skills.
+        await sync_skill_chunks(
+            store, self._embedder, skills, enabled=self._config.routing.chunk_long_text
+        )
+        return stored
+
+    async def add_skills_from_directory(
+        self,
+        path: str,
+        *,
+        namespace: str = "default",
+        recursive: bool = True,
+        strict: bool = False,
+    ) -> int:
+        """
+        Load every Agent Skills ``SKILL.md`` under ``path`` and embed them.
+
+        Reads the `Agent Skills <https://agentskills.io>`_ directory format
+        Claude Code and the Claude Agent SDK use (``<skill>/SKILL.md`` with
+        ``name``/``description`` frontmatter and Markdown instructions), so an
+        existing skills folder becomes semantically retrievable as-is:
+        :meth:`retrieve_skills_as_prompt` then injects only the skills that
+        match the current prompt instead of every skill's metadata.
+
+        Symlinked skill directories are followed, so a library shared
+        between agents by linking each skill into place loads in full; a
+        link that loops back on itself ends there. Hidden directories under
+        ``path`` are skipped. A ``SKILL.md`` body longer than 50,000
+        characters is truncated to that for storage, with a warning.
+
+        Args:
+            path: A skills directory (e.g. ``~/.claude/skills``) or one
+                skill's directory.
+            namespace: Namespace for the loaded skills (frontmatter
+                ``namespace`` wins per skill).
+            recursive: Search nested directories.
+            strict: Raise on the first unparsable ``SKILL.md`` instead of
+                logging and skipping it.
+
+        Returns:
+            Number of skills stored.
+        """
+        from dotfetch.skills.loader import load_skills_from_directory
+
+        skills = load_skills_from_directory(
+            path, namespace=namespace, recursive=recursive, strict=strict
+        )
+        return await self.add_skills(skills)
+
+    async def retrieve_skills(
+        self,
+        query: str,
+        limit: int = 3,
+        namespace: str | list[str] | None = None,
+        category: str | None = None,
+        score_threshold: float | None = None,
+        *,
+        diversity_factor: float = 0.0,
+        rerank: bool = False,
+    ) -> list[SkillSearchResult]:
+        """
+        Retrieve the skills most relevant to a query.
+
+        Args:
+            query: Natural-language query (typically the user prompt)
+            limit: Maximum number of skills to return
+            namespace: Optional namespace (or list of namespaces) filter
+            category: Optional category filter as its string value, e.g.
+                ``"how_to"`` or ``SkillCategory.PATTERN.value``
+            score_threshold: Minimum similarity score (0-1)
+            diversity_factor: ``0`` ranks by relevance alone. Above it, a
+                skill much like one already picked gives way to a different
+                one (maximal marginal relevance), up to ``1``, which ignores
+                relevance after the first pick. Not applied when a selector
+                answers. Costs one embedding per candidate considered.
+            rerank: Rescore the best candidates with the fetcher's reranker,
+                the one tool retrieval uses, and return its top ``limit``
+                with its scores. Off unless asked for. Not applied when a
+                selector answers.
+
+        Returns:
+            Scored skills, most relevant first
+
+        Raises:
+            ValueError: If ``rerank`` is set and no reranker is configured.
+        """
+        _check_diversity(diversity_factor)
+        reranker = self._reranker_for(rerank)
+        # A blank query has no semantic signal: it embeds to a zero vector,
+        # every skill ties at 0.0, and with no threshold the first `limit`
+        # skills would be returned (and prompt-injected) arbitrarily.
+        if not query.strip():
+            return []
+        store = self._skills_store()
+
+        # Before the embedding work: the selector needs neither a query vector
+        # nor current skill vectors, so taking this path skips both.
+        selected = await self._select_skills(query, limit, namespace, category, score_threshold)
+        if selected is not None:
+            return selected
+
+        await self._ensure_initialized()
+        await self._ensure_skill_vectors_current(store)
+        query_embedding = await embed_query(self._embedder, query)
+        wanted = None if namespace is None else {namespace} if isinstance(namespace, str) else set(namespace)
+        filters: dict[str, Any] = {}
+        if wanted is not None:
+            # A skill's content is indexed in pieces in their own namespace;
+            # without it here a namespace filter would hide them.
+            filters["namespace"] = [
+                *sorted(wanted),
+                *(chunk_namespace(parent) for parent in sorted(wanted)),
+            ]
+        if category is not None:
+            filters["category"] = category
+
+        # A skill is scored by the best of its own vector and its content's
+        # pieces. Pieces take places in the result, so more than ``limit`` are
+        # fetched, and fetched again four times wider while they crowd the
+        # skills out: until enough skills are found or the store has no more
+        # rows, within a bound no real table reaches (4,096 times the first
+        # window). Diversity chooses among more candidates than it returns.
+        pool = limit * 4 if diversity_factor > 0 or reranker is not None else limit
+        fetch = pool * 4
+        best: dict[tuple[str, str], tuple[Skill | None, float]] = {}
+        passages: dict[tuple[str, str], str] = {}
+        for _ in range(7):
+            matches = await store.search_skills(
+                query_vector=query_embedding,
+                limit=fetch,
+                filters=filters or None,
+                score_threshold=score_threshold,
+            )
+            best = {}
+            passages = {}
+            for skill, score in matches:
+                parent = chunk_parent(skill)
+                key = parent or (skill.namespace, skill.name)
+                if parent is not None and wanted is not None and parent[0] not in wanted:
+                    continue
+                known, top = best.get(key, (None, 0.0))
+                best[key] = (known if parent is not None else skill, max(top, float(score)))
+                if parent is not None and key not in passages:
+                    # Best first, so this is the piece of the body that
+                    # matched the query best.
+                    passages[key] = skill.content
+            if len(best) >= pool or len(matches) < fetch:
+                break
+            fetch *= 4
+
+        results: list[SkillSearchResult] = []
+        for (parent_namespace, name), (skill, score) in sorted(
+            best.items(), key=lambda item: item[1][1], reverse=True
+        )[:pool]:
+            if skill is None:
+                # Found only through its content: fetch the skill itself.
+                skill = await store.get_skill_by_name(name, parent_namespace)
+                if skill is None:
+                    continue
+            # Clamp: float32 cosine can exceed 1.0 by rounding error, and the
+            # schema bounds score to [0, 1].
+            results.append(SkillSearchResult(skill=skill, score=min(1.0, max(0.0, score))))
+        if reranker is not None and results:
+            # A skill's own text leaves its body out, and the body may be the
+            # only thing that matched: give the reranker the passage that did,
+            # or it would judge such a skill on a description that says none
+            # of it and rank it away.
+            ranked = await rerank_texts(
+                reranker,
+                query,
+                [
+                    " ".join(
+                        part
+                        for part in (
+                            result.skill.to_embedding_text(),
+                            passages.get((result.skill.namespace, result.skill.name)),
+                        )
+                        if part
+                    )
+                    for result in results
+                ],
+                limit,
+                names=[result.skill.name for result in results],
+                scores=[result.score for result in results],
+            )
+            results = [
+                SkillSearchResult(skill=results[index].skill, score=min(1.0, max(0.0, score)))
+                for index, score in ranked
+            ]
+        if diversity_factor > 0 and len(results) > 1:
+            embeddings = await self._embedder.embed_batch(
+                [result.skill.to_embedding_text() for result in results]
+            )
+            order = mmr_order([r.score for r in results], embeddings, diversity_factor, limit)
+            return [results[index] for index in order]
+        return results[:limit]
+
+    async def retrieve_skills_as_prompt(
+        self,
+        query: str,
+        limit: int = 3,
+        namespace: str | list[str] | None = None,
+        category: str | None = None,
+        score_threshold: float | None = None,
+    ) -> str:
+        """
+        Retrieve relevant skills formatted for system-prompt injection.
+
+        Returns an empty string when nothing matches, so the result can be
+        appended to a prompt unconditionally.
+
+        Skill content is injected into the prompt verbatim — register skills
+        only from sources you trust, exactly as you would tool descriptions.
+        """
+        results = await self.retrieve_skills(
+            query,
+            limit=limit,
+            namespace=namespace,
+            category=category,
+            score_threshold=score_threshold,
+        )
+        return "\n\n".join(result.skill.to_prompt_text() for result in results)
+
+    async def delete_skill(self, name: str, namespace: str = "default") -> bool:
+        """Delete a skill by name."""
+        store = self._skills_store()
+        await self._ensure_initialized()
+        deleted = bool(await store.delete_skill(name, namespace))
+        await delete_skill_chunks(store, name, namespace)
+        return deleted
+
+    async def list_skills(
+        self, namespace: str | None = None, limit: int = 1000, offset: int = 0
+    ) -> list[Skill]:
+        """List stored skills."""
+        store = self._skills_store()
+        await self._ensure_initialized()
+        if namespace is not None:
+            return list(
+                await store.list_all_skills(namespace=namespace, limit=limit, offset=offset)
+            )
+        # The pieces a skill's content is indexed in share the table and are
+        # not skills: they are skipped, and the page is filled from what
+        # follows them so ``limit`` and ``offset`` still count skills.
+        skills: list[Skill] = []
+        cursor, skipped, page_size = 0, 0, max(limit, 1) * 2
+        while len(skills) < limit:
+            page = await store.list_all_skills(namespace=None, limit=page_size, offset=cursor)
+            for skill in page:
+                if is_reserved_namespace(skill.namespace):
+                    continue
+                if skipped < offset:
+                    skipped += 1
+                elif len(skills) < limit:
+                    skills.append(skill)
+            cursor += len(page)
+            if len(page) < page_size:
+                break
+        return skills
+
+    async def count_skills(self, namespace: str | None = None) -> int:
+        """Count stored skills."""
+        store = self._skills_store()
+        await self._ensure_initialized()
+        if namespace is not None:
+            return int(await store.count_skills(namespace=namespace))
+        # Not counting the pieces skills' content is indexed in. They live in
+        # one namespace per skill namespace, so they are told apart by listing.
+        total, offset, page_size = 0, 0, 1000
+        while True:
+            page = await store.list_all_skills(namespace=None, limit=page_size, offset=offset)
+            total += sum(1 for skill in page if not is_reserved_namespace(skill.namespace))
+            offset += len(page)
+            if len(page) < page_size:
+                return total
+
+    async def delete_tool(self, name: str, namespace: str = "default") -> bool:
+        """
+        Delete a tool.
+
+        Removes the tool everywhere it lives: the vector store (so retrieval
+        stops returning it), the in-memory registry and its handler map (so
+        ``execute``, ``list_tools_sync`` and ``required=[...]`` pin resolution
+        stop seeing it), and any not-yet-synced pending entry.
+
+        Args:
+            name: Tool name
+            namespace: Tool namespace
+
+        Returns:
+            True if the tool was deleted from any of those places
+        """
+        await self._ensure_initialized()
+        deleted_from_store = await self._vector_store.delete(name, namespace)
+        await delete_tool_chunks(self._vector_store, name, namespace)
+        deleted_from_registry = self._registry.has_tool(name, namespace)
+        removed_handler = self._registry.delete_tool(name, namespace)
+        if removed_handler is not None:
+            # The executor memoizes per-handler argument coercers keyed by the
+            # callable itself, so a deleted tool's handler would stay reachable
+            # from that cache until eviction. Bounded, but there is no reason
+            # to hold it.
+            from dotfetch.core.executor import forget_handler
+
+            forget_handler(removed_handler)
+        before = len(self._pending_tools)
+        self._pending_tools = [
+            t
+            for t in self._pending_tools
+            if not (t.name == name and t.namespace == namespace)
+        ]
+        return (
+            deleted_from_store
+            or deleted_from_registry
+            or len(self._pending_tools) < before
+        )
+
+    async def health_check(self) -> dict[str, bool]:
+        """
+        Check health of all components.
+
+        Returns:
+            Dictionary of component health status
+        """
+        await self._ensure_initialized()
+
+        results = {
+            "vector_store": await self._vector_store.health_check(),
+            "embedder": await self._embedder.health_check(),
+        }
+
+        try:
+            health_method = getattr(self._telemetry, "health_check", None)
+            if health_method is not None:
+                if is_coroutine_function(health_method):
+                    results["telemetry"] = await health_method()
+                else:
+                    results["telemetry"] = bool(health_method())
+            else:
+                results["telemetry"] = True
+        except Exception:
+            results["telemetry"] = False
+
+        return results
+
+
+def create_default_fetcher(dimension: int = 256) -> DotFetch:
+    """
+    Factory function to create a pre-configured DotFetch instance.
+
+    This provides a convenient way to create an DotFetch instance with
+    sensible defaults, automatically selecting the best available embedder:
+    - NomicEmbedder (if sentence-transformers is available)
+    - SimpleEmbedder (fallback, hash-based)
+
+    This avoids module-level instantiation which can cause issues with
+    testing, cleanup, or if multiple instances are needed.
+
+    Args:
+        dimension: Embedding dimension for Nomic embedder (default: 256).
+                   Ignored if NomicEmbedder is not available.
+
+    Returns:
+        A configured DotFetch instance ready for tool registration.
+
+    Example:
+        >>> from dotfetch import create_default_fetcher
+        >>>
+        >>> tools = create_default_fetcher()
+        >>>
+        >>> @tools.register(tags=["math"])
+        ... def add(a: int, b: int) -> int:
+        ...     '''Add two numbers.'''
+        ...     return a + b
+
+    Note:
+        For better semantic search quality, install the Nomic dependencies:
+        `pip install dotfetch[nomic]` (or `uv add 'dotfetch[nomic]'`)
+    """
+    return DotFetch.quick_start(embedder="auto", dimension=dimension)

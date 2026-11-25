@@ -10,15 +10,15 @@ conversation-history persistence, context-window compaction, task tracking
     ``create_harness_agent`` is **experimental** in AF 1.7.0.  It is decorated
     with ``@experimental(feature_id=ExperimentalFeature.HARNESS)`` in the
     agent-framework package.  The API surface may change in future AF releases.
-    Gantry's integration follows AF's experimental lifecycle; pin to
+    dotfetch's integration follows AF's experimental lifecycle; pin to
     ``agent-framework>=1.7.0,<2.0.0`` and review the AF changelog before
     upgrading.
     Source: https://github.com/microsoft/agent-framework/releases (AF 1.7.0,
     released 2026-05-28).
 
-Integration pattern with Gantry::
+Integration pattern with dotfetch::
 
-    bridge = GantryToolBridge(gantry)
+    bridge = DotFetchToolBridge(fetcher)
     tools = await bridge.get_tools("research papers summarise", limit=5)
 
     agent = create_harness_agent(
@@ -39,9 +39,9 @@ The harness agent automatically chains these context providers:
 - ``AgentModeProvider``        — switches the agent between research/action/summarise modes.
 - Built-in web-search tool     — injected when the client supports it.
 
-Gantry tools are passed via ``tools=`` and merged with the built-in harness tools.
+dotfetch tools are passed via ``tools=`` and merged with the built-in harness tools.
 
-Requires: pip install "agent-gantry[agent-frameworks]"
+Requires: pip install "dotfetch[agent-frameworks]"
 """
 
 from __future__ import annotations
@@ -50,21 +50,21 @@ import asyncio
 
 from dotenv import load_dotenv
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
+from dotfetch.integrations.agent_framework_bridge import DotFetchToolBridge
 
 load_dotenv()
 
 
 async def main() -> None:
     # ------------------------------------------------------------------
-    # 1. Register domain tools with Agent-Gantry
+    # 1. Register domain tools with dotfetch
     # ------------------------------------------------------------------
-    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
+    fetcher = DotFetch(embedder=SimpleEmbedder(dimension=256))
     try:
 
-        @gantry.register(
+        @fetcher.register(
             examples=[
                 "find articles about rate limiting",
                 "what does the knowledge base say about retries",
@@ -74,7 +74,7 @@ async def main() -> None:
             """Search the internal knowledge base for articles and technical reports."""
             return f"Found 5 articles matching '{topic}'"
 
-        @gantry.register(
+        @fetcher.register(
             examples=[
                 "recent papers on protein folding",
                 "what's new in reinforcement learning",
@@ -84,7 +84,7 @@ async def main() -> None:
             """Retrieve the titles of the latest research papers in a scientific field."""
             return [f"{field}_paper_{i}.pdf" for i in range(1, max_results + 1)]
 
-        @gantry.register(
+        @fetcher.register(
             examples=[
                 "summarise this report",
                 "give me the key findings from that PDF",
@@ -94,7 +94,7 @@ async def main() -> None:
             """Summarise a document and extract key findings."""
             return f"Summary of {document_path}: [key findings extracted]"
 
-        @gantry.register(
+        @fetcher.register(
             examples=[
                 "write up a report on the findings",
                 "put together a structured research report",
@@ -104,17 +104,17 @@ async def main() -> None:
             """Create a structured research report with the specified sections."""
             return f"Report '{title}' created with {len(sections)} sections."
 
-        await gantry.sync()
+        await fetcher.sync()
 
         # ------------------------------------------------------------------
         # 2. Retrieve semantically relevant tools for this task
         # ------------------------------------------------------------------
-        bridge = GantryToolBridge(gantry)
+        bridge = DotFetchToolBridge(fetcher)
         tools = await bridge.get_tools(
             "research papers summarise literature review write report",
             limit=5,
         )
-        print(f"Catalogue: 4 tools. Gantry selected {len(tools)} for the harness agent:")
+        print(f"Catalogue: 4 tools. dotfetch selected {len(tools)} for the harness agent:")
         for tool in tools:
             print(f"  - {getattr(tool, 'name', getattr(tool, '__name__', tool))}")
         print()
@@ -131,9 +131,9 @@ async def main() -> None:
         #   AgentModeProvider        – research / action / summarise mode
         #   Built-in web search      – added when client supports it
         #
-        # Gantry tools are injected via tools=; they blend with the harness
-        # built-ins.  Destructive Gantry tools automatically carry
-        # approval_mode="always_require" via GantryToolBridge's capability
+        # dotfetch tools are injected via tools=; they blend with the harness
+        # built-ins.  Destructive dotfetch tools automatically carry
+        # approval_mode="always_require" via DotFetchToolBridge's capability
         # mapping, so the harness approval gate is still respected.
         # ------------------------------------------------------------------
         # `create_harness_agent` is experimental and only exists in AF >= 1.7.0.
@@ -156,10 +156,10 @@ async def main() -> None:
                 f"1.7.0; you have {installed}."
             )
             print(
-                "agent-gantry 0.17.0+ requires agent-framework>=1.19.0, so syncing "
+                "dotfetch 0.17.0+ requires agent-framework>=1.19.0, so syncing "
                 "the extra is usually enough:"
             )
-            print("    pip install -U 'agent-gantry[agent-frameworks]'")
+            print("    pip install -U 'dotfetch[agent-frameworks]'")
             print("    # or, standalone:  pip install 'agent-framework>=1.7.0'")
             return
 
@@ -184,7 +184,7 @@ async def main() -> None:
             client,
             max_context_window_tokens=128_000,
             max_output_tokens=8_192,
-            name="GantryResearchAgent",
+            name="DotFetchResearchAgent",
             description="A research assistant that searches and synthesises information.",
             agent_instructions=(
                 "You are a research assistant. "
@@ -195,7 +195,7 @@ async def main() -> None:
         )
         print(
             f"Harness agent '{agent.name}' constructed "
-            f"({len(tools)} Gantry tool(s) + harness built-ins)"
+            f"({len(tools)} dotfetch tool(s) + harness built-ins)"
         )
 
         # ------------------------------------------------------------------
@@ -214,7 +214,7 @@ async def main() -> None:
         )
         print(f"Response: {response2}")
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 if __name__ == "__main__":

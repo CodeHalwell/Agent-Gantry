@@ -1,7 +1,7 @@
 import asyncio
 import time
 
-from agent_gantry.integrations.anthropic_skills import Skill, SkillsClient
+from dotfetch.integrations.anthropic_skills import Skill, SkillsClient
 
 
 class MockClient:
@@ -20,7 +20,7 @@ class MockSkillsClient(SkillsClient):
             examples=[{"input": "in", "output": "out", "steps": ["s1", "s2"]}] * 5
         ) for i in range(100)]})()
         self._client = MockClient()
-        self._gantry = None
+        self._fetcher = None
 
 async def run_bench():
     client = MockSkillsClient()

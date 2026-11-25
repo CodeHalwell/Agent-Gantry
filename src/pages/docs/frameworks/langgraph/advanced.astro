@@ -2,14 +2,14 @@
 import DocsLayout from '../../../../layouts/DocsLayout.astro';
 import CodeBlock from '../../../../components/CodeBlock.astro';
 ---
-<DocsLayout title="Advanced LangGraph guide | Agent-Gantry" description="Approval with interrupt(), how per-turn selection works inside a run, tracing and error modes for the Agent-Gantry LangGraph integration.">
+<DocsLayout title="Advanced LangGraph guide | dotfetch" description="Approval with interrupt(), how per-turn selection works inside a run, tracing and error modes for the dotfetch LangGraph integration.">
   <p class="eyebrow">Advanced framework guide</p>
   <h1>Advanced LangGraph</h1>
-  <p class="lead">Human approval, how per-turn selection works inside a run, tracing, and using Gantry tools in your own graph.</p>
+  <p class="lead">Human approval, how per-turn selection works inside a run, tracing, and using dotfetch tools in your own graph.</p>
   <p><a class="pill" href="/Agent-Gantry/docs/frameworks/langgraph/">← Basic LangGraph usage</a></p>
 
   <h2>Human approval</h2>
-  <p>A tool registered with <code>requires_confirmation=True</code>, or matched by a <code>SecurityPolicy(require_confirmation=[...])</code> pattern, pauses the graph with LangGraph's <code>interrupt()</code>. The interrupt value is <code>&#123;"type": "gantry_approval", "tool", "description", "arguments", "tool_call_id"&#125;</code>. Resume with <code>Command(resume=True)</code> (or <code>&#123;"approved": True&#125;</code>) to run the call once through <code>gantry.execute</code> with only the confirmation gate cleared; any other value rejects it and the model is told so.</p>
+  <p>A tool registered with <code>requires_confirmation=True</code>, or matched by a <code>SecurityPolicy(require_confirmation=[...])</code> pattern, pauses the graph with LangGraph's <code>interrupt()</code>. The interrupt value is <code>&#123;"type": "fetcher_approval", "tool", "description", "arguments", "tool_call_id"&#125;</code>. Resume with <code>Command(resume=True)</code> (or <code>&#123;"approved": True&#125;</code>) to run the call once through <code>fetcher.execute</code> with only the confirmation gate cleared; any other value rejects it and the model is told so.</p>
   <CodeBlock lang="python" code={`from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
@@ -19,11 +19,11 @@ result = await agent.ainvoke({"messages": [("user", "Refund order 4471")]}, conf
 if "__interrupt__" in result:
     request = result["__interrupt__"][0].value
     result = await agent.ainvoke(Command(resume=ask_a_human(request)), config)`} />
-  <p>Approval needs a checkpointer, since a paused graph resumes from its checkpoint. Without one, or when a tool is called outside a graph, the model is told the call needs approval and it is not run. <code>gantry.requires_confirmation(tool)</code> answers the same question without running anything.</p>
+  <p>Approval needs a checkpointer, since a paused graph resumes from its checkpoint. Without one, or when a tool is called outside a graph, the model is told the call needs approval and it is not run. <code>fetcher.requires_confirmation(tool)</code> answers the same question without running anything.</p>
 
   <h2>Per-turn selection inside a run</h2>
   <ul>
-    <li><strong>Mechanism:</strong> the middleware carries the in-scope catalogue as its <code>tools</code>, so the agent's <code>ToolNode</code> can run any of them, and its <code>wrap_model_call</code> narrows the Gantry tools in <code>request.tools</code> each model turn.</li>
+    <li><strong>Mechanism:</strong> the middleware carries the in-scope catalogue as its <code>tools</code>, so the agent's <code>ToolNode</code> can run any of them, and its <code>wrap_model_call</code> narrows the dotfetch tools in <code>request.tools</code> each model turn.</li>
     <li><strong>Query:</strong> the newest activity in <code>state["messages"]</code>: the user's request, or the last successful tool result. A failed result never feeds retrieval; <code>query_from_results=False</code> keeps all tool output out.</li>
     <li><strong>State:</strong> per run, keyed by the thread and the newest user message, so concurrent runs are independent and a run resumed after an approval carries on.</li>
     <li><strong>Stickiness:</strong> tools offered earlier in a run stay offered, up to <code>max_offered</code> (default <code>3 * limit</code>); the current selection and pinned tools always stay. Use <code>sticky=False</code> for a strict top-k.</li>
@@ -35,7 +35,7 @@ if "__interrupt__" in result:
   <p><code>await adapter.select(query)</code> returns LangChain <code>StructuredTool</code>s for a <code>ToolNode</code> or <code>model.bind_tools(...)</code>, with the same error, approval and context behaviour. <code>await adapter.select_for_state(state)</code> selects once from a graph state.</p>
 
   <h2>Tracing</h2>
-  <p>An active OpenTelemetry span, or else the current LangSmith run, becomes the Gantry <code>ToolCall</code>'s <code>trace_id</code> and <code>parent_span_id</code>, so <code>gantry.on_tool_call</code> events line up with the agent's trace. <code>current_tool_invocation().metadata</code> carries the <code>thread_id</code>.</p>
+  <p>An active OpenTelemetry span, or else the current LangSmith run, becomes the dotfetch <code>ToolCall</code>'s <code>trace_id</code> and <code>parent_span_id</code>, so <code>fetcher.on_tool_call</code> events line up with the agent's trace. <code>current_tool_invocation().metadata</code> carries the <code>thread_id</code>.</p>
 
   <h2>Production checklist</h2>
   <ul>

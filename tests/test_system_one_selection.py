@@ -13,17 +13,17 @@ from typing import Any
 
 import pytest
 
-from agent_gantry.adapters.rerankers.system_one import SystemOneReranker
-from agent_gantry.adapters.selectors.system_one import SystemOneSelector
-from agent_gantry.adapters.system_one_client import (
+from dotfetch.adapters.rerankers.system_one import SystemOneReranker
+from dotfetch.adapters.selectors.system_one import SystemOneSelector
+from dotfetch.adapters.system_one_client import (
     SystemOneClient,
     SystemOneVerdict,
     candidate_payload,
     estimate_tokens,
 )
-from agent_gantry.schema.query import ConversationContext, ToolQuery
-from agent_gantry.schema.selection import SelectionCandidate, SelectionResult
-from agent_gantry.schema.tool import ToolDefinition
+from dotfetch.schema.query import ConversationContext, ToolQuery
+from dotfetch.schema.selection import SelectionCandidate, SelectionResult
+from dotfetch.schema.tool import ToolDefinition
 
 typesafe_sdk = pytest.importorskip("typesafe_sdk")
 
@@ -453,43 +453,43 @@ class _StubSelector:
         )
 
 
-async def _gantry_with(selector: Any) -> Any:
-    from agent_gantry import AgentGantry
+async def _fetcher_with(selector: Any) -> Any:
+    from dotfetch import DotFetch
 
-    gantry = AgentGantry(selector=selector)
+    fetcher = DotFetch(selector=selector)
 
-    @gantry.register(tags=["math"])
+    @fetcher.register(tags=["math"])
     async def add_numbers(a: int, b: int) -> int:
         """Add two numbers together for the caller."""
         return a + b
 
-    @gantry.register(tags=["text"])
+    @fetcher.register(tags=["text"])
     async def shout(text: str) -> str:
         """Uppercase a string of text for the caller."""
         return text.upper()
 
-    return gantry
+    return fetcher
 
 
 async def test_tool_retrieval_uses_the_selector_and_never_embeds() -> None:
     selector = _StubSelector({"default.shout": 0.9})
-    gantry = await _gantry_with(selector)
+    fetcher = await _fetcher_with(selector)
     try:
-        result = await gantry.retrieve_tools("make this loud", limit=3)
+        result = await fetcher.retrieve_tools("make this loud", limit=3)
 
         assert [schema["function"]["name"] for schema in result] == ["shout"]
         assert selector.seen, "the selector was never consulted"
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_the_selector_path_reports_no_embedding_or_search_time() -> None:
-    from agent_gantry.schema.query import ConversationContext, ToolQuery
+    from dotfetch.schema.query import ConversationContext, ToolQuery
 
     selector = _StubSelector({"default.shout": 0.9})
-    gantry = await _gantry_with(selector)
+    fetcher = await _fetcher_with(selector)
     try:
-        retrieval = await gantry.retrieve(
+        retrieval = await fetcher.retrieve(
             ToolQuery(context=ConversationContext(query="be loud"), limit=3, score_threshold=0.0)
         )
 
@@ -498,20 +498,20 @@ async def test_the_selector_path_reports_no_embedding_or_search_time() -> None:
         assert retrieval.selection_time_ms is not None
         assert [scored.tool.name for scored in retrieval.tools] == ["shout"]
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_a_declining_selector_falls_back_to_semantic_routing() -> None:
     selector = _StubSelector(fallback=True)
-    gantry = await _gantry_with(selector)
+    fetcher = await _fetcher_with(selector)
     try:
-        result = await gantry.retrieve_tools("add two numbers", limit=2)
+        result = await fetcher.retrieve_tools("add two numbers", limit=2)
 
         assert selector.seen, "the selector should have been tried first"
         # The semantic path ran instead, so tools still came back.
         assert result, "falling back must not cost the catalogue"
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_a_deprecated_tool_never_reaches_the_selector() -> None:
@@ -520,12 +520,12 @@ async def test_a_deprecated_tool_never_reaches_the_selector() -> None:
     Otherwise a selector would surface tools the semantic path hides, which is
     a silent widening of what the agent can reach rather than a ranking change.
     """
-    from agent_gantry import AgentGantry
+    from dotfetch import DotFetch
 
     selector = _StubSelector({"default.old_tool": 0.99})
-    gantry = AgentGantry(selector=selector)
+    fetcher = DotFetch(selector=selector)
     try:
-        await gantry.add_tool(
+        await fetcher.add_tool(
             ToolDefinition(
                 name="old_tool",
                 description="A tool that has since been deprecated.",
@@ -534,77 +534,77 @@ async def test_a_deprecated_tool_never_reaches_the_selector() -> None:
             ),
             lambda: None,
         )
-        result = await gantry.retrieve_tools("use the old tool", limit=3)
+        result = await fetcher.retrieve_tools("use the old tool", limit=3)
 
         assert result == []
         assert selector.seen == [], "no allowed tools, so nothing to select from"
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_a_blank_query_never_costs_a_selection_request() -> None:
     selector = _StubSelector({"default.shout": 0.9})
-    gantry = await _gantry_with(selector)
+    fetcher = await _fetcher_with(selector)
     try:
-        await gantry.retrieve_tools("   ", limit=3)
+        await fetcher.retrieve_tools("   ", limit=3)
         assert selector.seen == []
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_skill_retrieval_uses_the_selector() -> None:
-    from agent_gantry import AgentGantry
-    from agent_gantry.schema.skill import Skill
+    from dotfetch import DotFetch
+    from dotfetch.schema.skill import Skill
 
     selector = _StubSelector({"default.deploying": 0.8})
-    gantry = AgentGantry(selector=selector)
+    fetcher = DotFetch(selector=selector)
     try:
-        await gantry.add_skill(
+        await fetcher.add_skill(
             Skill(
                 name="deploying",
                 description="How to deploy the service to production safely.",
                 content="Run the deploy script.",
             )
         )
-        await gantry.add_skill(
+        await fetcher.add_skill(
             Skill(
                 name="testing",
                 description="How to run the test suite and read its output.",
                 content="Run pytest.",
             )
         )
-        found = await gantry.retrieve_skills("how do I ship this", limit=2)
+        found = await fetcher.retrieve_skills("how do I ship this", limit=2)
 
         assert [result.skill.name for result in found] == ["deploying"]
         assert found[0].score == pytest.approx(0.8)
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_mcp_server_retrieval_uses_the_selector() -> None:
-    from agent_gantry import AgentGantry
+    from dotfetch import DotFetch
 
     selector = _StubSelector({"default.files": 0.7})
-    gantry = AgentGantry(selector=selector)
-    if gantry._mcp_registry is None:  # pragma: no cover - mcp extra absent
-        await gantry.close()
+    fetcher = DotFetch(selector=selector)
+    if fetcher._mcp_registry is None:  # pragma: no cover - mcp extra absent
+        await fetcher.close()
         pytest.skip("MCP support is not installed")
     try:
-        gantry.register_mcp_server(
+        fetcher.register_mcp_server(
             "files",
             ["echo", "files"],
             description="Reads and writes files on the local disk.",
         )
-        gantry.register_mcp_server(
+        fetcher.register_mcp_server(
             "search",
             ["echo", "search"],
             description="Searches the web for pages matching a query.",
         )
-        servers = await gantry.retrieve_mcp_servers("open a file", limit=2)
+        servers = await fetcher.retrieve_mcp_servers("open a file", limit=2)
 
         assert [server.name for server in servers] == ["files"]
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 # ----------------------------------------------------------------------
@@ -620,21 +620,21 @@ async def test_a_tool_added_without_a_handler_still_reaches_the_selector() -> No
     tools still let the selector answer, the semantic fallback never ran, so
     they stayed unreachable rather than merely unranked.
     """
-    from agent_gantry import AgentGantry
-    from agent_gantry.schema.config import AgentGantryConfig
+    from dotfetch import DotFetch
+    from dotfetch.schema.config import DotFetchConfig
 
     selector = _StubSelector({"default.discovered": 0.9})
-    gantry = AgentGantry(config=AgentGantryConfig(auto_sync=False), selector=selector)
+    fetcher = DotFetch(config=DotFetchConfig(auto_sync=False), selector=selector)
     try:
-        await gantry.add_tool(_tool("registered"), lambda: None)
-        await gantry.add_tool(_tool("discovered"))  # no handler -> pending only
+        await fetcher.add_tool(_tool("registered"), lambda: None)
+        await fetcher.add_tool(_tool("discovered"))  # no handler -> pending only
 
-        await gantry.retrieve_tools("anything", limit=5)
+        await fetcher.retrieve_tools("anything", limit=5)
 
         assert selector.seen, "the selector was never consulted"
         assert any("discovered" in candidate_id for candidate_id in selector.seen[0])
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_a_catalogue_over_the_ceiling_falls_back_rather_than_truncating() -> None:
@@ -697,19 +697,19 @@ async def test_tool_selection_never_opens_the_vector_store() -> None:
     Initialising eagerly meant an unavailable or deliberately unused store took
     down the one path that never reads it.
     """
-    from agent_gantry import AgentGantry
+    from dotfetch import DotFetch
 
     class _ExplodingStore:
         async def initialize(self) -> None:
             raise AssertionError("the selector path must not open the vector store")
 
     selector = _StubSelector({"default.alpha": 0.9})
-    gantry = AgentGantry(selector=selector)
-    await gantry.add_tool(_tool("alpha"), lambda: None)
-    gantry._vector_store = _ExplodingStore()
-    gantry._initialized = False
+    fetcher = DotFetch(selector=selector)
+    await fetcher.add_tool(_tool("alpha"), lambda: None)
+    fetcher._vector_store = _ExplodingStore()
+    fetcher._initialized = False
 
-    result = await gantry.retrieve_tools("find alpha", limit=2)
+    result = await fetcher.retrieve_tools("find alpha", limit=2)
     assert [schema["function"]["name"] for schema in result] == ["alpha"]
 
 
@@ -720,29 +720,29 @@ async def test_mcp_selection_never_syncs_server_vectors() -> None:
     vectors, and broke the embedding-free route whenever the embedder or store
     was unavailable.
     """
-    from agent_gantry import AgentGantry
+    from dotfetch import DotFetch
 
     selector = _StubSelector({"default.files": 0.9})
-    gantry = AgentGantry(selector=selector)
-    if gantry._mcp_registry is None:  # pragma: no cover - mcp extra absent
-        await gantry.close()
+    fetcher = DotFetch(selector=selector)
+    if fetcher._mcp_registry is None:  # pragma: no cover - mcp extra absent
+        await fetcher.close()
         pytest.skip("MCP support is not installed")
 
-    gantry.register_mcp_server(
+    fetcher.register_mcp_server(
         "files", ["echo", "files"], description="Reads and writes files on disk."
     )
 
     async def _explode(*_args: Any, **_kwargs: Any) -> None:
         raise AssertionError("the selector path must not sync MCP vectors")
 
-    gantry.sync_mcp_servers = _explode  # type: ignore[method-assign]
+    fetcher.sync_mcp_servers = _explode  # type: ignore[method-assign]
 
-    servers = await gantry.retrieve_mcp_servers("open a file", limit=2)
+    servers = await fetcher.retrieve_mcp_servers("open a file", limit=2)
     assert [server.name for server in servers] == ["files"]
 
 
 async def test_positional_constructor_arguments_still_mean_what_they_did() -> None:
-    """``AgentGantry.__init__`` is public and takes positional arguments.
+    """``DotFetch.__init__`` is public and takes positional arguments.
 
     Adding ``selector`` beside ``reranker``, where it belongs by subject,
     silently rebound every later parameter: a caller passing telemetry fifth
@@ -751,10 +751,10 @@ async def test_positional_constructor_arguments_still_mean_what_they_did() -> No
     """
     import inspect
 
-    from agent_gantry import AgentGantry
-    from agent_gantry.observability.console import NoopTelemetryAdapter
+    from dotfetch import DotFetch
+    from dotfetch.observability.console import NoopTelemetryAdapter
 
-    parameters = inspect.signature(AgentGantry.__init__).parameters
+    parameters = inspect.signature(DotFetch.__init__).parameters
     positional = [
         name
         for name, parameter in parameters.items()
@@ -766,12 +766,12 @@ async def test_positional_constructor_arguments_still_mean_what_they_did() -> No
     assert all(parameters[name].kind is inspect.Parameter.KEYWORD_ONLY for name in later), later
 
     telemetry = NoopTelemetryAdapter()
-    gantry = AgentGantry(None, None, None, None, telemetry)  # 5th positional
+    fetcher = DotFetch(None, None, None, None, telemetry)  # 5th positional
     try:
-        assert gantry._telemetry is telemetry
-        assert gantry._selector is None
+        assert fetcher._telemetry is telemetry
+        assert fetcher._selector is None
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 def test_a_skills_own_tags_reach_the_selector() -> None:
@@ -780,7 +780,7 @@ def test_a_skills_own_tags_reach_the_selector() -> None:
     Forwarding only the category gave the selector strictly less to work with
     than the vector store gets.
     """
-    from agent_gantry.schema.skill import Skill, SkillCategory
+    from dotfetch.schema.skill import Skill, SkillCategory
 
     skill = Skill(
         name="deploying",
@@ -857,22 +857,22 @@ async def test_an_explicit_question_overrides_every_catalogue() -> None:
 
 async def test_the_facade_tells_the_selector_which_catalogue_it_is_choosing() -> None:
     """Otherwise every catalogue gets the tool question, which is wrong for two."""
-    from agent_gantry import AgentGantry
-    from agent_gantry.schema.skill import Skill
+    from dotfetch import DotFetch
+    from dotfetch.schema.skill import Skill
 
     selector = _StubSelector({"default.deploying": 0.8, "default.alpha": 0.9})
-    gantry = AgentGantry(selector=selector)
+    fetcher = DotFetch(selector=selector)
     try:
-        await gantry.add_tool(_tool("alpha"), lambda: None)
-        await gantry.add_skill(
+        await fetcher.add_tool(_tool("alpha"), lambda: None)
+        await fetcher.add_skill(
             Skill(name="deploying", description="How to deploy safely.", content="Body.")
         )
-        await gantry.retrieve_tools("anything", limit=1)
-        await gantry.retrieve_skills("anything", limit=1)
+        await fetcher.retrieve_tools("anything", limit=1)
+        await fetcher.retrieve_skills("anything", limit=1)
 
         assert selector.kinds == ["tool", "skill"]
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_a_half_answered_response_falls_back_instead_of_ranking_the_subset() -> None:
@@ -887,7 +887,7 @@ async def test_a_half_answered_response_falls_back_instead_of_ranking_the_subset
     """
     import types as _types
 
-    from agent_gantry.adapters.system_one_client import SystemOneClient
+    from dotfetch.adapters.system_one_client import SystemOneClient
 
     class _Answer:
         def __init__(self, noul: float) -> None:
@@ -952,23 +952,23 @@ async def test_lazy_modules_are_loaded_before_selection() -> None:
     permanently absent — on this call and every later one, because the
     selector kept answering from the directly-registered tools alone.
     """
-    from agent_gantry import AgentGantry
+    from dotfetch import DotFetch
 
     selector = _StubSelector({"default.tool_a1": 0.9})
-    gantry = AgentGantry(modules=["tests.test_modules.module_a"], selector=selector)
+    fetcher = DotFetch(modules=["tests.test_modules.module_a"], selector=selector)
     try:
 
-        @gantry.register(tags=["text"])
+        @fetcher.register(tags=["text"])
         async def shout(text: str) -> str:
             """Uppercase a string of text for the caller."""
             return text.upper()
 
-        result = await gantry.retrieve_tools("double this number", limit=3)
+        result = await fetcher.retrieve_tools("double this number", limit=3)
 
         assert [schema["function"]["name"] for schema in result] == ["tool_a1"]
         assert "default.tool_a1:1.0.0" in selector.seen[0]
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_a_pending_update_replaces_the_registered_copy_for_selection() -> None:
@@ -978,31 +978,31 @@ async def test_a_pending_update_replaces_the_registered_copy_for_selection() -> 
     new one under the same qualified name; deduplicating on that name kept
     the stale copy — the very text the selector decides on.
     """
-    from agent_gantry import AgentGantry
-    from agent_gantry.schema.config import AgentGantryConfig
+    from dotfetch import DotFetch
+    from dotfetch.schema.config import DotFetchConfig
 
     selector = _RecordingSelector({"default.shout": 0.9})
-    gantry = AgentGantry(config=AgentGantryConfig(auto_sync=False), selector=selector)
+    fetcher = DotFetch(config=DotFetchConfig(auto_sync=False), selector=selector)
     try:
 
-        @gantry.register(tags=["text"])
+        @fetcher.register(tags=["text"])
         async def shout(text: str) -> str:
             """Uppercase a string of text for the caller."""
             return text.upper()
 
-        await gantry.add_tool(
+        await fetcher.add_tool(
             ToolDefinition(
                 name="shout",
                 description="Make a sentence LOUD by uppercasing every letter.",
                 parameters_schema={"type": "object", "properties": {}},
             )
         )
-        await gantry.retrieve_tools("be loud", limit=3)
+        await fetcher.retrieve_tools("be loud", limit=3)
 
         descriptions = [c.description for c in selector.candidates[0] if c.name == "default.shout"]
         assert descriptions == ["Make a sentence LOUD by uppercasing every letter."]
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_a_superseded_version_does_not_survive_alongside_the_current_one() -> None:
@@ -1013,14 +1013,14 @@ async def test_a_superseded_version_does_not_survive_alongside_the_current_one()
     selector could hand the agent v1's schema while ``execute()`` resolved
     v2's handler.
     """
-    from agent_gantry import AgentGantry
-    from agent_gantry.schema.config import AgentGantryConfig
+    from dotfetch import DotFetch
+    from dotfetch.schema.config import DotFetchConfig
 
     selector = _RecordingSelector({"default.convert": 0.9})
-    gantry = AgentGantry(config=AgentGantryConfig(auto_sync=False), selector=selector)
+    fetcher = DotFetch(config=DotFetchConfig(auto_sync=False), selector=selector)
     try:
         for version in ("1.0.0", "2.0.0"):
-            await gantry.add_tool(
+            await fetcher.add_tool(
                 ToolDefinition(
                     name="convert",
                     version=version,
@@ -1029,12 +1029,12 @@ async def test_a_superseded_version_does_not_survive_alongside_the_current_one()
                 ),
                 lambda **kwargs: kwargs,
             )
-        await gantry.retrieve_tools("convert this", limit=3)
+        await fetcher.retrieve_tools("convert this", limit=3)
 
         ids = [c.id for c in selector.candidates[0]]
         assert ids == ["default.convert:2.0.0"]
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_a_query_that_filters_everything_out_is_an_empty_selection_not_a_fallback() -> None:
@@ -1045,19 +1045,19 @@ async def test_a_query_that_filters_everything_out_is_an_empty_selection_not_a_f
     a failure, not a slower path, in a selector-only deployment.
     """
     selector = _StubSelector({"default.shout": 0.9})
-    gantry = await _gantry_with(selector)
+    fetcher = await _fetcher_with(selector)
     try:
 
         async def _must_not_sync() -> None:
             raise AssertionError("the semantic path ran for a question the catalogue answered")
 
-        gantry.ensure_synced = _must_not_sync  # type: ignore[method-assign]
-        result = await gantry.retrieve_tools("be loud", limit=3, namespaces=["nowhere"])
+        fetcher.ensure_synced = _must_not_sync  # type: ignore[method-assign]
+        result = await fetcher.retrieve_tools("be loud", limit=3, namespaces=["nowhere"])
 
         assert result == []
         assert selector.seen == [], "nothing eligible, so nothing to put to the model"
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_an_empty_catalogue_still_falls_back_to_the_store() -> None:
@@ -1067,22 +1067,22 @@ async def test_an_empty_catalogue_still_falls_back_to_the_store() -> None:
     semantic path can see, so an empty registry hands over rather than
     answering "nothing".
     """
-    from agent_gantry import AgentGantry
+    from dotfetch import DotFetch
 
     selector = _StubSelector({})
-    gantry = AgentGantry(selector=selector)
+    fetcher = DotFetch(selector=selector)
     try:
-        retrieval = await gantry.retrieve(
+        retrieval = await fetcher.retrieve(
             ToolQuery(context=ConversationContext(query="anything"), limit=3, score_threshold=0.0)
         )
         assert retrieval.tools == []
         assert retrieval.selection_time_ms is None, "the semantic path should have run"
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 def _synthetic_skills(count: int, namespace: str) -> list[Any]:
-    from agent_gantry.schema.skill import Skill
+    from dotfetch.schema.skill import Skill
 
     return [
         Skill(
@@ -1116,22 +1116,22 @@ async def test_the_skill_ceiling_is_measured_against_the_eligible_catalogue() ->
     The paging call passed no filter, so a twelve-skill namespace gave up
     because some *other* namespace was large.
     """
-    from agent_gantry import AgentGantry
+    from dotfetch import DotFetch
 
     selector = _StubSelector({"small.skill_small_0": 0.9})
-    gantry = AgentGantry(selector=selector)
+    fetcher = DotFetch(selector=selector)
     try:
-        await gantry._ensure_initialized()
+        await fetcher._ensure_initialized()
         _paged_store(
-            gantry._vector_store,
+            fetcher._vector_store,
             {"big": _synthetic_skills(10_500, "big"), "small": _synthetic_skills(12, "small")},
         )
-        found = await gantry.retrieve_skills("the small one", limit=2, namespace="small")
+        found = await fetcher.retrieve_skills("the small one", limit=2, namespace="small")
 
         assert [r.skill.name for r in found] == ["skill_small_0"]
         assert len(selector.seen) == 1 and len(selector.seen[0]) == 12
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_a_skill_catalogue_just_over_the_ceiling_still_falls_back() -> None:
@@ -1141,41 +1141,41 @@ async def test_a_skill_catalogue_just_over_the_ceiling_still_falls_back() -> Non
     ``else`` — so a total that crossed the cap on a short final page was
     selected over in full.
     """
-    from agent_gantry import AgentGantry
+    from dotfetch import DotFetch
 
     selector = _StubSelector({})
-    gantry = AgentGantry(selector=selector)
+    fetcher = DotFetch(selector=selector)
     try:
-        await gantry._ensure_initialized()
-        _paged_store(gantry._vector_store, {"default": _synthetic_skills(10_500, "default")})
-        await gantry.retrieve_skills("anything", limit=2)
+        await fetcher._ensure_initialized()
+        _paged_store(fetcher._vector_store, {"default": _synthetic_skills(10_500, "default")})
+        await fetcher.retrieve_skills("anything", limit=2)
 
         assert selector.seen == [], "over the cap: the selector must not be consulted"
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_a_list_of_namespaces_pages_each_one() -> None:
-    from agent_gantry import AgentGantry
+    from dotfetch import DotFetch
 
     selector = _StubSelector({"a.skill_a_0": 0.9, "b.skill_b_0": 0.8})
-    gantry = AgentGantry(selector=selector)
+    fetcher = DotFetch(selector=selector)
     try:
-        await gantry._ensure_initialized()
+        await fetcher._ensure_initialized()
         _paged_store(
-            gantry._vector_store,
+            fetcher._vector_store,
             {
                 "a": _synthetic_skills(3, "a"),
                 "b": _synthetic_skills(2, "b"),
                 "c": _synthetic_skills(4, "c"),
             },
         )
-        found = await gantry.retrieve_skills("either", limit=5, namespace=["a", "b"])
+        found = await fetcher.retrieve_skills("either", limit=5, namespace=["a", "b"])
 
         assert {r.skill.namespace for r in found} == {"a", "b"}
         assert len(selector.seen[0]) == 5
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_the_cosine_threshold_default_does_not_cut_selector_probabilities() -> None:
@@ -1186,21 +1186,21 @@ async def test_the_cosine_threshold_default_does_not_cut_selector_probabilities(
     which the schema says is the supported thing to do.
     """
     selector = _StubSelector({"default.shout": 0.3})
-    gantry = await _gantry_with(selector)
+    fetcher = await _fetcher_with(selector)
     try:
-        retrieval = await gantry.retrieve(
+        retrieval = await fetcher.retrieve(
             ToolQuery(context=ConversationContext(query="be loud"), limit=3)
         )
         assert [s.tool.name for s in retrieval.tools] == ["shout"]
 
-        tightened = await gantry.retrieve(
+        tightened = await fetcher.retrieve(
             ToolQuery(
                 context=ConversationContext(query="be loud"), limit=3, selection_threshold=0.5
             )
         )
         assert tightened.tools == []
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 # ---------------------------------------------------------------------------
@@ -1213,16 +1213,16 @@ async def test_the_cosine_threshold_default_does_not_cut_selector_probabilities(
 @pytest.mark.parametrize(
     ("module", "old", "new"),
     [
-        ("agent_gantry", "JevSelector", "SystemOneSelector"),
-        ("agent_gantry", "JevReranker", "SystemOneReranker"),
-        ("agent_gantry.adapters.selectors", "JevSelector", "SystemOneSelector"),
-        ("agent_gantry.adapters.rerankers", "JevReranker", "SystemOneReranker"),
-        ("agent_gantry.adapters.selectors.jev", "JevSelector", "SystemOneSelector"),
-        ("agent_gantry.adapters.rerankers.jev", "JevReranker", "SystemOneReranker"),
-        ("agent_gantry.adapters.jev_client", "JevClient", "SystemOneClient"),
-        ("agent_gantry.adapters.jev_client", "JevVerdict", "SystemOneVerdict"),
+        ("dotfetch", "JevSelector", "SystemOneSelector"),
+        ("dotfetch", "JevReranker", "SystemOneReranker"),
+        ("dotfetch.adapters.selectors", "JevSelector", "SystemOneSelector"),
+        ("dotfetch.adapters.rerankers", "JevReranker", "SystemOneReranker"),
+        ("dotfetch.adapters.selectors.jev", "JevSelector", "SystemOneSelector"),
+        ("dotfetch.adapters.rerankers.jev", "JevReranker", "SystemOneReranker"),
+        ("dotfetch.adapters.jev_client", "JevClient", "SystemOneClient"),
+        ("dotfetch.adapters.jev_client", "JevVerdict", "SystemOneVerdict"),
         (
-            "agent_gantry.adapters.jev_client",
+            "dotfetch.adapters.jev_client",
             "JevIncompleteResponseError",
             "SystemOneIncompleteResponseError",
         ),
@@ -1231,9 +1231,9 @@ async def test_the_cosine_threshold_default_does_not_cut_selector_probabilities(
 def test_jev_names_are_deprecated_aliases(module: str, old: str, new: str) -> None:
     import importlib
 
-    import agent_gantry.adapters.rerankers.system_one as rerankers
-    import agent_gantry.adapters.selectors.system_one as selectors
-    import agent_gantry.adapters.system_one_client as client
+    import dotfetch.adapters.rerankers.system_one as rerankers
+    import dotfetch.adapters.selectors.system_one as selectors
+    import dotfetch.adapters.system_one_client as client
 
     current = next(getattr(m, new) for m in (selectors, rerankers, client) if hasattr(m, new))
     with pytest.warns(DeprecationWarning, match=rf"{old} is deprecated.*{new}"):
@@ -1244,8 +1244,8 @@ def test_jev_names_are_deprecated_aliases(module: str, old: str, new: str) -> No
 
 
 def test_old_module_paths_still_expose_their_constants() -> None:
-    import agent_gantry.adapters.selectors.jev as old_selectors
-    from agent_gantry.adapters.selectors.system_one import DEFAULT_THRESHOLD
+    import dotfetch.adapters.selectors.jev as old_selectors
+    from dotfetch.adapters.selectors.system_one import DEFAULT_THRESHOLD
 
     with pytest.warns(DeprecationWarning):
         assert old_selectors.DEFAULT_THRESHOLD == DEFAULT_THRESHOLD
@@ -1258,17 +1258,17 @@ def test_new_names_do_not_warn() -> None:
 
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        import agent_gantry
-        from agent_gantry.adapters.rerankers import SystemOneReranker
-        from agent_gantry.adapters.selectors import SystemOneSelector
+        import dotfetch
+        from dotfetch.adapters.rerankers import SystemOneReranker
+        from dotfetch.adapters.selectors import SystemOneSelector
 
-        assert agent_gantry.SystemOneSelector is SystemOneSelector
-        assert agent_gantry.SystemOneReranker is SystemOneReranker
+        assert dotfetch.SystemOneSelector is SystemOneSelector
+        assert dotfetch.SystemOneReranker is SystemOneReranker
 
 
 def test_config_type_jev_loads_as_system_one() -> None:
     """A stored config written before the rename keeps loading."""
-    from agent_gantry.schema.config import RerankerConfig, SelectorConfig
+    from dotfetch.schema.config import RerankerConfig, SelectorConfig
 
     assert SelectorConfig().type == "system_one"
     with pytest.warns(DeprecationWarning, match='type="system_one"'):
@@ -1278,10 +1278,10 @@ def test_config_type_jev_loads_as_system_one() -> None:
 
 
 def test_config_type_jev_still_builds_the_backends() -> None:
-    from agent_gantry.adapters.rerankers.system_one import SystemOneReranker
-    from agent_gantry.adapters.selectors.system_one import SystemOneSelector
-    from agent_gantry.core.factories import build_reranker, build_selector
-    from agent_gantry.schema.config import RerankerConfig, SelectorConfig
+    from dotfetch.adapters.rerankers.system_one import SystemOneReranker
+    from dotfetch.adapters.selectors.system_one import SystemOneSelector
+    from dotfetch.core.factories import build_reranker, build_selector
+    from dotfetch.schema.config import RerankerConfig, SelectorConfig
 
     with pytest.warns(DeprecationWarning):
         selector_config = SelectorConfig(enabled=True, type="jev")
@@ -1296,11 +1296,11 @@ async def test_reranker_cannot_decline_where_the_selector_can() -> None:
     The reranker orders a shortlist and never compares a probability with a
     threshold, so a reranker-backed setup has no way to answer "none of these".
     """
-    from agent_gantry.adapters.rerankers.system_one import SystemOneReranker
-    from agent_gantry.adapters.selectors.system_one import SystemOneSelector
-    from agent_gantry.adapters.system_one_client import SystemOneVerdict
-    from agent_gantry.schema.selection import SelectionCandidate
-    from agent_gantry.schema.tool import ToolDefinition
+    from dotfetch.adapters.rerankers.system_one import SystemOneReranker
+    from dotfetch.adapters.selectors.system_one import SystemOneSelector
+    from dotfetch.adapters.system_one_client import SystemOneVerdict
+    from dotfetch.schema.selection import SelectionCandidate
+    from dotfetch.schema.tool import ToolDefinition
 
     tools = [
         ToolDefinition(name=name, description=f"{name} tool", parameters_schema={})

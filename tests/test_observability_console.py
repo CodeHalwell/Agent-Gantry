@@ -9,10 +9,10 @@ from datetime import datetime, timezone
 
 import pytest
 
-from agent_gantry.observability.console import ConsoleTelemetryAdapter
-from agent_gantry.schema.execution import ExecutionStatus, ToolCall, ToolResult
-from agent_gantry.schema.query import ConversationContext, RetrievalResult, ScoredTool, ToolQuery
-from agent_gantry.schema.tool import ToolDefinition, ToolHealth
+from dotfetch.observability.console import ConsoleTelemetryAdapter
+from dotfetch.schema.execution import ExecutionStatus, ToolCall, ToolResult
+from dotfetch.schema.query import ConversationContext, RetrievalResult, ScoredTool, ToolQuery
+from dotfetch.schema.tool import ToolDefinition, ToolHealth
 
 
 class TestConsoleTelemetryAdapterMethods:
@@ -22,7 +22,7 @@ class TestConsoleTelemetryAdapterMethods:
     async def test_record_retrieval(self, caplog: pytest.LogCaptureFixture) -> None:
         """Test record_retrieval logs expected information."""
         adapter = ConsoleTelemetryAdapter(log_level=logging.INFO)
-        caplog.set_level(logging.INFO, logger="agent_gantry")
+        caplog.set_level(logging.INFO, logger="dotfetch")
 
         context = ConversationContext(query="What is the weather?")
         query = ToolQuery(context=context, limit=3)
@@ -61,7 +61,7 @@ class TestConsoleTelemetryAdapterMethods:
     async def test_record_execution_success(self, caplog: pytest.LogCaptureFixture) -> None:
         """Test record_execution for a successful execution."""
         adapter = ConsoleTelemetryAdapter(log_level=logging.INFO)
-        caplog.set_level(logging.INFO, logger="agent_gantry")
+        caplog.set_level(logging.INFO, logger="dotfetch")
 
         call = ToolCall(tool_name="get_weather", arguments={"location": "Tokyo"})
 
@@ -95,7 +95,7 @@ class TestConsoleTelemetryAdapterMethods:
     async def test_record_execution_error(self, caplog: pytest.LogCaptureFixture) -> None:
         """Test record_execution for an execution with an error."""
         adapter = ConsoleTelemetryAdapter(log_level=logging.INFO)
-        caplog.set_level(logging.INFO, logger="agent_gantry")
+        caplog.set_level(logging.INFO, logger="dotfetch")
 
         call = ToolCall(tool_name="get_weather", arguments={"location": "Tokyo"})
 
@@ -131,7 +131,7 @@ class TestConsoleTelemetryAdapterMethods:
     async def test_record_health_change(self, caplog: pytest.LogCaptureFixture) -> None:
         """Test record_health_change logs normal health changes."""
         adapter = ConsoleTelemetryAdapter(log_level=logging.INFO)
-        caplog.set_level(logging.INFO, logger="agent_gantry")
+        caplog.set_level(logging.INFO, logger="dotfetch")
 
         old_health = ToolHealth(success_rate=1.0, consecutive_failures=0)
         new_health = ToolHealth(success_rate=0.8, consecutive_failures=1)
@@ -153,7 +153,7 @@ class TestConsoleTelemetryAdapterMethods:
     async def test_record_health_change_circuit_breaker(self, caplog: pytest.LogCaptureFixture) -> None:
         """Test record_health_change logs with WARNING when circuit breaker opens."""
         adapter = ConsoleTelemetryAdapter(log_level=logging.INFO)
-        caplog.set_level(logging.INFO, logger="agent_gantry")
+        caplog.set_level(logging.INFO, logger="dotfetch")
 
         old_health = ToolHealth(success_rate=0.5, consecutive_failures=2)
         new_health = ToolHealth(success_rate=0.3, consecutive_failures=3, circuit_breaker_open=True)
@@ -171,7 +171,7 @@ class TestConsoleTelemetryAdapterMethods:
     async def test_span(self, caplog: pytest.LogCaptureFixture) -> None:
         """Test span context manager logs start and complete events."""
         adapter = ConsoleTelemetryAdapter(log_level=logging.INFO)
-        caplog.set_level(logging.INFO, logger="agent_gantry")
+        caplog.set_level(logging.INFO, logger="dotfetch")
 
         async with adapter.span("test_span", attributes={"key": "value"}):
             pass

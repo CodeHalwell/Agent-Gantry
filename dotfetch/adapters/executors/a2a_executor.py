@@ -1,0 +1,162 @@
+"""
+A2A Executor Adapter.
+
+Executes tools that originate from A2A agents by sending tasks to the remote agent.
+"""
+
+from __future__ import annotations
+
+import logging
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any
+
+from dotfetch.schema.execution import ExecutionStatus, ToolResult
+from dotfetch.schema.tool import ToolSource
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    from dotfetch.schema.execution import ToolCall
+    from dotfetch.schema.tool import ToolDefinition
+
+logger = logging.getLogger(__name__)
+
+
+class A2AExecutor:
+    """
+    Executor for A2A agent tools.
+
+    Sends tasks to remote A2A agents and returns results.
+    """
+
+    def __init__(self) -> None:
+        """Initialize A2A executor."""
+        self._clients: dict[str, Any] = {}
+
+    async def close(self) -> None:
+        """Close all cached A2A clients and their persistent connections."""
+        for client in self._clients.values():
+            close_method = getattr(client, "close", None)
+            if close_method is not None:
+                try:
+                    await close_method()
+                except Exception:  # pragma: no cover - best-effort cleanup
+                    logger.debug("Error closing A2A client", exc_info=True)
+        self._clients.clear()
+
+    def _get_client(self, tool: ToolDefinition) -> Any:
+        """
+        Get or create an A2A client for the tool.
+
+        Args:
+            tool: Tool definition with A2A metadata
+
+        Returns:
+            A2A client instance
+
+        Raises:
+            ValueError: If the tool is not from an A2A agent or lacks its
+                ``a2a_agent``/``a2a_url`` metadata
+        """
+        if tool.source != ToolSource.A2A_AGENT:
+            raise ValueError(f"Tool {tool.name} is not from an A2A agent")
+
+        agent_name = tool.metadata.get("a2a_agent")
+        if not agent_name:
+            raise ValueError(f"Tool {tool.name} missing a2a_agent metadata")
+
+        # Lazy import to avoid circular dependency
+        from dotfetch.providers.a2a_client import A2AClient
+        from dotfetch.schema.config import A2AAgentConfig
+
+        # Cache key must qualify the agent by namespace AND endpoint: with the
+        # executor shared across calls, a bare-name key would conflate two
+        # agents that share a name but live at different URLs, silently
+        # dispatching one agent's tasks to the other's endpoint.
+        url = tool.metadata.get("a2a_url")
+        if not url:
+            raise ValueError(f"Tool {tool.name} missing a2a_url metadata")
+        client_key = f"{tool.namespace}.{agent_name}@{url}"
+
+        # Return cached client or create new one
+        if client_key not in self._clients:
+            config = A2AAgentConfig(
+                name=agent_name,
+                url=url,
+                namespace=tool.namespace,
+            )
+            self._clients[client_key] = A2AClient(config)
+
+        return self._clients[client_key]
+
+    async def execute(
+        self,
+        tool: ToolDefinition,
+        call: ToolCall,
+        handler: Callable[..., Awaitable[Any]] | None = None,
+    ) -> ToolResult:
+        """
+        Execute a tool by sending a task to the A2A agent.
+
+        Args:
+            tool: Tool definition
+            call: Tool call parameters
+            handler: Optional direct handler (not used for A2A)
+
+        Returns:
+            Tool result
+        """
+        trace_id = call.trace_id or "unknown"
+        span_id = f"a2a-{trace_id}"
+        queued_at = datetime.now(timezone.utc)
+        started_at = datetime.now(timezone.utc)
+
+        try:
+            # Get A2A client
+            client = self._get_client(tool)
+
+            # Extract skill_id from metadata
+            skill_id = tool.metadata.get("skill_id")
+            if not skill_id:
+                raise ValueError(f"Tool {tool.name} missing skill_id metadata")
+
+            # Extract query from arguments
+            if "query" not in call.arguments:
+                raise ValueError("Missing required argument: query")
+            query = call.arguments["query"]
+
+            # Send task to A2A agent
+            result = await client.send_task(
+                skill_id=skill_id,
+                query=query,
+                metadata={"trace_id": trace_id},
+            )
+
+            completed_at = datetime.now(timezone.utc)
+
+            return ToolResult(
+                tool_name=call.tool_name,
+                status=ExecutionStatus.SUCCESS,
+                result=result,
+                queued_at=queued_at,
+                started_at=started_at,
+                completed_at=completed_at,
+                trace_id=trace_id,
+                span_id=span_id,
+            )
+
+        except Exception as e:
+            completed_at = datetime.now(timezone.utc)
+            logger.error(f"A2A execution failed for {tool.name}: {e}")
+
+            return ToolResult(
+                tool_name=call.tool_name,
+                status=ExecutionStatus.FAILURE,
+                error=str(e),
+                error_type=type(e).__name__,
+                queued_at=queued_at,
+                started_at=started_at,
+                completed_at=completed_at,
+                trace_id=trace_id,
+                span_id=span_id,
+            )

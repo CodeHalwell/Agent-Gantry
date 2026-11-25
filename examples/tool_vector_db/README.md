@@ -1,18 +1,18 @@
-# Agent-Gantry: Simple Vector DB Example with LanceDB
+# dotfetch: Simple Vector DB Example with LanceDB
 
-The simplest possible example of using Agent-Gantry with persistent LanceDB storage to:
+The simplest possible example of using dotfetch with persistent LanceDB storage to:
 1. Register 50 tools
 2. Semantically retrieve only the relevant ones
 3. Execute them via OpenAI Responses API
 
 ## Why This Matters
 
-Without Agent-Gantry, you'd send all 50 tool definitions to the LLM on every request. That's:
+Without dotfetch, you'd send all 50 tool definitions to the LLM on every request. That's:
 - **~15,000+ tokens** per request just for tool definitions
 - **Slower responses** due to larger context
 - **Higher costs** from token usage
 
-With Agent-Gantry:
+With dotfetch:
 - Only the **top-k relevant tools** are sent (`limit=10` in `main.py`, configurable)
 - **~90% token savings** on tool definitions
 - **Faster, cheaper** LLM calls
@@ -26,10 +26,10 @@ With Agent-Gantry:
 
 ```bash
 # Install dependencies
-pip install "agent-gantry[lancedb,openai]" python-dotenv
+pip install "dotfetch[lancedb,openai]" python-dotenv
 
 # Run the example. Registration, sync and retrieval need no key: it prints
-# the tools Gantry picked, then stops unless OPENAI_API_KEY is set.
+# the tools dotfetch picked, then stops unless OPENAI_API_KEY is set.
 python -m examples.tool_vector_db.main
 
 # Set your API key to run the model call and tool execution too
@@ -40,15 +40,15 @@ python -m examples.tool_vector_db.main
 ## How It Works
 
 ```python
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
-from agent_gantry.integrations.semantic_tools import with_semantic_tools
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
+from dotfetch.adapters.vector_stores.lancedb import LanceDBVectorStore
+from dotfetch.integrations.semantic_tools import with_semantic_tools
 
-# 1. Create gantry with persistent LanceDB storage (high-quality semantic search)
+# 1. Create fetcher with persistent LanceDB storage (high-quality semantic search)
 embedder = NomicEmbedder(dimension=768)  # Matryoshka truncation (64/128/256/512/768)
-vector_store = LanceDBVectorStore(db_path="gantry_tools.lancedb", dimension=768)
-tools = AgentGantry(embedder=embedder, vector_store=vector_store)
+vector_store = LanceDBVectorStore(db_path="fetcher_tools.lancedb", dimension=768)
+tools = DotFetch(embedder=embedder, vector_store=vector_store)
 
 # 2. Register tools using decorator
 @tools.register(examples=["calculate the average of these numbers"])
@@ -79,7 +79,7 @@ if outputs:
     )
 ```
 
-For semantic embeddings, install `agent-gantry[nomic]` and replace the hash
+For semantic embeddings, install `dotfetch[nomic]` and replace the hash
 embedder with `NomicEmbedder(dimension=768)`. Use a fresh database path when
 changing embedding models, even if the dimensions match.
 

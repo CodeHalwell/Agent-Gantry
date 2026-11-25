@@ -42,9 +42,9 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
-from agent_gantry.evaluation import RetrievalCase
-from agent_gantry.schema.skill import Skill, SkillCategory
-from agent_gantry.schema.tool import ToolDefinition
+from dotfetch.evaluation import RetrievalCase
+from dotfetch.schema.skill import Skill, SkillCategory
+from dotfetch.schema.tool import ToolDefinition
 
 # --------------------------------------------------------------------------- #
 # Native tools
@@ -287,8 +287,8 @@ def mcp_tools() -> list[ToolDefinition]:
     Raises:
         ImportError: If the optional ``mcp`` package is not installed.
     """
-    from agent_gantry.adapters.executors.mcp_client import MCPClient
-    from agent_gantry.schema.config import MCPServerConfig
+    from dotfetch.adapters.executors.mcp_client import MCPClient
+    from dotfetch.schema.config import MCPServerConfig
 
     tools: list[ToolDefinition] = []
     for server, specs in MCP_TOOLS.items():

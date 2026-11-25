@@ -17,30 +17,30 @@ const guides = [
   ['DSPy', '/Agent-Gantry/docs/frameworks/dspy/'],
 ];
 ---
-<DocsLayout title="Frameworks | Agent-Gantry">
+<DocsLayout title="Frameworks | dotfetch">
   <h1>Framework integrations</h1>
-  <p class="lead">Agent-Gantry is designed to be the shared tool layer below many agent frameworks. These guides show how to expose the same trusted tool registry, retrieval strategy, and LLM routing policy from basic prototypes through production-grade agent systems.</p>
+  <p class="lead">dotfetch is designed to be the shared tool layer below many agent frameworks. These guides show how to expose the same trusted tool registry, retrieval strategy, and LLM routing policy from basic prototypes through production-grade agent systems.</p>
   <ProviderMatrix />
 
   <h2>Start with one adapter call</h2>
-  <p>Install Gantry and the framework SDK your app uses. The same registry exposes twelve integrations through <code>gantry.framework(name)</code>, with concrete adapter types for editor completion and lazy SDK imports.</p>
-  <CodeBlock lang="bash" code={`pip install agent-gantry langchain-core`} />
-  <CodeBlock lang="python" code={`from agent_gantry import AgentGantry, supported_frameworks
+  <p>Install dotfetch and the framework SDK your app uses. The same registry exposes twelve integrations through <code>fetcher.framework(name)</code>, with concrete adapter types for editor completion and lazy SDK imports.</p>
+  <CodeBlock lang="bash" code={`pip install dotfetch langchain-core`} />
+  <CodeBlock lang="python" code={`from dotfetch import DotFetch, supported_frameworks
 
-gantry = AgentGantry()
+fetcher = DotFetch()
 
-@gantry.register
+@fetcher.register
 def add(a: int, b: int) -> int:
     """Add two integers together."""
     return a + b
 
 # Selection syncs registrations and returns native, executable tools.
-tools = await gantry.framework("langchain").select("add two numbers", limit=3)
+tools = await fetcher.framework("langchain").select("add two numbers", limit=3)
 assert await tools[0].ainvoke({"a": 2, "b": 3}) == 5
 
 # Discover adapters without installing all twelve SDKs.
 print(supported_frameworks())`} />
-  <p>For dynamic selection, use <code>gantry.framework(name).live(...)</code>. For example, Pydantic AI accepts <code>toolsets=[gantry.framework("pydantic-ai").live(limit=3)]</code>, or the whole integration as one capability: <code>capabilities=[gantry.framework("pydantic-ai").capability()]</code>. Each guide below shows the framework's native wiring and how often it refreshes tools. Existing adapter imports remain available.</p>
+  <p>For dynamic selection, use <code>fetcher.framework(name).live(...)</code>. For example, Pydantic AI accepts <code>toolsets=[fetcher.framework("pydantic-ai").live(limit=3)]</code>, or the whole integration as one capability: <code>capabilities=[fetcher.framework("pydantic-ai").capability()]</code>. Each guide below shows the framework's native wiring and how often it refreshes tools. Existing adapter imports remain available.</p>
 
   <h2>Framework-by-framework guides</h2>
   <p>Each guide is organized as a two-page learning path in one place: a <strong>basic page</strong> for setup, registration, and a first tool call, followed by an <strong>advanced page</strong> for dynamic tool selection, LLM calls, observability, and deployment patterns.</p>
@@ -49,13 +49,13 @@ print(supported_frameworks())`} />
   </div>
 
   <h2>Recommended integration model</h2>
-  <div class="step"><h3>Start with the shared registry</h3><p>Register Python callables once in Agent-Gantry, attach metadata, and export framework-specific tool objects only at the boundary of the selected framework.</p></div>
+  <div class="step"><h3>Start with the shared registry</h3><p>Register Python callables once in dotfetch, attach metadata, and export framework-specific tool objects only at the boundary of the selected framework.</p></div>
   <div class="step"><h3>Keep LLM calls behind adapters</h3><p>Use the framework for conversation state and agent loops, then route model calls through your provider policy so usage tracking, cost controls, and fallback rules remain consistent.</p></div>
   <div class="step"><h3>Add advanced controls last</h3><p>Introduce semantic tool retrieval, reranking, MCP/A2A executors, and tracing after the basic path has stable tests.</p></div>
 
   <h2>Microsoft Agent Framework</h2>
-  <p>The first-class integration path. Use <code>GantryContextProvider</code> for per-run or per-turn semantic tool injection, or <code>GantryToolBridge</code> when the tool set is fixed at construction. See the <a href="/Agent-Gantry/docs/frameworks/agent-framework/">basic guide</a> and <a href="/Agent-Gantry/docs/frameworks/agent-framework/advanced/">advanced guide</a> for orchestration, middleware, and AF 1.6 concurrent-workflow notes.</p>
+  <p>The first-class integration path. Use <code>DotFetchContextProvider</code> for per-run or per-turn semantic tool injection, or <code>DotFetchToolBridge</code> when the tool set is fixed at construction. See the <a href="/Agent-Gantry/docs/frameworks/agent-framework/">basic guide</a> and <a href="/Agent-Gantry/docs/frameworks/agent-framework/advanced/">advanced guide</a> for orchestration, middleware, and AF 1.6 concurrent-workflow notes.</p>
 
   <h2>Pydantic AI</h2>
-  <p>Also first-class, through Pydantic AI 2.x's own extension points. <code>adapter.capability()</code> re-selects tools every model step (including from tool results mid-run); <code>adapter.capability(mode="search")</code> puts the catalogue behind Pydantic AI's <code>ToolSearch</code>, ranked by Gantry. Failures surface as <code>ModelRetry</code> / <code>ToolFailed</code>, confirmation-gated tools use Pydantic AI's approval flow, and tools can read the run's <code>deps</code>. Install <code>agent-gantry[pydantic-ai]</code>; see the <a href="/Agent-Gantry/docs/frameworks/pydantic-ai/">basic guide</a> and <a href="/Agent-Gantry/docs/frameworks/pydantic-ai/advanced/">advanced guide</a>.</p>
+  <p>Also first-class, through Pydantic AI 2.x's own extension points. <code>adapter.capability()</code> re-selects tools every model step (including from tool results mid-run); <code>adapter.capability(mode="search")</code> puts the catalogue behind Pydantic AI's <code>ToolSearch</code>, ranked by dotfetch. Failures surface as <code>ModelRetry</code> / <code>ToolFailed</code>, confirmation-gated tools use Pydantic AI's approval flow, and tools can read the run's <code>deps</code>. Install <code>dotfetch[pydantic-ai]</code>; see the <a href="/Agent-Gantry/docs/frameworks/pydantic-ai/">basic guide</a> and <a href="/Agent-Gantry/docs/frameworks/pydantic-ai/advanced/">advanced guide</a>.</p>
 </DocsLayout>

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Agent-Gantry × Microsoft Agent Framework — Textual TUI demo.
+"""dotfetch × Microsoft Agent Framework — Textual TUI demo.
 
 Visualises semantic tool routing: full registry vs top-k selection per round,
-and live tool execution through Gantry's execution engine.
+and live tool execution through dotfetch's execution engine.
 
 **Screenshot-friendly demo (no API key):** press ``D`` or click *Run demo*.
 Scripts a four-step flow with **unrelated** sub-tasks chained in one user prompt (UTC
-time, BBC News, UUID, password) using the same ``GantryContextProvider.dry_run_retrieve``
+time, BBC News, UUID, password) using the same ``DotFetchContextProvider.dry_run_retrieve``
 path the live middleware uses.
 
 **Live agent (requires chat credentials):** press ``L`` or click *Run live* to
@@ -22,9 +22,9 @@ Install (in this repo)::
 
 Install (standalone project)::
 
-    uv add textual "agent-gantry[agent-frameworks]"
+    uv add textual "dotfetch[agent-frameworks]"
     # Optional stronger embeddings (sync runs before the TUI starts):
-    uv add "agent-gantry[nomic]"
+    uv add "dotfetch[nomic]"
 
 Run::
 
@@ -63,11 +63,11 @@ from textual.message import Message
 from textual.widgets import Button, DataTable, Footer, Header, RichLog, Static
 from textual.widgets.data_table import ColumnKey, RowKey
 
-from agent_gantry import AgentGantry, GantryContextProvider, ToolCallEvent
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-from agent_gantry.agent_framework import AgentFrameworkAdapter
-from agent_gantry.integrations.agent_framework_bridge import RetrievalDecision
-from agent_gantry.schema.execution import ExecutionStatus, ToolCall
+from dotfetch import DotFetch, DotFetchContextProvider, ToolCallEvent
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
+from dotfetch.agent_framework import AgentFrameworkAdapter
+from dotfetch.integrations.agent_framework_bridge import RetrievalDecision
+from dotfetch.schema.execution import ExecutionStatus, ToolCall
 
 # ---------------------------------------------------------------------------
 # Tool registry (stdlib-only — same shape as agent_framework_trace_events_example)
@@ -130,16 +130,16 @@ def _resolve_embedder(kind: str):
     if kind == "simple":
         return SimpleEmbedder(dimension=256)
     if kind == "nomic":
-        from agent_gantry.adapters.embedders.nomic import NomicEmbedder
+        from dotfetch.adapters.embedders.nomic import NomicEmbedder
 
         return NomicEmbedder()
     raise ValueError(f"Unknown embedder: {kind!r} (expected simple or nomic)")
 
 
-def build_gantry(*, embedder_kind: str = "simple") -> AgentGantry:
-    gantry = AgentGantry(embedder=_resolve_embedder(embedder_kind))
+def build_fetcher(*, embedder_kind: str = "simple") -> DotFetch:
+    fetcher = DotFetch(embedder=_resolve_embedder(embedder_kind))
 
-    @gantry.register(
+    @fetcher.register(
         tags=["password", "security", "secret", "random"],
         examples=["generate a secure password", "create a strong random password"],
     )
@@ -151,7 +151,7 @@ def build_gantry(*, embedder_kind: str = "simple") -> AgentGantry:
         alphabet = string.ascii_letters + string.digits + "!@#$%^&*()-_=+"
         return "".join(secrets.choice(alphabet) for _ in range(length))
 
-    @gantry.register(
+    @fetcher.register(
         tags=["hashing", "crypto", "checksum", "sha256"],
         examples=["hash this string with SHA-256", "compute the SHA-256 of this text"],
     )
@@ -165,7 +165,7 @@ def build_gantry(*, embedder_kind: str = "simple") -> AgentGantry:
             return "ERROR: algorithm must be one of md5, sha1, sha256"
         return hashlib.new(algo, text.encode()).hexdigest()
 
-    @gantry.register(
+    @fetcher.register(
         tags=["math", "arithmetic", "calculator"],
         examples=["what is 12 * (4 + 3)?", "compute 2 to the power of 10"],
     )
@@ -173,7 +173,7 @@ def build_gantry(*, embedder_kind: str = "simple") -> AgentGantry:
         """Evaluate a simple arithmetic expression."""
         return expression  # demo placeholder — not invoked in the scripted flow
 
-    @gantry.register(
+    @fetcher.register(
         tags=["time", "date", "clock", "calendar"],
         examples=["what time is it now?", "what is today's date?"],
     )
@@ -181,7 +181,7 @@ def build_gantry(*, embedder_kind: str = "simple") -> AgentGantry:
         """Get the current UTC date and time as an ISO-8601 timestamp."""
         return datetime.now(timezone.utc).isoformat()
 
-    @gantry.register(
+    @fetcher.register(
         tags=["news", "web", "bbc", "headlines", "fetch"],
         examples=[
             "get the latest news from bbc.co.uk",
@@ -195,7 +195,7 @@ def build_gantry(*, embedder_kind: str = "simple") -> AgentGantry:
         max_headlines = max(1, min(max_headlines, 10))
         request = Request(
             "https://feeds.bbci.co.uk/news/rss.xml",
-            headers={"User-Agent": "agent-gantry-tui-demo/1.0"},
+            headers={"User-Agent": "dotfetch-tui-demo/1.0"},
         )
         try:
             with urlopen(request, timeout=15) as response:
@@ -213,7 +213,7 @@ def build_gantry(*, embedder_kind: str = "simple") -> AgentGantry:
             return "No BBC News headlines found."
         return "BBC News headlines:\n" + "\n".join(headlines)
 
-    @gantry.register(
+    @fetcher.register(
         tags=["uuid", "identifier", "random"],
         examples=["generate a unique id", "give me a random UUID"],
     )
@@ -221,7 +221,7 @@ def build_gantry(*, embedder_kind: str = "simple") -> AgentGantry:
         """Generate a random UUID (version 4) identifier."""
         return str(uuid.uuid4())
 
-    @gantry.register(
+    @fetcher.register(
         tags=["text", "analysis", "word-count"],
         examples=["how many words are in this text?", "count the characters"],
     )
@@ -229,21 +229,21 @@ def build_gantry(*, embedder_kind: str = "simple") -> AgentGantry:
         """Report word and character counts for a block of text."""
         return f"words={len(text.split())} characters={len(text)}"
 
-    return gantry
+    return fetcher
 
 
 async def prepare_session(*, embedder_kind: str = "simple") -> tuple[
-    AgentGantry, GantryContextProvider, list[str]
+    DotFetch, DotFetchContextProvider, list[str]
 ]:
-    """Build Gantry, sync embeddings, and return ready-to-use session state."""
-    gantry = build_gantry(embedder_kind=embedder_kind)
-    provider = AgentFrameworkAdapter(gantry).context_provider(
+    """Build dotfetch, sync embeddings, and return ready-to-use session state."""
+    fetcher = build_fetcher(embedder_kind=embedder_kind)
+    provider = AgentFrameworkAdapter(fetcher).context_provider(
         top_k=3,
         query_strategy="per_turn",
     )
-    await gantry.sync()
-    registry_names = sorted(tool.name for tool in await gantry.list_tools())
-    return gantry, provider, registry_names
+    await fetcher.sync()
+    registry_names = sorted(tool.name for tool in await fetcher.list_tools())
+    return fetcher, provider, registry_names
 
 
 def build_live_chat_client():
@@ -320,7 +320,7 @@ class RoundUpdated(Message):
 
 
 class ToolExecutionLogged(Message):
-    """UI notification that a Gantry tool call finished."""
+    """UI notification that a dotfetch tool call finished."""
 
     def __init__(self, tool_event: ToolCallEvent, *, round_num: int = 0) -> None:
         self.tool_event = tool_event
@@ -339,10 +339,10 @@ class StatusUpdated(Message):
 # ---------------------------------------------------------------------------
 
 
-class GantryAgentFrameworkTUI(App[None]):
+class DotFetchAgentFrameworkTUI(App[None]):
     """Semantic tool routing dashboard for Agent Framework integrators."""
 
-    TITLE = "Agent-Gantry × Microsoft Agent Framework"
+    TITLE = "dotfetch × Microsoft Agent Framework"
     SUB_TITLE = "Context is precious · retrieve top-k, not the whole registry"
 
     CSS = """
@@ -440,14 +440,14 @@ class GantryAgentFrameworkTUI(App[None]):
     def __init__(
         self,
         *,
-        gantry: AgentGantry,
-        provider: GantryContextProvider,
+        fetcher: DotFetch,
+        provider: DotFetchContextProvider,
         registry_names: list[str],
         demo_on_start: bool = False,
     ) -> None:
         super().__init__()
         self._demo_on_start = demo_on_start
-        self._gantry = gantry
+        self._fetcher = fetcher
         self._provider = provider
         self._registry_names = registry_names
         self._registry_rows: dict[str, RowKey] = {}
@@ -468,7 +468,7 @@ class GantryAgentFrameworkTUI(App[None]):
             with Vertical(classes="panel"):
                 yield Static("Tool registry", classes="panel-title")
                 yield Static(
-                    "All tools registered with Gantry",
+                    "All tools registered with dotfetch",
                     classes="panel-subtitle",
                 )
                 yield DataTable(id="registry-table", zebra_stripes=True)
@@ -483,7 +483,7 @@ class GantryAgentFrameworkTUI(App[None]):
             with Vertical(classes="panel"):
                 yield Static("Execution log", classes="panel-title")
                 yield Static(
-                    "Calls routed through gantry.execute",
+                    "Calls routed through fetcher.execute",
                     classes="panel-subtitle",
                 )
                 yield RichLog(
@@ -500,7 +500,7 @@ class GantryAgentFrameworkTUI(App[None]):
         yield Footer()
 
     async def on_mount(self) -> None:
-        self._gantry.on_tool_call(self._on_tool_executed)
+        self._fetcher.on_tool_call(self._on_tool_executed)
         registry = self.query_one("#registry-table", DataTable)
         _tool_col, status_col = registry.add_columns("Tool", "Status")
         self._status_col = status_col
@@ -577,7 +577,7 @@ class GantryAgentFrameworkTUI(App[None]):
             RoundUpdated(RoundState(round_num, query, decision, planned_call=execute))
         )
         try:
-            result = await self._gantry.execute(execute)
+            result = await self._fetcher.execute(execute)
         finally:
             self._execution_round = 0
         if result.status != ExecutionStatus.SUCCESS:
@@ -592,7 +592,7 @@ class GantryAgentFrameworkTUI(App[None]):
             from agent_framework import Agent
         except ImportError:
             self.post_message(
-                StatusUpdated("Live mode requires agent-framework — uv add agent-gantry[agent-frameworks]")
+                StatusUpdated("Live mode requires agent-framework — uv add dotfetch[agent-frameworks]")
             )
             return
 
@@ -615,7 +615,7 @@ class GantryAgentFrameworkTUI(App[None]):
         try:
             agent = Agent(
                 client,
-                name="GantryTUI",
+                name="DotFetchTUI",
                 instructions=(
                     "You are a helpful assistant. Use the provided tools to complete "
                     "the user's request, one step at a time."
@@ -775,7 +775,7 @@ def main() -> None:
     # which reads as a hang rather than a clear refusal.
     interactive = sys.stdin.isatty() and sys.stdout.isatty()
     if args.check or not interactive:
-        gantry, _provider, registry_names = asyncio.run(
+        fetcher, _provider, registry_names = asyncio.run(
             prepare_session(embedder_kind=args.embedder)
         )
         print(f"Session prepared with {len(registry_names)} tools registered:")
@@ -784,16 +784,16 @@ def main() -> None:
         if not interactive and not args.check:
             print("\nNo TTY detected, so the interactive UI was not started.")
             print("Run this from a terminal to use it, or pass --check for this summary.")
-        asyncio.run(gantry.close())
+        asyncio.run(fetcher.close())
         return
 
-    gantry = None
+    fetcher = None
     try:
-        gantry, provider, registry_names = asyncio.run(
+        fetcher, provider, registry_names = asyncio.run(
             prepare_session(embedder_kind=args.embedder)
         )
-        GantryAgentFrameworkTUI(
-            gantry=gantry,
+        DotFetchAgentFrameworkTUI(
+            fetcher=fetcher,
             provider=provider,
             registry_names=registry_names,
             demo_on_start=args.demo_on_start,
@@ -801,12 +801,12 @@ def main() -> None:
     except KeyboardInterrupt:
         sys.exit(0)
     finally:
-        # Both the normal exit and Ctrl-C land here. Without it the gantry is
+        # Both the normal exit and Ctrl-C land here. Without it the fetcher is
         # closed only on the non-interactive branch above — a close on one
         # path out of three, which is the shape that kept this defect alive
         # through two rounds of review.
-        if gantry is not None:
-            asyncio.run(gantry.close())
+        if fetcher is not None:
+            asyncio.run(fetcher.close())
 
 
 if __name__ == "__main__":

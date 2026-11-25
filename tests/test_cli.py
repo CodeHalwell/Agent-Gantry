@@ -1,5 +1,5 @@
 """
-The ``agent-gantry`` CLI against real registries (``--module``) and its
+The ``dotfetch`` CLI against real registries (``--module``) and its
 ``serve-mcp`` plumbing.
 """
 
@@ -13,32 +13,32 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from agent_gantry import AgentGantry
-from agent_gantry.cli.main import build_gantry_async, main
+from dotfetch import DotFetch
+from dotfetch.cli.main import build_fetcher_async, main
 
 
-def build_gantry(modules: list[str] | None, **kwargs: Any) -> AgentGantry:
+def build_fetcher(modules: list[str] | None, **kwargs: Any) -> DotFetch:
     """Build on a throwaway loop, as the removed synchronous CLI helper did."""
-    return asyncio.run(build_gantry_async(modules, **kwargs))
+    return asyncio.run(build_fetcher_async(modules, **kwargs))
 
 
 def test_single_module_uses_the_instance_itself() -> None:
     from tests.test_modules import module_a
 
-    gantry = build_gantry(["tests.test_modules.module_a"])
-    assert gantry is module_a.tools
+    fetcher = build_fetcher(["tests.test_modules.module_a"])
+    assert fetcher is module_a.tools
 
-    custom = build_gantry(["tests.test_modules.module_custom_attr:my_custom_tools"])
+    custom = build_fetcher(["tests.test_modules.module_custom_attr:my_custom_tools"])
     assert custom.tool_count == 1
-    by_attr = build_gantry(["tests.test_modules.module_custom_attr"], attr="my_custom_tools")
+    by_attr = build_fetcher(["tests.test_modules.module_custom_attr"], attr="my_custom_tools")
     assert by_attr is custom
 
 
 def test_several_modules_are_merged_into_one_registry() -> None:
-    gantry = build_gantry(
+    fetcher = build_fetcher(
         ["tests.test_modules.module_a", "tests.test_modules.module_custom_attr:my_custom_tools"]
     )
-    names = sorted(t.name for t in gantry.list_tools_sync())
+    names = sorted(t.name for t in fetcher.list_tools_sync())
     assert names == ["custom_tool", "tool_a1", "tool_a2"]
 
 
@@ -51,31 +51,31 @@ def test_a_duplicate_across_modules_warns_and_keeps_the_first(
     import logging
 
     with caplog.at_level(logging.WARNING):
-        gantry = build_gantry(
+        fetcher = build_fetcher(
             [
                 "tests.test_modules.module_a",
                 "tests.test_modules.module_c_duplicate",
             ]
         )
     assert "Skipping duplicate tool 'default.tool_a1'" in caplog.text
-    handler = gantry._registry.get_handler("default.tool_a1")
+    handler = fetcher._registry.get_handler("default.tool_a1")
     assert handler is not None
     assert handler.__module__ == "tests.test_modules.module_a", "the first module must win"
 
 
 def test_missing_module_or_attribute_is_a_clear_error(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit, match="could not import module"):
-        build_gantry(["tests.test_modules.does_not_exist"])
-    with pytest.raises(SystemExit, match="no AgentGantry at attribute 'tools'"):
-        build_gantry(["tests.test_modules.module_no_tools"])
+        build_fetcher(["tests.test_modules.does_not_exist"])
+    with pytest.raises(SystemExit, match="no DotFetch at attribute 'tools'"):
+        build_fetcher(["tests.test_modules.module_no_tools"])
 
 
 def test_demo_registry_is_announced_on_stderr(capsys: pytest.CaptureFixture[str]) -> None:
-    gantry = build_gantry(None)
-    assert isinstance(gantry, AgentGantry)
-    assert gantry.tool_count == 3
+    fetcher = build_fetcher(None)
+    assert isinstance(fetcher, DotFetch)
+    assert fetcher.tool_count == 3
     assert "demo tools" in capsys.readouterr().err
-    build_gantry(None, quiet=True)
+    build_fetcher(None, quiet=True)
     assert capsys.readouterr().err == ""
 
 
@@ -111,7 +111,7 @@ def test_prune_defers_to_the_config_when_the_flag_is_absent(
     """``--prune`` defaulted to False rather than None, so it overrode
     ``sync()``'s "None means use the config" and a config asking for pruning
     was ignored — in the dry-run report as well as the real sync."""
-    config = tmp_path / "gantry.yaml"
+    config = tmp_path / "fetcher.yaml"
     config.write_text("prune_on_sync: true\n", encoding="utf-8")
     assert (
         main(
@@ -134,25 +134,25 @@ def test_prune_defers_to_the_config_when_the_flag_is_absent(
 
 
 def test_the_command_runs_on_one_event_loop() -> None:
-    """The gantry has to be built on the loop its command then runs on: a
+    """The fetcher has to be built on the loop its command then runs on: a
     loop-bound backend (a pgvector pool) initialised under one ``asyncio.run``
     and used under a second is talking to a closed loop."""
     loops: list[int] = []
-    real_retrieve = AgentGantry.retrieve
+    real_retrieve = DotFetch.retrieve
 
-    async def spy(self: AgentGantry, query: Any) -> Any:
+    async def spy(self: DotFetch, query: Any) -> Any:
         loops.append(id(asyncio.get_running_loop()))
         return await real_retrieve(self, query)
 
-    original = AgentGantry.collect_tools_from_modules
+    original = DotFetch.collect_tools_from_modules
 
-    async def collect_spy(self: AgentGantry, *args: Any, **kwargs: Any) -> Any:
+    async def collect_spy(self: DotFetch, *args: Any, **kwargs: Any) -> Any:
         loops.append(id(asyncio.get_running_loop()))
         return await original(self, *args, **kwargs)
 
     with (
-        patch.object(AgentGantry, "retrieve", spy),
-        patch.object(AgentGantry, "collect_tools_from_modules", collect_spy),
+        patch.object(DotFetch, "retrieve", spy),
+        patch.object(DotFetch, "collect_tools_from_modules", collect_spy),
     ):
         # two --module entries force the collect path, which used to run in
         # its own asyncio.run() before the command opened another
@@ -174,7 +174,7 @@ def test_the_command_runs_on_one_event_loop() -> None:
 
 
 def test_serve_mcp_plumbs_transport_options() -> None:
-    with patch.object(AgentGantry, "serve_mcp", new_callable=AsyncMock) as serve:
+    with patch.object(DotFetch, "serve_mcp", new_callable=AsyncMock) as serve:
         assert (
             main(
                 [
@@ -196,7 +196,7 @@ def test_serve_mcp_plumbs_transport_options() -> None:
     serve.assert_awaited_once_with(
         transport="streamable_http",
         mode="hybrid",
-        name="agent-gantry",
+        name="dotfetch",
         host="127.0.0.1",
         port=8765,
         path=None,
@@ -212,7 +212,7 @@ def test_serve_mcp_advertises_the_endpoint_it_will_serve(
     serving. Each transport's own default stands in for an omitted ``--path``."""
 
     def _serve(*args: str) -> str:
-        with patch.object(AgentGantry, "serve_mcp", new_callable=AsyncMock):
+        with patch.object(DotFetch, "serve_mcp", new_callable=AsyncMock):
             assert main(["serve-mcp", "--module", "tests.test_modules.module_a", *args]) == 0
         return capsys.readouterr().err
 
@@ -238,52 +238,52 @@ def test_a_duplicate_under_a_different_attribute_is_still_caught(
     import logging
 
     with caplog.at_level(logging.WARNING):
-        gantry = build_gantry(
+        fetcher = build_fetcher(
             [
                 "tests.test_modules.module_a",
                 "tests.test_modules.module_d_duplicate_attr:other_tools",
             ]
         )
     assert "Skipping duplicate tool 'default.tool_a1'" in caplog.text
-    handler = gantry._registry.get_handler("default.tool_a1")
+    handler = fetcher._registry.get_handler("default.tool_a1")
     assert handler is not None
     assert handler.__module__ == "tests.test_modules.module_a", "the first module must win"
 
 
-def test_building_the_gantry_does_not_write_to_the_store(tmp_path: Path) -> None:
+def test_building_the_fetcher_does_not_write_to_the_store(tmp_path: Path) -> None:
     """Collecting modules embedded every tool and upserted it into the
     configured store, before the command had decided anything. ``sync
     --dry-run`` promises to report what *would* be embedded, so with
     ``--config`` pointing at a real backend it mutated the very state it was
     asked only to inspect -- and then reported the tools as already current.
     """
-    config = tmp_path / "gantry.yaml"
+    config = tmp_path / "fetcher.yaml"
     config.write_text("auto_sync: false\n", encoding="utf-8")
-    gantry = build_gantry(
+    fetcher = build_fetcher(
         ["tests.test_modules.module_a", "tests.test_modules.module_b"], config=str(config)
     )
 
     async def inspect() -> list[Any]:
-        await gantry._ensure_initialized()
-        return await gantry._vector_store.list_all(limit=100)
+        await fetcher._ensure_initialized()
+        return await fetcher._vector_store.list_all(limit=100)
 
     assert asyncio.run(inspect()) == [], "building must not embed or store anything"
     # ...but the tools are all there to be inspected, and a later sync stores
     # them, so nothing is lost by holding the write back.
-    assert gantry.tool_count == 4
-    assert len(asyncio.run(_sync_and_list(gantry))) == 4
+    assert fetcher.tool_count == 4
+    assert len(asyncio.run(_sync_and_list(fetcher))) == 4
 
 
-async def _sync_and_list(gantry: AgentGantry) -> list[Any]:
-    await gantry.sync()
-    return await gantry._vector_store.list_all(limit=100)
+async def _sync_and_list(fetcher: DotFetch) -> list[Any]:
+    await fetcher.sync()
+    return await fetcher._vector_store.list_all(limit=100)
 
 
 def test_a_dry_run_leaves_a_persistent_store_untouched(tmp_path: Path) -> None:
     """The end-to-end shape of the above: two dry runs in a row against one
     store both report the same work as outstanding, because neither did it."""
     store = tmp_path / "store"
-    config = tmp_path / "gantry.yaml"
+    config = tmp_path / "fetcher.yaml"
     config.write_text(
         f"vector_store:\n  type: lancedb\n  db_path: {store}\n", encoding="utf-8"
     )
@@ -305,9 +305,9 @@ def test_a_dry_run_leaves_a_persistent_store_untouched(tmp_path: Path) -> None:
         )
     # LanceDB lays out its directory on connect, so count rows, not files.
     async def rows() -> list[Any]:
-        from agent_gantry.schema.config import AgentGantryConfig
+        from dotfetch.schema.config import DotFetchConfig
 
-        probe = AgentGantry(config=AgentGantryConfig.from_yaml(str(config)))
+        probe = DotFetch(config=DotFetchConfig.from_yaml(str(config)))
         await probe._ensure_initialized()
         try:
             return await probe._vector_store.list_all(limit=100)
@@ -317,21 +317,21 @@ def test_a_dry_run_leaves_a_persistent_store_untouched(tmp_path: Path) -> None:
     assert asyncio.run(rows()) == [], "a dry run must not embed or store anything"
 
 
-def test_config_option_builds_the_gantry_from_yaml(tmp_path: Path) -> None:
-    config = tmp_path / "gantry.yaml"
+def test_config_option_builds_the_fetcher_from_yaml(tmp_path: Path) -> None:
+    config = tmp_path / "fetcher.yaml"
     config.write_text("auto_sync: false\nexecution:\n  max_retries: 1\n", encoding="utf-8")
-    gantry = build_gantry(
+    fetcher = build_fetcher(
         ["tests.test_modules.module_a", "tests.test_modules.module_b"], config=str(config)
     )
-    assert gantry._config.auto_sync is False
-    assert gantry._config.execution.max_retries == 1
-    assert gantry.tool_count == 4
+    assert fetcher._config.auto_sync is False
+    assert fetcher._config.execution.max_retries == 1
+    assert fetcher.tool_count == 4
 
 
 def test_module_specs_resolve_against_the_working_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """``agent-gantry`` is an installed console script, so the directory it is
+    """``dotfetch`` is an installed console script, so the directory it is
     run from is not on ``sys.path`` the way ``python -m`` would put it there.
     ``--module pkg.tools`` from a project root -- the flag's own documented
     use -- failed against a local, uninstalled package."""
@@ -339,7 +339,7 @@ def test_module_specs_resolve_against_the_working_directory(
     package.mkdir()
     (package / "__init__.py").write_text("")
     (package / "tools.py").write_text(
-        "from agent_gantry import AgentGantry\n\ntools = AgentGantry()\n"
+        "from dotfetch import DotFetch\n\ntools = DotFetch()\n"
     )
 
     monkeypatch.chdir(tmp_path)
@@ -384,7 +384,7 @@ def test_search_limit_outside_the_query_bounds_is_a_clean_error() -> None:
                     limit,
                 ]
             )
-        assert "agent-gantry search" in str(excinfo.value)
+        assert "dotfetch search" in str(excinfo.value)
 
     # an in-range limit still runs
     assert (
@@ -406,7 +406,7 @@ def test_both_skill_install_spellings_reach_the_same_code(tmp_path: Path) -> Non
         assert main(argv) == 0, f"{name} failed"
 
     for sub in ("a", "b"):
-        installed = tmp_path / sub / "agent-gantry"
+        installed = tmp_path / sub / "dotfetch"
         assert (installed / "SKILL.md").is_file(), f"{sub}: SKILL.md missing"
         assert (installed / "references").is_dir(), f"{sub}: references/ missing"
 

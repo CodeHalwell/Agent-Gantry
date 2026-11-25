@@ -6,7 +6,7 @@ interruptions, run state and per-turn ``is_enabled`` evaluation rather than
 stand-ins. Covers: failures reaching the model as tool output, ``error_mode``,
 ``error_formatter``, native ``needs_approval`` (tool flag and ``SecurityPolicy``
 pattern) with approve/reject, the custom-policy fallback, ``ToolContext`` in
-Gantry handlers, trace propagation, and :meth:`OpenAIAgentsAdapter.dynamic_tools`
+dotfetch handlers, trace propagation, and :meth:`OpenAIAgentsAdapter.dynamic_tools`
 (mid-run re-selection, run isolation, sticky cap, privacy opt-out, retrieval
 failure, no ``agent.tools`` mutation).
 """
@@ -24,21 +24,21 @@ os.environ.setdefault("OPENAI_AGENTS_DISABLE_TRACING", "1")
 from agents import Agent, Runner  # noqa: E402
 from agents.testing import ScriptedModel, assistant_message, function_call  # noqa: E402
 
-from agent_gantry import AgentGantry, current_tool_invocation  # noqa: E402
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder  # noqa: E402
-from agent_gantry.core.security import (  # noqa: E402
+from dotfetch import DotFetch, current_tool_invocation  # noqa: E402
+from dotfetch.adapters.embedders.simple import SimpleEmbedder  # noqa: E402
+from dotfetch.core.security import (  # noqa: E402
     ConfirmationRequiredError,
     SecurityPolicy,
 )
-from agent_gantry.integrations.frameworks.base import (  # noqa: E402
+from dotfetch.integrations.frameworks.base import (  # noqa: E402
     ToolConfirmationRequiredError,
     ToolExecutionError,
 )
-from agent_gantry.openai_agents import OpenAIAgentsAdapter  # noqa: E402
+from dotfetch.openai_agents import OpenAIAgentsAdapter  # noqa: E402
 
 
-async def _build(**kwargs) -> AgentGantry:
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=256), **kwargs)
+async def _build(**kwargs) -> DotFetch:
+    g = DotFetch(embedder=SimpleEmbedder(dimension=256), **kwargs)
     g.sent = []  # type: ignore[attr-defined]
 
     @g.register
@@ -65,7 +65,7 @@ async def _build(**kwargs) -> AgentGantry:
     @g.register
     def whoami() -> str:
         """Return the name of the current user from the run context."""
-        from agent_gantry.openai_agents import current_run_context
+        from dotfetch.openai_agents import current_run_context
 
         ctx = current_run_context()
         invocation = current_tool_invocation()
@@ -82,7 +82,7 @@ async def _build(**kwargs) -> AgentGantry:
 
 
 @pytest.fixture
-async def gantry():
+async def fetcher():
     g = await _build()
     yield g
     await g.close()
@@ -112,21 +112,21 @@ async def _run(tools, *steps, prompt="go", **run_kwargs):
 # --------------------------------------------------------------------------- #
 
 
-async def test_tool_failure_reaches_the_model_as_output(gantry):
-    tools = await OpenAIAgentsAdapter(gantry).select("divide integers", limit=6)
+async def test_tool_failure_reaches_the_model_as_output(fetcher):
+    tools = await OpenAIAgentsAdapter(fetcher).select("divide integers", limit=6)
     result, _ = await _run(tools, [("divide", {"a": 1, "b": 0})])
     assert _outputs(result) == ["Error: ZeroDivisionError: division by zero"]
     assert result.final_output == "done"
 
 
-async def test_argument_errors_are_shown_so_the_model_can_correct_them(gantry):
-    tools = await OpenAIAgentsAdapter(gantry).select("divide integers", limit=6)
+async def test_argument_errors_are_shown_so_the_model_can_correct_them(fetcher):
+    tools = await OpenAIAgentsAdapter(fetcher).select("divide integers", limit=6)
     result, _ = await _run(tools, [("divide", {"a": "x", "b": 2})], [("divide", {"a": 4, "b": 2})])
     assert _outputs(result) == ["Error: Parameter 'a' must be an integer", "2.0"]
 
 
-async def test_error_mode_raise_ends_the_run(gantry):
-    tools = await OpenAIAgentsAdapter(gantry, error_mode="raise").select("divide", limit=6)
+async def test_error_mode_raise_ends_the_run(fetcher):
+    tools = await OpenAIAgentsAdapter(fetcher, error_mode="raise").select("divide", limit=6)
     with pytest.raises(Exception) as info:
         await _run(tools, [("divide", {"a": 1, "b": 0})])
     chain = [info.value]
@@ -135,20 +135,20 @@ async def test_error_mode_raise_ends_the_run(gantry):
     assert any(isinstance(e, ToolExecutionError) for e in chain)
 
 
-async def test_error_mode_raise_with_a_gated_tool_raises_and_never_runs(gantry):
-    tools = await OpenAIAgentsAdapter(gantry, error_mode="raise").select("send email", limit=6)
+async def test_error_mode_raise_with_a_gated_tool_raises_and_never_runs(fetcher):
+    tools = await OpenAIAgentsAdapter(fetcher, error_mode="raise").select("send email", limit=6)
     with pytest.raises(Exception) as info:
         await _run(tools, [("send_email", {"to": "bob@x"})])
     chain = [info.value]
     while chain[-1].__cause__ is not None:
         chain.append(chain[-1].__cause__)
     assert any(isinstance(e, ToolConfirmationRequiredError) for e in chain)
-    assert gantry.sent == []
+    assert fetcher.sent == []
 
 
 @pytest.mark.parametrize("helper", ["run", "session"])
-async def test_legacy_helpers_honour_the_adapter_error_mode(gantry, helper):
-    adapter = OpenAIAgentsAdapter(gantry, error_mode="raise")
+async def test_legacy_helpers_honour_the_adapter_error_mode(fetcher, helper):
+    adapter = OpenAIAgentsAdapter(fetcher, error_mode="raise")
     agent = Agent(name="a", model=_script([("divide", {"a": 1, "b": 0})]), tools=[])
     with pytest.raises(Exception) as info:
         if helper == "run":
@@ -161,9 +161,9 @@ async def test_legacy_helpers_honour_the_adapter_error_mode(gantry, helper):
     assert any(isinstance(e, ToolExecutionError) for e in chain)
 
 
-async def test_error_formatter_rewrites_the_output(gantry):
+async def test_error_formatter_rewrites_the_output(fetcher):
     adapter = OpenAIAgentsAdapter(
-        gantry, error_formatter=lambda exc: f"{exc.error_type}: [redacted]"
+        fetcher, error_formatter=lambda exc: f"{exc.error_type}: [redacted]"
     )
     result, _ = await _run(await adapter.select("divide", limit=6), [("divide", {"a": 1, "b": 0})])
     assert _outputs(result) == ["Error: ZeroDivisionError: [redacted]"]
@@ -175,13 +175,13 @@ async def test_error_formatter_rewrites_the_output(gantry):
 
 
 @pytest.mark.parametrize("approve", [True, False])
-async def test_confirmation_gate_uses_native_approval(gantry, approve):
-    tools = await OpenAIAgentsAdapter(gantry).select("send an email message", limit=6)
+async def test_confirmation_gate_uses_native_approval(fetcher, approve):
+    tools = await OpenAIAgentsAdapter(fetcher).select("send an email message", limit=6)
     model = _script([("send_email", {"to": "bob@x"})])
     agent = Agent(name="a", model=model, tools=tools)
     first = await Runner.run(agent, "email bob")
     assert [item.name for item in first.interruptions] == ["send_email"]
-    assert gantry.sent == []
+    assert fetcher.sent == []
 
     state = first.to_state()
     if approve:
@@ -190,7 +190,7 @@ async def test_confirmation_gate_uses_native_approval(gantry, approve):
         state.reject(first.interruptions[0])
     second = await Runner.run(agent, state)
 
-    assert gantry.sent == (["bob@x"] if approve else [])  # exactly once when approved
+    assert fetcher.sent == (["bob@x"] if approve else [])  # exactly once when approved
     outputs = _outputs(second)
     assert outputs and (outputs[-1] == "sent:bob@x") is approve
 
@@ -230,7 +230,7 @@ async def test_custom_policy_gate_is_reported_not_run():
 
 
 def test_requires_confirmation_mirrors_the_up_front_gates():
-    g = AgentGantry(
+    g = DotFetch(
         embedder=SimpleEmbedder(dimension=64),
         security_policy=SecurityPolicy(require_confirmation=["drop_*"]),
     )
@@ -260,8 +260,8 @@ def test_requires_confirmation_mirrors_the_up_front_gates():
 # --------------------------------------------------------------------------- #
 
 
-async def test_tool_context_reaches_gantry_handlers(gantry):
-    tools = await OpenAIAgentsAdapter(gantry).select(
+async def test_tool_context_reaches_fetcher_handlers(fetcher):
+    tools = await OpenAIAgentsAdapter(fetcher).select(
         "current user", limit=6, always_include=["whoami"]
     )
     result, _ = await _run(tools, [("whoami", {})], context={"user": "dan"})
@@ -269,16 +269,16 @@ async def test_tool_context_reaches_gantry_handlers(gantry):
     assert current_tool_invocation() is None
 
 
-async def test_sdk_trace_becomes_the_calls_trace_parent(gantry):
+async def test_sdk_trace_becomes_the_calls_trace_parent(fetcher):
     from agents import set_tracing_disabled
     from agents.tracing import trace
 
     events = []
-    gantry.on_tool_call(events.append)
-    tools = await OpenAIAgentsAdapter(gantry).select("weather forecast", limit=6)
+    fetcher.on_tool_call(events.append)
+    tools = await OpenAIAgentsAdapter(fetcher).select("weather forecast", limit=6)
     set_tracing_disabled(False)
     try:
-        with trace("gantry-test") as t:
+        with trace("fetcher-test") as t:
             await _run(tools, [("get_weather", {"city": "York"})])
     finally:
         set_tracing_disabled(True)
@@ -295,8 +295,8 @@ def _offered(model) -> list[list[str]]:
     return [[t.name for t in call.tools] for call in model.calls]
 
 
-async def test_dynamic_tools_reselect_mid_run_from_tool_output(gantry):
-    tools = await OpenAIAgentsAdapter(gantry).dynamic_tools(limit=1)
+async def test_dynamic_tools_reselect_mid_run_from_tool_output(fetcher):
+    tools = await OpenAIAgentsAdapter(fetcher).dynamic_tools(limit=1)
     agent_tools_before = [t.name for t in tools]
     result, model = await _run(
         tools, [("lookup_customer", {"name": "Jo"})], prompt="look up the customer record for Jo"
@@ -307,8 +307,8 @@ async def test_dynamic_tools_reselect_mid_run_from_tool_output(gantry):
     assert [t.name for t in tools] == agent_tools_before  # the tool list itself is untouched
 
 
-async def test_dynamic_tools_runs_are_isolated(gantry):
-    tools = await OpenAIAgentsAdapter(gantry).dynamic_tools(limit=1)
+async def test_dynamic_tools_runs_are_isolated(fetcher):
+    tools = await OpenAIAgentsAdapter(fetcher).dynamic_tools(limit=1)
     first, second = (
         ScriptedModel([[assistant_message("1")]]),
         ScriptedModel([[assistant_message("2")]]),
@@ -321,8 +321,8 @@ async def test_dynamic_tools_runs_are_isolated(gantry):
     assert _offered(second) == [["get_weather"]]
 
 
-async def test_dynamic_tools_follow_up_turn_uses_the_new_message(gantry):
-    tools = await OpenAIAgentsAdapter(gantry).dynamic_tools(limit=1)
+async def test_dynamic_tools_follow_up_turn_uses_the_new_message(fetcher):
+    tools = await OpenAIAgentsAdapter(fetcher).dynamic_tools(limit=1)
     first, _ = await _run(tools, prompt="weather forecast for a city")
     model = ScriptedModel([[assistant_message("ok")]])
     history = first.to_input_list() + [
@@ -332,24 +332,24 @@ async def test_dynamic_tools_follow_up_turn_uses_the_new_message(gantry):
     assert _offered(model) == [["divide"]]
 
 
-async def test_dynamic_tools_sticky_cap(gantry):
-    tools = await OpenAIAgentsAdapter(gantry).dynamic_tools(limit=1, max_offered=1)
+async def test_dynamic_tools_sticky_cap(fetcher):
+    tools = await OpenAIAgentsAdapter(fetcher).dynamic_tools(limit=1, max_offered=1)
     _, model = await _run(
         tools, [("lookup_customer", {"name": "Jo"})], prompt="look up the customer record for Jo"
     )
     assert _offered(model)[1] == ["send_email"]  # carried-over lookup dropped by the cap
 
 
-async def test_dynamic_tools_query_from_results_false(gantry):
+async def test_dynamic_tools_query_from_results_false(fetcher):
     queries = []
-    original = gantry.retrieve
+    original = fetcher.retrieve
 
     async def spy(query):
         queries.append(query.context.query)
         return await original(query)
 
-    gantry.retrieve = spy
-    tools = await OpenAIAgentsAdapter(gantry).dynamic_tools(limit=1, query_from_results=False)
+    fetcher.retrieve = spy
+    tools = await OpenAIAgentsAdapter(fetcher).dynamic_tools(limit=1, query_from_results=False)
     _, model = await _run(
         tools, [("lookup_customer", {"name": "Jo"})], prompt="look up the customer record for Jo"
     )
@@ -357,24 +357,24 @@ async def test_dynamic_tools_query_from_results_false(gantry):
     assert _offered(model)[1] == ["lookup_customer"]
 
 
-async def test_dynamic_tools_error_output_never_feeds_retrieval(gantry):
+async def test_dynamic_tools_error_output_never_feeds_retrieval(fetcher):
     queries = []
-    original = gantry.retrieve
+    original = fetcher.retrieve
 
     async def spy(query):
         queries.append(query.context.query)
         return await original(query)
 
-    gantry.retrieve = spy
-    tools = await OpenAIAgentsAdapter(gantry).dynamic_tools(limit=1)
+    fetcher.retrieve = spy
+    tools = await OpenAIAgentsAdapter(fetcher).dynamic_tools(limit=1)
     await _run(tools, [("divide", {"a": 1, "b": 0})], prompt="divide 1 by 0")
     assert len(queries) >= 2  # reselected after the failed call
     assert all("ZeroDivisionError" not in q for q in queries)
 
 
 @pytest.mark.parametrize("sticky", [True, False])
-async def test_dynamic_tools_retrieval_failure_keeps_earlier_tools(gantry, caplog, sticky):
-    original = gantry.retrieve
+async def test_dynamic_tools_retrieval_failure_keeps_earlier_tools(fetcher, caplog, sticky):
+    original = fetcher.retrieve
     calls = {"n": 0}
 
     async def flaky(query):
@@ -383,8 +383,8 @@ async def test_dynamic_tools_retrieval_failure_keeps_earlier_tools(gantry, caplo
             raise RuntimeError("vector store down")
         return await original(query)
 
-    gantry.retrieve = flaky
-    tools = await OpenAIAgentsAdapter(gantry).dynamic_tools(limit=1, sticky=sticky)
+    fetcher.retrieve = flaky
+    tools = await OpenAIAgentsAdapter(fetcher).dynamic_tools(limit=1, sticky=sticky)
     with caplog.at_level("WARNING"):
         _, model = await _run(
             tools,
@@ -397,25 +397,25 @@ async def test_dynamic_tools_retrieval_failure_keeps_earlier_tools(gantry, caplo
     assert calls["n"] == 3
 
 
-async def test_dynamic_tools_pins_outside_the_namespace_filter_are_offered(gantry):
-    adapter = OpenAIAgentsAdapter(gantry)
+async def test_dynamic_tools_pins_outside_the_namespace_filter_are_offered(fetcher):
+    adapter = OpenAIAgentsAdapter(fetcher)
     tools = await adapter.dynamic_tools(limit=1, namespaces=["elsewhere"], required=["get_weather"])
     assert [t.name for t in tools] == ["get_weather"]
     _, model = await _run(tools, [("get_weather", {"city": "Leeds"})], prompt="weather in Leeds")
     assert _offered(model)[0] == ["get_weather"]
 
 
-async def test_dynamic_tools_pins_survive_a_first_turn_retrieval_failure(gantry):
+async def test_dynamic_tools_pins_survive_a_first_turn_retrieval_failure(fetcher):
     async def down(query):
         raise RuntimeError("vector store down")
 
-    tools = await OpenAIAgentsAdapter(gantry).dynamic_tools(limit=1, always_include=["get_weather"])
-    gantry.retrieve = down
+    tools = await OpenAIAgentsAdapter(fetcher).dynamic_tools(limit=1, always_include=["get_weather"])
+    fetcher.retrieve = down
     _, model = await _run(tools, [("get_weather", {"city": "Leeds"})], prompt="weather in Leeds")
     assert _offered(model)[0] == ["get_weather"]
 
 
-async def test_dynamic_tools_retry_after_failure_when_only_other_tools_ran(gantry):
+async def test_dynamic_tools_retry_after_failure_when_only_other_tools_ran(fetcher):
     from agents import function_tool
 
     @function_tool
@@ -423,7 +423,7 @@ async def test_dynamic_tools_retry_after_failure_when_only_other_tools_ran(gantr
         """Return pong."""
         return "pong"
 
-    original = gantry.retrieve
+    original = fetcher.retrieve
     calls = {"n": 0}
 
     async def flaky(query):
@@ -432,8 +432,8 @@ async def test_dynamic_tools_retry_after_failure_when_only_other_tools_ran(gantr
             raise RuntimeError("vector store blip")
         return await original(query)
 
-    gantry.retrieve = flaky
-    tools = await OpenAIAgentsAdapter(gantry).dynamic_tools(limit=1, sticky=False)
+    fetcher.retrieve = flaky
+    tools = await OpenAIAgentsAdapter(fetcher).dynamic_tools(limit=1, sticky=False)
     model = _script([("ping", {})], [("ping", {})])
     await Runner.run(Agent(name="a", model=model, tools=[*tools, ping]), "weather in Leeds")
     assert calls["n"] == 2  # the turn after the blip retried instead of reusing it
@@ -447,9 +447,9 @@ async def test_dynamic_tools_retry_after_failure_when_only_other_tools_ran(gantr
 _FIRST_PROMPT = "look up the customer record for Jo"
 
 
-async def _first_request(gantry, path: str):
+async def _first_request(fetcher, path: str):
     """Run ``path`` once; return what the model was offered and the tool outputs."""
-    adapter = OpenAIAgentsAdapter(gantry)
+    adapter = OpenAIAgentsAdapter(fetcher)
     model = _script([("lookup_customer", {"name": "Jo"})])
     if path == "dynamic_tools":
         agent = Agent(name="a", model=model, tools=await adapter.dynamic_tools(limit=1))
@@ -471,28 +471,28 @@ async def _first_request(gantry, path: str):
 
 
 @pytest.mark.parametrize("path", ["dynamic_tools", "run_hooks", "run", "session", "refresh"])
-async def test_first_model_request_carries_the_selected_tools(gantry, path):
+async def test_first_model_request_carries_the_selected_tools(fetcher, path):
     """A one-turn task must be able to call its tool: the handler has to run.
 
     Checking the answer text alone hides a first request with no tools, since
     a model can often answer from its own knowledge.
     """
-    offered, outputs = await _first_request(gantry, path)
+    offered, outputs = await _first_request(fetcher, path)
     assert offered[0] == ["lookup_customer"]
     assert outputs and outputs[0].startswith("Customer found")
 
 
-async def test_run_hooks_follow_the_run_from_tool_output(gantry):
+async def test_run_hooks_follow_the_run_from_tool_output(fetcher):
     """Later turns track the conversation: the request plus the newest tool result."""
-    adapter = OpenAIAgentsAdapter(gantry)
+    adapter = OpenAIAgentsAdapter(fetcher)
     queries = []
-    original = gantry.retrieve
+    original = fetcher.retrieve
 
     async def spy(query):
         queries.append(query.context.query)
         return await original(query)
 
-    gantry.retrieve = spy
+    fetcher.retrieve = spy
     model = _script([("lookup_customer", {"name": "Jo"})])
     agent = Agent(name="a", model=model, tools=[])
     await Runner.run(agent, _FIRST_PROMPT, hooks=adapter.run_hooks(agent, limit=1))
@@ -505,23 +505,23 @@ async def test_run_hooks_follow_the_run_from_tool_output(gantry):
     ]
 
 
-async def test_session_run_selects_once_for_the_first_turn(gantry):
+async def test_session_run_selects_once_for_the_first_turn(fetcher):
     """The session's pre-run selection is not repeated by the hooks it installs."""
     queries = []
-    original = gantry.retrieve
+    original = fetcher.retrieve
 
     async def spy(query):
         queries.append(query.context.query)
         return await original(query)
 
-    gantry.retrieve = spy
+    fetcher.retrieve = spy
     model = ScriptedModel([[assistant_message("done")]])
     agent = Agent(name="a", model=model, tools=[])
-    await OpenAIAgentsAdapter(gantry).session(agent, limit=1).run(_FIRST_PROMPT)
+    await OpenAIAgentsAdapter(fetcher).session(agent, limit=1).run(_FIRST_PROMPT)
     assert queries == [_FIRST_PROMPT]
     assert _offered(model) == [["lookup_customer"]]
 
 
-async def test_dynamic_tools_validate_arguments(gantry):
+async def test_dynamic_tools_validate_arguments(fetcher):
     with pytest.raises(ValueError, match="max_offered"):
-        await OpenAIAgentsAdapter(gantry).dynamic_tools(max_offered=0)
+        await OpenAIAgentsAdapter(fetcher).dynamic_tools(max_offered=0)

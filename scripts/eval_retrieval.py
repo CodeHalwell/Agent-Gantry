@@ -13,7 +13,7 @@ The committed baseline (``tests/retrieval/baseline.json``) is measured with
 because it is deterministic, so CI can hold a line with it. For numbers that
 say how good retrieval is, pass a real ``--embedder``.
 
-To measure a selector or a reranker, build the gantry yourself and call
+To measure a selector or a reranker, build the fetcher yourself and call
 ``tests.retrieval.harness.measure(selector=..., reranker=...)``: those backends
 need credentials or model downloads this script does not assume.
 """
@@ -29,7 +29,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from agent_gantry.evaluation import compare_to_baseline, format_reports  # noqa: E402
+from dotfetch.evaluation import compare_to_baseline, format_reports  # noqa: E402
 from tests.retrieval.harness import (  # noqa: E402
     BASELINE_PATH,
     calibrate,
@@ -41,16 +41,16 @@ from tests.retrieval.harness import (  # noqa: E402
 
 def _embedder(name: str) -> Any:
     if name == "simple":
-        from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+        from dotfetch.adapters.embedders.simple import SimpleEmbedder
 
         return SimpleEmbedder()
     if name == "sentence-transformers":
-        from agent_gantry.adapters.embedders.sentence_transformers import (
+        from dotfetch.adapters.embedders.sentence_transformers import (
             SentenceTransformersEmbedder,
         )
 
         return SentenceTransformersEmbedder(model="all-MiniLM-L6-v2")
-    from agent_gantry.adapters.embedders.nomic import NomicEmbedder
+    from dotfetch.adapters.embedders.nomic import NomicEmbedder
 
     return NomicEmbedder()
 

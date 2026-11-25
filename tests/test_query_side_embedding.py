@@ -14,9 +14,9 @@ from typing import Any
 
 import pytest
 
-from agent_gantry import AgentGantry, ConversationContext, Skill, ToolQuery
-from agent_gantry.adapters.embedders.base import EmbeddingAdapter
-from agent_gantry.schema.tool import ToolDefinition
+from dotfetch import ConversationContext, DotFetch, Skill, ToolQuery
+from dotfetch.adapters.embedders.base import EmbeddingAdapter
+from dotfetch.schema.tool import ToolDefinition
 
 
 class _RecordingEmbedder(EmbeddingAdapter):
@@ -62,45 +62,45 @@ def _tool(name: str) -> ToolDefinition:
 
 async def test_tool_retrieval_embeds_the_query_as_a_query() -> None:
     embedder = _RecordingEmbedder()
-    gantry = AgentGantry(embedder=embedder)
+    fetcher = DotFetch(embedder=embedder)
     try:
-        await gantry.add_tool(_tool("alpha"), lambda: None)
-        await gantry.retrieve(
+        await fetcher.add_tool(_tool("alpha"), lambda: None)
+        await fetcher.retrieve(
             ToolQuery(context=ConversationContext(query="find alpha"), score_threshold=0.0)
         )
         assert embedder.queries == ["find alpha"]
         assert "find alpha" not in embedder.documents
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_skill_retrieval_embeds_the_query_as_a_query() -> None:
     embedder = _RecordingEmbedder()
-    gantry = AgentGantry(embedder=embedder)
+    fetcher = DotFetch(embedder=embedder)
     try:
-        await gantry.add_skill(
+        await fetcher.add_skill(
             Skill(name="deploying", description="How to deploy safely.", content="Body.")
         )
-        await gantry.retrieve_skills("how do I ship this", limit=1)
+        await fetcher.retrieve_skills("how do I ship this", limit=1)
         assert embedder.queries == ["how do I ship this"]
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_mcp_server_retrieval_embeds_the_query_as_a_query() -> None:
     embedder = _RecordingEmbedder()
-    gantry = AgentGantry(embedder=embedder)
-    if gantry._mcp_registry is None:  # pragma: no cover - mcp extra absent
-        await gantry.close()
+    fetcher = DotFetch(embedder=embedder)
+    if fetcher._mcp_registry is None:  # pragma: no cover - mcp extra absent
+        await fetcher.close()
         pytest.skip("MCP support is not installed")
     try:
-        gantry.register_mcp_server(
+        fetcher.register_mcp_server(
             "files", ["echo", "files"], description="Reads and writes files on disk."
         )
-        await gantry.retrieve_mcp_servers("open a file", limit=1)
+        await fetcher.retrieve_mcp_servers("open a file", limit=1)
         assert "open a file" in embedder.queries
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_a_symmetric_embedder_needs_no_embed_query_of_its_own() -> None:
@@ -110,20 +110,20 @@ async def test_a_symmetric_embedder_needs_no_embed_query_of_its_own() -> None:
         embed_query = EmbeddingAdapter.embed_query  # type: ignore[assignment]
 
     embedder = _Symmetric()
-    gantry = AgentGantry(embedder=embedder)
+    fetcher = DotFetch(embedder=embedder)
     try:
-        await gantry.add_tool(_tool("alpha"), lambda: None)
-        await gantry.retrieve(
+        await fetcher.add_tool(_tool("alpha"), lambda: None)
+        await fetcher.retrieve(
             ToolQuery(context=ConversationContext(query="find alpha"), score_threshold=0.0)
         )
         assert "find alpha" in embedder.documents, "the default must fall through"
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 def test_nomic_applies_the_query_prefix_rather_than_the_document_one() -> None:
     """Pinned against the adapter's own prefix table, without loading the model."""
-    from agent_gantry.adapters.embedders.nomic import NomicEmbedder
+    from dotfetch.adapters.embedders.nomic import NomicEmbedder
 
     assert NomicEmbedder.TASK_PREFIXES["search_query"] == "search_query: "
     assert NomicEmbedder.TASK_PREFIXES["search_document"] == "search_document: "
@@ -174,15 +174,15 @@ async def test_a_duck_typed_adapter_without_embed_query_still_works() -> None:
     embedder = _DuckTyped()
     assert not hasattr(embedder, "embed_query"), "the premise of this test"
 
-    gantry = AgentGantry(embedder=embedder)
+    fetcher = DotFetch(embedder=embedder)
     try:
-        await gantry.add_tool(_tool("alpha"), lambda: None)
-        await gantry.retrieve(
+        await fetcher.add_tool(_tool("alpha"), lambda: None)
+        await fetcher.retrieve(
             ToolQuery(context=ConversationContext(query="find alpha"), score_threshold=0.0)
         )
         assert "find alpha" in embedder.seen
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_a_non_awaitable_embed_query_is_not_called() -> None:
@@ -191,7 +191,7 @@ async def test_a_non_awaitable_embed_query_is_not_called() -> None:
     back keeps every such stand-in working without it having to grow a method."""
     from unittest.mock import AsyncMock, MagicMock
 
-    from agent_gantry.adapters.embedders.base import embed_query
+    from dotfetch.adapters.embedders.base import embed_query
 
     embedder = MagicMock()
     embedder.embed_text = AsyncMock(return_value=[0.1, 0.2, 0.3, 0.4])
@@ -209,7 +209,7 @@ async def test_a_cache_wrapper_preserves_the_query_side(tmp_path: Path) -> None:
     with ``search_document:``, silently undoing the asymmetry for anyone who
     added caching.
     """
-    from agent_gantry.adapters.embedders.cached import CachedEmbedder
+    from dotfetch.adapters.embedders.cached import CachedEmbedder
 
     inner = _RecordingEmbedder()
     cached = CachedEmbedder(inner, cache_path=tmp_path / "c.sqlite")
@@ -237,7 +237,7 @@ async def test_the_query_cache_does_not_collide_with_the_document_cache(
     Sharing one key would serve a document vector for a query, and poison the
     other direction on the way back.
     """
-    from agent_gantry.adapters.embedders.cached import CachedEmbedder
+    from dotfetch.adapters.embedders.cached import CachedEmbedder
 
     class _Asymmetric(_RecordingEmbedder):
         async def embed_text(self, text: str) -> list[float]:
@@ -269,8 +269,8 @@ async def test_skill_selection_pages_past_the_stores_default_limit() -> None:
     """
     from typing import Any as _Any
 
-    from agent_gantry import AgentGantry
-    from agent_gantry.schema.selection import SelectionResult
+    from dotfetch import DotFetch
+    from dotfetch.schema.selection import SelectionResult
 
     seen: list[int] = []
 
@@ -281,9 +281,9 @@ async def test_skill_selection_pages_past_the_stores_default_limit() -> None:
             seen.append(len(candidates))
             return SelectionResult(fallback=True, reason="counted")
 
-    gantry = AgentGantry(selector=_CountingSelector())
+    fetcher = DotFetch(selector=_CountingSelector())
     try:
-        from agent_gantry.schema.skill import Skill
+        from dotfetch.schema.skill import Skill
 
         def _skills(start: int, count: int) -> list[Skill]:
             return [
@@ -295,7 +295,7 @@ async def test_skill_selection_pages_past_the_stores_default_limit() -> None:
                 for i in range(count)
             ]
 
-        store = gantry._vector_store
+        store = fetcher._vector_store
         pages = [_skills(0, 1000), _skills(1000, 1000), _skills(2000, 7)]
         calls: list[tuple[int, int]] = []
 
@@ -305,9 +305,9 @@ async def test_skill_selection_pages_past_the_stores_default_limit() -> None:
             return pages[index] if index < len(pages) else []
 
         store.list_all_skills = _paged  # type: ignore[method-assign]
-        await gantry._select_skills("q", 3, None, None, None)
+        await fetcher._select_skills("q", 3, None, None, None)
 
         assert len(calls) == 3, f"must page until a short page arrives, got {calls}"
         assert seen == [2007], "the whole catalogue must reach the selector"
     finally:
-        await gantry.close()
+        await fetcher.close()

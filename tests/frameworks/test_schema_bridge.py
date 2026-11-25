@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from agent_gantry.integrations.frameworks.schema_bridge import (
+from dotfetch.integrations.frameworks.schema_bridge import (
     pydantic_model_from_schema,
 )
 
@@ -724,7 +724,7 @@ def test_float_const_becomes_a_single_value_literal():
 
 
 def test_unique_items_rejects_duplicates():
-    """Gantry's own introspection emits ``uniqueItems`` for every ``set``
+    """dotfetch's own introspection emits ``uniqueItems`` for every ``set``
     parameter and the executor rejects duplicates at dispatch, so a model that
     accepted them waved through a call the engine refuses (PR #381 review)."""
     model = pydantic_model_from_schema(
@@ -1404,7 +1404,7 @@ def test_composite_const_is_enforced_by_identity():
 def test_an_absent_additional_properties_closes_an_object_that_declares_some():
     """The bridge read an absent ``additionalProperties`` as permissive
     whenever patterns were present, so it accepted a key the executor rejects
-    at dispatch. Gantry's documented default is that absent means closed —
+    at dispatch. dotfetch's documented default is that absent means closed —
     *for an object that declares properties* (PR #381 review)."""
     model = pydantic_model_from_schema(
         "Args",
@@ -1427,7 +1427,7 @@ def test_an_absent_additional_properties_closes_an_object_that_declares_some():
 
 def test_an_object_declaring_no_properties_stays_free_form():
     """The asymmetry that makes the rule above correct rather than merely
-    strict: no declared properties and no ``additionalProperties`` is Gantry's
+    strict: no declared properties and no ``additionalProperties`` is dotfetch's
     own shape for a plain ``dict`` parameter, which the executor treats as
     free-form. Closing it would reject calls the engine accepts."""
     model = pydantic_model_from_schema(
@@ -1471,9 +1471,9 @@ def test_generated_models_are_reused_for_an_identical_schema():
 
 def test_the_model_cache_evicts_rather_than_growing():
     """Bounded for the same reason the executor's coercer cache is: a
-    long-running gantry with MCP tool churn would otherwise grow without
+    long-running fetcher with MCP tool churn would otherwise grow without
     limit."""
-    from agent_gantry.integrations.frameworks import schema_bridge
+    from dotfetch.integrations.frameworks import schema_bridge
 
     original_max = schema_bridge._MODEL_CACHE_MAX
     original_cache = schema_bridge._MODEL_CACHE.copy()
@@ -1966,7 +1966,7 @@ def test_a_declared_type_is_enforced_alongside_const_and_enum():
                 built(m=value)
 
     # Compatible schemas — the overwhelmingly common case, including the ones
-    # Gantry emits itself — are unaffected.
+    # dotfetch emits itself — are unaffected.
     compatible = model({"type": "string", "enum": ["x", "y"]})
     assert compatible(m="x").m == "x"
     with pytest.raises(ValidationError):

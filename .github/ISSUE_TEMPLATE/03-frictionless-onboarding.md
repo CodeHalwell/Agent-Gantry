@@ -37,9 +37,9 @@ assignees: []
 
 ```python
 # Example usage
-from agent_gantry import AgentGantry
+from dotfetch import DotFetch
 
-gantry = AgentGantry()
+fetcher = DotFetch()
 
 # One-line import example
 ```
@@ -55,8 +55,8 @@ gantry = AgentGantry()
 
 ## Context: Current Tool Registration
 
-Currently, Agent-Gantry supports tool registration from:
-- ✅ Python functions (via `@gantry.register` decorator)
+Currently, dotfetch supports tool registration from:
+- ✅ Python functions (via `@fetcher.register` decorator)
 - ✅ MCP servers (via `add_mcp_server`)
 - ✅ A2A agents (via `add_a2a_agent`)
 
@@ -64,13 +64,13 @@ This feature request aims to expand "one-line import" capabilities for additiona
 
 ### OpenAPI / Swagger Ingestion
 - **Goal**: One-line import for existing REST APIs
-- **Example**: `gantry.ingest_openapi("https://api.stripe.com/v1/spec.json")`
+- **Example**: `fetcher.ingest_openapi("https://api.stripe.com/v1/spec.json")`
 - **Benefit**: Auto-generate tool definitions and schemas for every endpoint
 - **Output**: Creates tools like `stripe_create_charge`, `stripe_list_customers`, etc.
 
 ### Database Introspection
 - **Goal**: Auto-generate tools for SQL queries based on schema
-- **Example**: `gantry.ingest_postgres(connection_string, tables=["users", "orders"])`
+- **Example**: `fetcher.ingest_postgres(connection_string, tables=["users", "orders"])`
 - **Benefit**: Creates CRUD tools like `search_users`, `get_user_by_id`, `update_order_status`
 - **Output**: Type-safe tools based on database schema
 
@@ -82,7 +82,7 @@ This feature request aims to expand "one-line import" capabilities for additiona
 - SaaS APIs (Slack, GitHub, Jira, etc.)
 
 ## Schema Mapping
-<!-- Describe how the source schema would map to Agent-Gantry tool definitions -->
+<!-- Describe how the source schema would map to dotfetch tool definitions -->
 
 **Source Schema:**
 ```
@@ -91,7 +91,7 @@ This feature request aims to expand "one-line import" capabilities for additiona
 
 **Generated Tool:**
 ```python
-# Example of generated AgentGantry tool
+# Example of generated DotFetch tool
 ```
 
 ## Authentication & Configuration
@@ -104,4 +104,4 @@ This feature request aims to expand "one-line import" capabilities for additiona
 <!-- Link to related issues or PRs -->
 
 ---
-**Note**: This feature aligns with the strategic goal of reducing friction in tool onboarding and accelerating time-to-value for Agent-Gantry users.
+**Note**: This feature aligns with the strategic goal of reducing friction in tool onboarding and accelerating time-to-value for dotfetch users.

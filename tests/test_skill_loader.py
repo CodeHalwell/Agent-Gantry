@@ -9,15 +9,15 @@ from pathlib import Path
 
 import pytest
 
-from agent_gantry import AgentGantry, SkillCategory
-from agent_gantry.skills import (
+from dotfetch import DotFetch, SkillCategory
+from dotfetch.skills import (
     SkillParseError,
     load_skill,
     load_skills_from_directory,
     skill_from_markdown,
     skill_path,
 )
-from agent_gantry.skills.loader import iter_skill_files, parse_skill_markdown
+from dotfetch.skills.loader import iter_skill_files, parse_skill_markdown
 
 _PDF_SKILL = """---
 name: pdf-tools
@@ -155,7 +155,7 @@ def test_load_skills_from_directory_walks_and_skips(
 
 
 @pytest.mark.asyncio
-async def test_gantry_add_skills_from_directory_retrieves_by_meaning(tmp_path: Path) -> None:
+async def test_fetcher_add_skills_from_directory_retrieves_by_meaning(tmp_path: Path) -> None:
     _write_skill(tmp_path, "pdf-tools", _PDF_SKILL)
     _write_skill(
         tmp_path,
@@ -163,25 +163,25 @@ async def test_gantry_add_skills_from_directory_retrieves_by_meaning(tmp_path: P
         "---\nname: deploy\ndescription: Ship a release to production with the deploy pipeline\n"
         "tags: [release, deploy]\n---\nRun the release checklist, then `make deploy`.",
     )
-    gantry = AgentGantry()
-    assert await gantry.add_skills_from_directory(str(tmp_path)) == 2
-    assert await gantry.count_skills() == 2
+    fetcher = DotFetch()
+    assert await fetcher.add_skills_from_directory(str(tmp_path)) == 2
+    assert await fetcher.count_skills() == 2
 
-    prompt = await gantry.retrieve_skills_as_prompt("merge two pdf documents", limit=1)
+    prompt = await fetcher.retrieve_skills_as_prompt("merge two pdf documents", limit=1)
     assert prompt.startswith("## Pdf Tools")
     assert "pypdf" in prompt  # the body is injected verbatim
     assert "make deploy" not in prompt
 
-    prompt = await gantry.retrieve_skills_as_prompt("deploy the release to production", limit=1)
+    prompt = await fetcher.retrieve_skills_as_prompt("deploy the release to production", limit=1)
     assert "make deploy" in prompt
 
 
 def test_bundled_skill_loads_through_the_loader() -> None:
     """The library's own SKILL.md is a valid Agent Skill for the loader."""
     skills = load_skills_from_directory(skill_path().parent)
-    assert [s.name for s in skills] == ["agent-gantry"]
+    assert [s.name for s in skills] == ["dotfetch"]
     assert "semantic" in skills[0].description.lower()
-    assert skills[0].content.startswith("# Agent-Gantry")
+    assert skills[0].content.startswith("# dotfetch")
 
 
 def test_a_model_rejection_is_reported_as_a_skill_parse_error(tmp_path: Path) -> None:
@@ -240,7 +240,7 @@ def test_a_byte_order_mark_does_not_hide_the_frontmatter(tmp_path: Path) -> None
     none: the name silently became the directory's and the raw YAML became the
     description -- the embedded text -- exactly what the unterminated-block
     guard exists to prevent."""
-    from agent_gantry.skills.loader import load_skill
+    from dotfetch.skills.loader import load_skill
 
     directory = tmp_path / "bom_skill"
     directory.mkdir()
@@ -262,7 +262,7 @@ def test_a_file_that_is_not_utf8_is_a_skill_parse_error(tmp_path: Path) -> None:
     and a file that is not UTF-8 is exactly that. The raw ``UnicodeDecodeError``
     escaped it, and ``load_skills_from_directory(strict=True)`` re-raised it
     unchanged because it catches ``ValueError``, which this is not."""
-    from agent_gantry.skills.loader import SkillParseError, load_skill
+    from dotfetch.skills.loader import SkillParseError, load_skill
 
     directory = tmp_path / "bad_bytes"
     directory.mkdir()
@@ -280,7 +280,7 @@ def test_a_short_description_is_enriched_rather_than_padded() -> None:
     the skill's own name -- adding length but no information. The body's
     opening paragraph is joined to it instead, with the author's wording
     still leading."""
-    from agent_gantry.skills.loader import skill_from_markdown
+    from dotfetch.skills.loader import skill_from_markdown
 
     skill = skill_from_markdown(
         "---\nname: pdf-helper\ndescription: PDF tools\n---\n\n"

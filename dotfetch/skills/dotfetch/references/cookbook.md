@@ -1,0 +1,349 @@
+# dotfetch Cookbook
+
+Recipes for the patterns that come up most often when building real agents with dotfetch. Each section is self-contained — jump to the one matching the user's question.
+
+## Recipe 1: Multi-step pipeline with per-turn retrieval
+
+Goal: an agent that runs a fixed N-step pipeline (e.g. fetch → transform → validate → write), where each step needs a different tool, and the user wants the LLM to see only the relevant tool at each step.
+
+```python
+from agent_framework import Agent
+from agent_framework.openai import OpenAIChatClient
+from dotfetch import DotFetch, DotFetchContextProvider
+from dotfetch.query import fallback_chain, last_tool_result, last_user_text
+from dotfetch.integrations.agent_framework_middleware import DotFetchToolChoiceMiddleware
+
+fetcher = DotFetch()
+# ... register fetch_*, transform_*, validate_*, write_* tools, await fetcher.sync() ...
+
+provider = DotFetchContextProvider(
+    fetcher,
+    top_k=3,
+    query_strategy="per_turn",
+    # The per_turn default (latest_activity) already follows each tool's
+    # output. Pinning last_tool_result first is right for this pipeline only
+    # because no user turn arrives mid-run — with one, the chain would keep
+    # following the earlier result instead of the new request.
+    query_generator=fallback_chain(last_tool_result, last_user_text),
+    score_threshold="relative:0.8",
+)
+
+# Force tool calls for the first 4 rounds (the pipeline) then allow text on the
+# 5th (summarisation) — keeps the model from bailing to text mid-pipeline.
+rounds = {"n": 0}
+def choose_tool_choice(_ctx):
+    rounds["n"] += 1
+    return "required" if rounds["n"] <= 4 else "auto"
+
+agent = Agent(
+    OpenAIChatClient(),
+    "You run a 4-step pipeline. Use the suggested tool at each step.",
+    context_providers=[provider],
+    middleware=[
+        provider.as_chat_middleware(),
+        DotFetchToolChoiceMiddleware(choose_tool_choice),
+    ],
+)
+```
+
+## Recipe 1b: Native adapters + multi-turn re-selection (any framework)
+
+Goal: route a large registry into a non-AF framework (LangChain, CrewAI, Pydantic AI, …) and re-select tools every turn — without hand-rolling schema plumbing.
+
+Static slice (select once, native tool objects):
+
+```python
+from dotfetch.langchain import LangChainAdapter   # clean per-framework namespace
+
+tools = await LangChainAdapter(fetcher).select("email the quarterly report", limit=3)
+llm = ChatOpenAI(model="gpt-5.5").bind_tools(tools)   # native StructuredTools
+```
+
+Multi-turn (re-rank the whole registry each turn, deprioritising tools already used):
+
+```python
+from dotfetch.integrations import ToolRefresher
+
+refresher = ToolRefresher(fetcher, limit=3, dialect="openai")
+
+messages = [...]                      # the running conversation / tool-result log
+while not done:
+    tools = await refresher.refresh(messages)     # fresh selection this turn
+    # ...call the model with `tools`, append its output to `messages`...
+```
+
+The default `latest_activity` query generator is recency-aware: a tool result steers the next selection in an autonomous pipeline (`fetch → clean → train → report`) — appended to the latest user message, so the request stays in the query — while a new user message drives it in a chat agent (`weather → flights → hotel`). Pin one with `query_generator=last_user_text` or `last_tool_result`.
+
+For frameworks with a native per-turn hook (LlamaIndex, Pydantic AI, Google ADK, LangGraph, OpenAI Agents SDK), prefer the deep **live** adapter method instead of `ToolRefresher` — e.g. `from dotfetch.llamaindex import LlamaIndexAdapter` then `LlamaIndexAdapter(fetcher).function_agent(llm)`, or for Pydantic AI `Agent(model, capabilities=[PydanticAIAdapter(fetcher).capability()])` (Recipe 1c).
+
+## Recipe 1c: Pydantic AI agent with approvals, deps and tool search
+
+Goal: a Pydantic AI 2.x agent over a large registry, where risky tools need a human's approval and tools can read the run's `deps`. Install `dotfetch[pydantic-ai]`.
+
+```python
+from dataclasses import dataclass
+
+from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults
+from dotfetch import DotFetch
+from dotfetch.pydantic_ai import PydanticAIAdapter, current_run_context
+
+@dataclass
+class Deps:
+    user_id: str
+
+fetcher = DotFetch()
+
+@fetcher.register(examples=["has order 4471 shipped"])
+async def order_status(order_id: str) -> str:
+    """Return the shipping status of one of the signed-in user's orders."""
+    ctx = current_run_context()                     # RunContext[Deps]
+    return await orders.status(ctx.deps.user_id, order_id)
+
+@fetcher.register(examples=["refund order 4471"], requires_confirmation=True)
+async def refund_order(order_id: str) -> str:
+    """Refund an order in full."""
+    return await orders.refund(order_id)
+
+await fetcher.sync()
+adapter = PydanticAIAdapter(fetcher)
+agent = Agent(
+    "openai:gpt-5.5",
+    deps_type=Deps,
+    output_type=[str, DeferredToolRequests],
+    # "search": the catalogue stays behind search_tools, ranked by dotfetch;
+    # use the default "per-turn" mode for small registries.
+    capabilities=[adapter.capability(mode="search", limit=5)],
+)
+
+result = await agent.run("Refund order 4471", deps=Deps("u-42"))
+if isinstance(result.output, DeferredToolRequests):          # refund_order paused
+    approvals = {c.tool_call_id: ask_human(c) for c in result.output.approvals}
+    result = await agent.run(
+        deps=Deps("u-42"),
+        message_history=result.all_messages(),
+        deferred_tool_results=DeferredToolResults(approvals=approvals),
+    )
+print(result.output)
+```
+
+Bad arguments come back to the model as `ModelRetry`, other failures as `ToolFailed`; neither ends the run. See SKILL.md → Pydantic AI for the full behaviour table.
+
+## Recipe 2: Pipe a custom embedding endpoint (Requesty / OpenRouter / vLLM)
+
+```python
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.openai import OpenAIEmbedder
+from dotfetch.schema.config import EmbedderConfig
+
+embedder = OpenAIEmbedder(EmbedderConfig(
+    type="openai",
+    model="text-embedding-3-large",
+    api_key="...",
+    api_base="https://router.requesty.ai/v1",
+))
+
+fetcher = DotFetch(embedder=embedder)
+```
+
+Or via env var: `export OPENAI_BASE_URL=https://router.requesty.ai/v1`.
+
+## Recipe 3: Persistent embedding cache (avoid cold-start cost)
+
+```python
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.openai import OpenAIEmbedder
+from dotfetch.adapters.embedders.cached import CachedEmbedder
+from dotfetch.schema.config import EmbedderConfig
+
+base = OpenAIEmbedder(EmbedderConfig(type="openai", model="text-embedding-3-large"))
+embedder = CachedEmbedder(base)  # default cache: ~/.cache/dotfetch/embeddings.sqlite
+fetcher = DotFetch(embedder=embedder)
+```
+
+Inspect cache effectiveness: `print(embedder.hits, embedder.misses)`.
+
+## Recipe 4: Pinning AF-native tools alongside dynamic dotfetch tools
+
+```python
+from agent_framework import tool
+
+@tool
+def log_event(message: str) -> str:
+    """Write an audit event."""
+    return "ok"
+
+provider = DotFetchContextProvider(
+    fetcher,
+    top_k=4,
+    static_tools=[log_event],  # always visible to the LLM, never filtered
+)
+```
+
+`static_tools` is the right slot for AF-native `@tool` callables that don't live in the fetcher registry. For fetcher-registered tools, use `always_include=["log_event"]` (by name) instead.
+
+## Recipe 5: Diagnosing "the LLM doesn't see my tool"
+
+The five-step debugging path the issue tracker keeps surfacing. Run them in order.
+
+```python
+# Step 1: Is the tool even registered?
+print([t.name for t in fetcher.list_tools_sync()])
+
+# Step 2: Would semantic search find it for this query?
+decision = await provider.dry_run_retrieve("the user's actual query")
+for c in decision.candidates:
+    print(f"  {c.score:.3f}  {c.qualified_name}  kept={c.kept}")
+
+# Step 3: After a real run, what did the LLM actually see?
+result = await agent.run("...")
+print(provider.last_selection.summary())     # the latest round
+print(provider.last_selection.injected)
+for i, d in enumerate(provider.selections, 1):  # every round, oldest first
+    print(f"  round {i}: {d.summary()}")
+
+# Step 4: Threshold issue?
+# If "filtered out all N candidates" WARNING appears in logs, lower or switch
+# to relative mode.
+
+# Step 5: Author-side bug? Run the registry linter.
+analysis = await fetcher.analyze_registry()
+print(analysis.format_text())
+```
+
+## Recipe 6: A2A — expose dotfetch as an agent network endpoint
+
+```python
+fetcher.serve_a2a(host="0.0.0.0", port=8080)
+# Agent Card lives at http://localhost:8080/.well-known/agent.json
+# Skills exposed: tool_discovery (semantic search), tool_execution (run a tool)
+```
+
+Consume another A2A agent's skills as fetcher-managed tools:
+
+```python
+from dotfetch.schema.config import A2AAgentConfig
+
+await fetcher.add_a2a_agent(A2AAgentConfig(
+    name="translator",
+    url="https://translator.example.com",
+    namespace="ext",
+))
+# Translator's skills are now registered as fetcher tools in the "ext" namespace.
+```
+
+## Recipe 7: MCP — dynamic server selection
+
+```python
+# Register servers with metadata so the router can pick which one(s) to connect to.
+fetcher.register_mcp_server(
+    name="filesystem",
+    command=["npx", "-y", "@modelcontextprotocol/server-filesystem"],
+    description="Read and write files on the local filesystem",
+    tags=["filesystem", "files", "io"],
+)
+fetcher.register_mcp_server(
+    name="db",
+    command=["python", "-m", "mcp_postgresql"],
+    description="Query and mutate PostgreSQL databases",
+    tags=["database", "sql"],
+)
+fetcher.register_mcp_server(                     # remote servers work the same way
+    name="search",
+    url="https://mcp.example.com/mcp",          # Streamable HTTP; transport="sse" for legacy servers
+    headers={"Authorization": "Bearer ..."},
+    description="Web search and page fetching",
+    tags=["web", "search"],
+)
+
+await fetcher.sync_mcp_servers()                 # optional: retrieve_mcp_servers() syncs on demand
+
+# Semantic search to pick servers, then connect only those:
+servers = await fetcher.retrieve_mcp_servers("read config.yaml", limit=1)
+for s in servers:
+    await fetcher.discover_tools_from_server(s.name)
+
+tools = await fetcher.retrieve_tools("read my config.yaml")
+```
+
+Going the other way — serving your registry to MCP clients — is one call: `await fetcher.serve_mcp()` (stdio) or `await fetcher.serve_mcp("http", port=8000)` (Streamable HTTP), or `dotfetch serve-mcp --module my_app.tools` from the shell. `mode="hybrid", expose=[...]` pins a few always-visible tools next to the `find_relevant_tools` / `execute_tool` meta-tools.
+
+## Recipe 7b: Skills — inject only the relevant how-tos per prompt
+
+```python
+# Load an Agent Skills folder (Claude Code's ~/.claude/skills layout: <skill>/SKILL.md)
+await fetcher.add_skills_from_directory("./skills", namespace="team")
+
+async def answer(user_prompt: str) -> str:
+    guidance = await fetcher.retrieve_skills_as_prompt(user_prompt, limit=2, namespace="team")
+    system = BASE_SYSTEM_PROMPT + ("\n\n" + guidance if guidance else "")
+    tools = await fetcher.retrieve_tools(user_prompt, limit=5)
+    ...
+```
+
+Only the frontmatter (name, description, tags) is embedded; the Markdown body is injected verbatim when the skill is selected, so skill authors change nothing.
+
+## Recipe 8: Many-tool registry — keep recall high with the linter + verbose logging
+
+For registries >50 tools, two practices keep routing quality high:
+
+1. **CI lint**: add `dotfetch lint` to your test pipeline.
+2. **Verbose provider in staging**: `DotFetchContextProvider(fetcher, verbose=True)` prints one line per round so accuracy regressions are caught before production.
+
+## Recipe 9: Token-savings benchmarking
+
+```python
+from dotfetch.integrations.agent_framework_bridge import DotFetchToolBridge
+
+bridge = DotFetchToolBridge(fetcher)
+tools_full = bridge.wrap_tools(fetcher.list_tools_sync())          # all tools
+tools_top5 = await bridge.get_tools("the query", limit=5)         # fetcher top-5
+
+# Call your LLM with each list and compare prompt_tokens from the usage block.
+```
+
+`tests/test_token_savings_and_accuracy.py` in the repo is a full reference benchmark.
+
+## Recipe 10: Trace tool calls + framework-agnostic event logging (0.8.0+)
+
+Goal: see which tool the model calls each round (and what the router surfaced), and capture every tool call for logging/metrics — without hand-rolling middleware.
+
+```python
+from agent_framework import Agent
+from agent_framework.openai import OpenAIChatClient
+from dotfetch import DotFetch, ToolCallEvent, render_result
+from dotfetch.agent_framework import AgentFrameworkAdapter
+
+fetcher = DotFetch()
+# ... register tools, await fetcher.sync() ...
+
+# Framework-agnostic: fires once per fetcher.execute, regardless of framework.
+def log_call(event: ToolCallEvent) -> None:
+    status = "ok" if event.ok else f"FAILED ({event.result.error})"
+    print(f"    · {event.tool_name} -> {status} ({event.latency_ms:.0f} ms)")
+
+fetcher.on_tool_call(log_call)   # returns an unsubscribe() callable
+
+provider = AgentFrameworkAdapter(fetcher).context_provider(
+    top_k=3, query_strategy="per_turn",
+)
+agent = Agent(OpenAIChatClient(), "You are a helpful assistant.")
+
+# One call wires the provider, the per-turn retrieval middleware, AND a console
+# trace ("round N: tool(args) [surfaced: ...] -> result preview").
+provider.attach_to(agent, trace=True)
+
+response = await agent.run("Generate a secure password, then hash it with SHA-256.")
+print(render_result(response.text, limit=500))
+
+# Per-round introspection — what was offered at each step, not just the last.
+for i, decision in enumerate(provider.selections, start=1):
+    print(f"round {i}: {decision.summary()}")
+```
+
+The trace middleware is `provider.trace()` under the hood; pass `render=False`,
+`printer=logger.info`, or `limit=...` to tune it. Logging is opt-in
+(`enable_console_logging()`); the `on_tool_call` and trace output above use plain
+`print`, so they show regardless.
+
+A runnable version lives at
+`examples/agent_frameworks/agent_framework_trace_events_example.py`.

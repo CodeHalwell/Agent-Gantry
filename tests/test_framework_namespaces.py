@@ -1,8 +1,8 @@
-"""The per-framework public namespaces: ``from agent_gantry.<framework> import …``.
+"""The per-framework public namespaces: ``from dotfetch.<framework> import …``.
 
-Each integration gets a top-level ``agent_gantry.<module>`` shim re-exporting a
+Each integration gets a top-level ``dotfetch.<module>`` shim re-exporting a
 single ``<Framework>Adapter`` class (LLM SDK shims do the same). Importing
-``agent_gantry`` must NOT pull any of them in (the dependency-free guarantee),
+``dotfetch`` must NOT pull any of them in (the dependency-free guarantee),
 and the adapter class must import even when the third-party framework is absent
 (the third-party import is lazy, deferred to ``select``/``convert``).
 """
@@ -18,35 +18,35 @@ import pytest
 # exports exactly one ``<Framework>Adapter`` that must import lazily — i.e. with
 # the third-party framework forced to "not installed".
 FRAMEWORK_ADAPTERS = {
-    "agent_gantry.langchain": ("LangChainAdapter", ["langchain_core", "langchain_core.tools"]),
-    "agent_gantry.langgraph": ("LangGraphAdapter", ["langchain_core", "langchain_core.tools", "langgraph"]),
-    "agent_gantry.llamaindex": (
+    "dotfetch.langchain": ("LangChainAdapter", ["langchain_core", "langchain_core.tools"]),
+    "dotfetch.langgraph": ("LangGraphAdapter", ["langchain_core", "langchain_core.tools", "langgraph"]),
+    "dotfetch.llamaindex": (
         "LlamaIndexAdapter",
         ["llama_index", "llama_index.core", "llama_index.core.tools"],
     ),
-    "agent_gantry.crewai": ("CrewAIAdapter", ["crewai", "crewai.tools"]),
-    "agent_gantry.pydantic_ai": ("PydanticAIAdapter", ["pydantic_ai", "pydantic_ai.tools"]),
-    "agent_gantry.openai_agents": ("OpenAIAgentsAdapter", ["agents"]),
-    "agent_gantry.haystack": ("HaystackAdapter", ["haystack", "haystack.tools"]),
-    "agent_gantry.agno": ("AgnoAdapter", ["agno", "agno.tools", "agno.tools.function"]),
-    "agent_gantry.google_adk": ("GoogleADKAdapter", ["google.adk", "google.adk.tools"]),
-    "agent_gantry.strands": ("StrandsAdapter", ["strands", "strands.hooks"]),
-    "agent_gantry.dspy": (
+    "dotfetch.crewai": ("CrewAIAdapter", ["crewai", "crewai.tools"]),
+    "dotfetch.pydantic_ai": ("PydanticAIAdapter", ["pydantic_ai", "pydantic_ai.tools"]),
+    "dotfetch.openai_agents": ("OpenAIAgentsAdapter", ["agents"]),
+    "dotfetch.haystack": ("HaystackAdapter", ["haystack", "haystack.tools"]),
+    "dotfetch.agno": ("AgnoAdapter", ["agno", "agno.tools", "agno.tools.function"]),
+    "dotfetch.google_adk": ("GoogleADKAdapter", ["google.adk", "google.adk.tools"]),
+    "dotfetch.strands": ("StrandsAdapter", ["strands", "strands.hooks"]),
+    "dotfetch.dspy": (
         "DSPyAdapter",
         ["dspy", "dspy.adapters", "dspy.adapters.types", "dspy.adapters.types.tool"],
     ),
     # Microsoft Agent Framework: unified entry point.
-    "agent_gantry.agent_framework": ("AgentFrameworkAdapter", ["agent_framework"]),
+    "dotfetch.agent_framework": ("AgentFrameworkAdapter", ["agent_framework"]),
 }
 
 # LLM SDK shims expose one ``<Provider>Adapter`` each; same lazy-import contract.
 LLM_ADAPTERS = {
-    "agent_gantry.openai": ("OpenAIAdapter", ["openai"]),
-    "agent_gantry.anthropic": ("AnthropicAdapter", ["anthropic"]),
-    "agent_gantry.gemini": ("GeminiAdapter", ["google.generativeai", "google.genai"]),
-    "agent_gantry.groq": ("GroqAdapter", ["groq"]),
-    "agent_gantry.vertexai": ("VertexAIAdapter", ["vertexai"]),
-    "agent_gantry.mistral": ("MistralAdapter", ["mistralai"]),
+    "dotfetch.openai": ("OpenAIAdapter", ["openai"]),
+    "dotfetch.anthropic": ("AnthropicAdapter", ["anthropic"]),
+    "dotfetch.gemini": ("GeminiAdapter", ["google.generativeai", "google.genai"]),
+    "dotfetch.groq": ("GroqAdapter", ["groq"]),
+    "dotfetch.vertexai": ("VertexAIAdapter", ["vertexai"]),
+    "dotfetch.mistral": ("MistralAdapter", ["mistralai"]),
 }
 
 ALL_ADAPTERS = {**FRAMEWORK_ADAPTERS, **LLM_ADAPTERS}
@@ -56,7 +56,7 @@ ALL_ADAPTERS = {**FRAMEWORK_ADAPTERS, **LLM_ADAPTERS}
     "module,cls_name", [(m, c) for m, (c, _mods) in ALL_ADAPTERS.items()]
 )
 def test_namespace_exposes_adapter_class(module, cls_name):
-    """``from agent_gantry.<fw> import <Framework>Adapter`` resolves to a class."""
+    """``from dotfetch.<fw> import <Framework>Adapter`` resolves to a class."""
     mod = importlib.import_module(module)
     adapter = getattr(mod, cls_name, None)
     assert adapter is not None, f"{module} missing {cls_name}"
@@ -85,8 +85,8 @@ def test_adapter_imports_without_framework(module, cls_name, mods, monkeypatch):
     assert isinstance(adapter, type)
 
 
-def test_importing_agent_gantry_does_not_load_framework_namespaces():
-    """`import agent_gantry` must not eagerly import any framework/LLM namespace.
+def test_importing_dotfetch_does_not_load_framework_namespaces():
+    """`import dotfetch` must not eagerly import any framework/LLM namespace.
 
     Run in a fresh subprocess so the assertion is not contaminated by other
     tests in this session that may have imported the shims explicitly.
@@ -95,10 +95,10 @@ def test_importing_agent_gantry_does_not_load_framework_namespaces():
 
     shim_leaves = sorted(m.rsplit(".", 1)[1] for m in ALL_ADAPTERS)
     code = (
-        "import sys, agent_gantry; "
+        "import sys, dotfetch; "
         f"shims = set({shim_leaves!r}); "
         "loaded = [m for m in sys.modules "
-        "if m.startswith('agent_gantry.') and m.count('.') == 1 "
+        "if m.startswith('dotfetch.') and m.count('.') == 1 "
         "and m.rsplit('.', 1)[1] in shims]; "
         "assert not loaded, loaded; print('clean')"
     )
@@ -107,11 +107,11 @@ def test_importing_agent_gantry_does_not_load_framework_namespaces():
     assert "clean" in result.stdout
 
 
-def test_importing_agent_gantry_does_not_load_third_party_frameworks():
-    """`import agent_gantry` must not eagerly import any third-party framework/SDK.
+def test_importing_dotfetch_does_not_load_third_party_frameworks():
+    """`import dotfetch` must not eagerly import any third-party framework/SDK.
 
-    The Microsoft Agent Framework primitives (``GantryContextProvider``,
-    ``RetrievalDecision``) are imported at the top level of ``agent_gantry``, so
+    The Microsoft Agent Framework primitives (``DotFetchContextProvider``,
+    ``RetrievalDecision``) are imported at the top level of ``dotfetch``, so
     this guards that they — and every adapter — keep their third-party imports
     lazy. Runs in a fresh subprocess (frameworks may be installed in CI).
     """
@@ -123,11 +123,11 @@ def test_importing_agent_gantry_does_not_load_third_party_frameworks():
         "crewai", "pydantic_ai", "agents", "haystack", "agno",
         "google.adk", "strands", "dspy",
         # LLM provider SDKs — the LLM adapters never import them (they only emit
-        # schemas via gantry.retrieve_tools), so none should load on import.
+        # schemas via fetcher.retrieve_tools), so none should load on import.
         "openai", "anthropic", "groq", "mistralai", "google.generativeai",
     ]
     code = (
-        "import sys, agent_gantry; "
+        "import sys, dotfetch; "
         f"third = {third_party!r}; "
         "loaded = [m for m in third if m in sys.modules]; "
         "assert not loaded, loaded; print('clean')"

@@ -16,8 +16,8 @@ from unittest.mock import patch
 
 import pytest
 
-from agent_gantry import AgentGantry
-from agent_gantry.integrations.semantic_tools import (
+from dotfetch import DotFetch
+from dotfetch.integrations.semantic_tools import (
     SemanticToolsDecorator,
     SemanticToolSelector,
     with_semantic_tools,
@@ -27,27 +27,27 @@ from agent_gantry.integrations.semantic_tools import (
 class TestWithSemanticToolsDecorator:
     """Tests for the with_semantic_tools decorator."""
 
-    def test_decorator_requires_gantry_or_default(self) -> None:
-        """Test that decorator requires an AgentGantry instance or default gantry."""
-        # When passing a callable without default gantry set, raises ValueError
-        with pytest.raises(ValueError, match="No default gantry set"):
+    def test_decorator_requires_fetcher_or_default(self) -> None:
+        """Test that decorator requires an DotFetch instance or default fetcher."""
+        # When passing a callable without default fetcher set, raises ValueError
+        with pytest.raises(ValueError, match="No default fetcher set"):
 
             @with_semantic_tools(lambda x: x)  # type: ignore[arg-type]
             def generate(prompt: str) -> str:
                 return prompt
 
-    def test_decorator_returns_selector_with_gantry(self) -> None:
-        """Test that decorator returns a SemanticToolSelector when given a gantry."""
-        gantry = AgentGantry()
-        selector = with_semantic_tools(gantry)
+    def test_decorator_returns_selector_with_fetcher(self) -> None:
+        """Test that decorator returns a SemanticToolSelector when given a fetcher."""
+        fetcher = DotFetch()
+        selector = with_semantic_tools(fetcher)
         assert isinstance(selector, SemanticToolSelector)
 
     def test_decorator_accepts_configuration_options(self) -> None:
         """Test that decorator accepts all configuration options."""
-        gantry = AgentGantry()
+        fetcher = DotFetch()
         with pytest.warns(DeprecationWarning, match="auto_sync=False has no effect"):
             selector = with_semantic_tools(
-                gantry,
+                fetcher,
                 prompt_param="question",
                 tools_param="functions",
                 limit=3,
@@ -67,15 +67,15 @@ class TestSemanticToolSelector:
     """Tests for the SemanticToolSelector class."""
 
     @pytest.fixture
-    def mock_gantry(self) -> AgentGantry:
-        """Create a mock AgentGantry with sample tools."""
-        gantry = AgentGantry()
-        return gantry
+    def mock_fetcher(self) -> DotFetch:
+        """Create a mock DotFetch with sample tools."""
+        fetcher = DotFetch()
+        return fetcher
 
     @pytest.mark.asyncio
-    async def test_async_function_wrapping(self, mock_gantry: AgentGantry) -> None:
+    async def test_async_function_wrapping(self, mock_fetcher: DotFetch) -> None:
         """Test wrapping an async function."""
-        selector = SemanticToolSelector(mock_gantry)
+        selector = SemanticToolSelector(mock_fetcher)
 
         @selector
         async def generate(prompt: str, *, tools: list[dict[str, Any]] | None = None) -> str:
@@ -87,9 +87,9 @@ class TestSemanticToolSelector:
         assert "Prompt: test prompt" in result
 
     @pytest.mark.asyncio
-    async def test_sync_function_wrapping(self, mock_gantry: AgentGantry) -> None:
+    async def test_sync_function_wrapping(self, mock_fetcher: DotFetch) -> None:
         """Test wrapping a sync function."""
-        selector = SemanticToolSelector(mock_gantry)
+        selector = SemanticToolSelector(mock_fetcher)
 
         @selector
         def generate(prompt: str, *, tools: list[dict[str, Any]] | None = None) -> str:
@@ -101,17 +101,17 @@ class TestSemanticToolSelector:
         assert "Prompt: test prompt" in result
 
     @pytest.mark.asyncio
-    async def test_tool_injection_when_tools_not_provided(self, mock_gantry: AgentGantry) -> None:
+    async def test_tool_injection_when_tools_not_provided(self, mock_fetcher: DotFetch) -> None:
         """Test that tools are injected when not provided."""
 
         # Register a tool
-        @mock_gantry.register
+        @mock_fetcher.register
         def get_weather(city: str) -> str:
             """Get the current weather for a specified city location."""
             return f"Weather in {city}"
 
         # Use low threshold since simple embedder produces lower scores
-        selector = SemanticToolSelector(mock_gantry, score_threshold=0.0)
+        selector = SemanticToolSelector(mock_fetcher, score_threshold=0.0)
         captured_tools: list[dict[str, Any]] | None = None
 
         @selector
@@ -127,15 +127,15 @@ class TestSemanticToolSelector:
         assert len(captured_tools) >= 1
 
     @pytest.mark.asyncio
-    async def test_tools_not_overwritten_when_provided(self, mock_gantry: AgentGantry) -> None:
+    async def test_tools_not_overwritten_when_provided(self, mock_fetcher: DotFetch) -> None:
         """Test that existing tools are not overwritten."""
 
-        @mock_gantry.register
+        @mock_fetcher.register
         def some_tool(x: int) -> str:
             """Some tool for testing purposes."""
             return str(x)
 
-        selector = SemanticToolSelector(mock_gantry)
+        selector = SemanticToolSelector(mock_fetcher)
         captured_tools: list[dict[str, Any]] | None = None
         provided_tools = [{"type": "function", "function": {"name": "custom_tool"}}]
 
@@ -152,7 +152,7 @@ class TestSemanticToolSelector:
 
     @pytest.mark.asyncio
     async def test_explicit_none_counts_as_no_tools_provided(
-        self, mock_gantry: AgentGantry
+        self, mock_fetcher: DotFetch
     ) -> None:
         """``tools=None`` is the wrapped function's own default, forwarded.
 
@@ -161,12 +161,12 @@ class TestSemanticToolSelector:
         An empty list is a deliberate opt-out and is left alone.
         """
 
-        @mock_gantry.register
+        @mock_fetcher.register
         def get_weather(city: str) -> str:
             """Get the current weather for a specified city location."""
             return f"Weather in {city}"
 
-        selector = SemanticToolSelector(mock_gantry, score_threshold=0.0)
+        selector = SemanticToolSelector(mock_fetcher, score_threshold=0.0)
         captured: dict[str, Any] = {}
 
         @selector
@@ -181,15 +181,15 @@ class TestSemanticToolSelector:
         assert captured["tools"] == []
 
     @pytest.mark.asyncio
-    async def test_prompt_extraction_from_messages(self, mock_gantry: AgentGantry) -> None:
+    async def test_prompt_extraction_from_messages(self, mock_fetcher: DotFetch) -> None:
         """Test prompt extraction from OpenAI-style messages."""
 
-        @mock_gantry.register
+        @mock_fetcher.register
         def test_tool(x: str) -> str:
             """A test tool for message extraction."""
             return x
 
-        selector = SemanticToolSelector(mock_gantry, prompt_param="messages")
+        selector = SemanticToolSelector(mock_fetcher, prompt_param="messages")
         captured_prompt: str | None = None
         original_retrieve = selector._retrieve_tools
 
@@ -224,21 +224,21 @@ class TestSemanticToolSelectorDialects:
     """Tests for different dialect outputs."""
 
     @pytest.fixture
-    def gantry_with_tool(self) -> AgentGantry:
-        """Create a gantry with a registered tool."""
-        gantry = AgentGantry()
+    def fetcher_with_tool(self) -> DotFetch:
+        """Create a fetcher with a registered tool."""
+        fetcher = DotFetch()
 
-        @gantry.register
+        @fetcher.register
         def search_docs(query: str) -> str:
             """Search documentation for relevant information."""
             return f"Results for: {query}"
 
-        return gantry
+        return fetcher
 
     @pytest.mark.asyncio
-    async def test_openai_dialect(self, gantry_with_tool: AgentGantry) -> None:
+    async def test_openai_dialect(self, fetcher_with_tool: DotFetch) -> None:
         """Test OpenAI dialect output format."""
-        selector = SemanticToolSelector(gantry_with_tool, dialect="openai")
+        selector = SemanticToolSelector(fetcher_with_tool, dialect="openai")
 
         tools = await selector._retrieve_tools("search for something")
 
@@ -251,9 +251,9 @@ class TestSemanticToolSelectorDialects:
             assert "parameters" in tool["function"]
 
     @pytest.mark.asyncio
-    async def test_anthropic_dialect(self, gantry_with_tool: AgentGantry) -> None:
+    async def test_anthropic_dialect(self, fetcher_with_tool: DotFetch) -> None:
         """Test Anthropic dialect output format."""
-        selector = SemanticToolSelector(gantry_with_tool, dialect="anthropic")
+        selector = SemanticToolSelector(fetcher_with_tool, dialect="anthropic")
 
         tools = await selector._retrieve_tools("search for something")
 
@@ -271,15 +271,15 @@ class TestSemanticToolsDecoratorFactory:
 
     def test_factory_initialization(self) -> None:
         """Test factory initialization with options."""
-        gantry = AgentGantry()
+        fetcher = DotFetch()
         factory = SemanticToolsDecorator(
-            gantry,
+            fetcher,
             prompt_param="query",
             tools_param="functions",
             limit=10,
             dialect="anthropic",
         )
-        assert factory._gantry is gantry
+        assert factory._fetcher is fetcher
         assert factory._prompt_param == "query"
         assert factory._tools_param == "functions"
         assert factory._limit == 10
@@ -288,14 +288,14 @@ class TestSemanticToolsDecoratorFactory:
     @pytest.mark.asyncio
     async def test_factory_wrap_method(self) -> None:
         """Test wrapping functions using the factory."""
-        gantry = AgentGantry()
+        fetcher = DotFetch()
 
-        @gantry.register
+        @fetcher.register
         def my_tool(x: int) -> str:
             """A tool for factory testing."""
             return str(x)
 
-        factory = SemanticToolsDecorator(gantry)
+        factory = SemanticToolsDecorator(fetcher)
 
         @factory.wrap
         async def generate(prompt: str, *, tools: list | None = None) -> str:
@@ -307,14 +307,14 @@ class TestSemanticToolsDecoratorFactory:
     @pytest.mark.asyncio
     async def test_factory_wrap_with_overrides(self) -> None:
         """Test wrapping with parameter overrides."""
-        gantry = AgentGantry()
+        fetcher = DotFetch()
 
-        @gantry.register
+        @fetcher.register
         def search_tool(query: str) -> str:
             """Search for information in the database."""
             return f"Results: {query}"
 
-        factory = SemanticToolsDecorator(gantry, limit=5)
+        factory = SemanticToolsDecorator(fetcher, limit=5)
 
         @factory.wrap(limit=2)
         async def generate(prompt: str, *, tools: list | None = None) -> str:
@@ -327,7 +327,7 @@ class TestSemanticToolsDecoratorFactory:
     def test_factory_wrap_honours_every_override(self) -> None:
         """``wrap`` used to accept only four of the factory's settings as
         overrides; ``score_threshold``/``dialect_options`` were silently fixed."""
-        factory = SemanticToolsDecorator(AgentGantry(), score_threshold=0.2)
+        factory = SemanticToolsDecorator(DotFetch(), score_threshold=0.2)
         selector = factory.wrap(score_threshold=0.4, dialect_options={"strict": True})
         assert isinstance(selector, SemanticToolSelector)
         assert selector._score_threshold == 0.4
@@ -340,8 +340,8 @@ class TestPromptExtraction:
     @pytest.fixture
     def selector(self) -> SemanticToolSelector:
         """Create a selector for testing."""
-        gantry = AgentGantry()
-        return SemanticToolSelector(gantry)
+        fetcher = DotFetch()
+        return SemanticToolSelector(fetcher)
 
     def test_extract_from_direct_prompt(self, selector: SemanticToolSelector) -> None:
         """Test extracting prompt from direct parameter."""
@@ -418,20 +418,20 @@ class TestIntegrationScenarios:
     @pytest.mark.asyncio
     async def test_openai_style_integration(self) -> None:
         """Test integration with OpenAI-style API patterns."""
-        gantry = AgentGantry()
+        fetcher = DotFetch()
 
-        @gantry.register
+        @fetcher.register
         def get_stock_price(symbol: str) -> str:
             """Get the current stock price for a ticker symbol."""
             return f"Stock price for {symbol}"
 
-        @gantry.register
+        @fetcher.register
         def calculate_mortgage(principal: float, rate: float) -> str:
             """Calculate monthly mortgage payment amounts."""
             return f"Mortgage for ${principal}"
 
         # Use low threshold since simple embedder produces lower scores
-        selector = with_semantic_tools(gantry, limit=2, score_threshold=0.0)
+        selector = with_semantic_tools(fetcher, limit=2, score_threshold=0.0)
         received_tools: list[dict[str, Any]] | None = None
 
         @selector
@@ -457,15 +457,15 @@ class TestIntegrationScenarios:
     @pytest.mark.asyncio
     async def test_anthropic_style_integration(self) -> None:
         """Test integration with Anthropic-style API patterns."""
-        gantry = AgentGantry()
+        fetcher = DotFetch()
 
-        @gantry.register
+        @fetcher.register
         def send_email(to: str, subject: str, body: str) -> str:
             """Send an email to the specified recipient address."""
             return f"Email sent to {to}"
 
         # Use low threshold since simple embedder produces lower scores
-        selector = with_semantic_tools(gantry, dialect="anthropic", score_threshold=0.0)
+        selector = with_semantic_tools(fetcher, dialect="anthropic", score_threshold=0.0)
         received_tools: list[dict[str, Any]] | None = None
 
         @selector
@@ -496,14 +496,14 @@ class TestErrorScenarios:
     @pytest.mark.asyncio
     async def test_tool_retrieval_failure_graceful_degradation(self) -> None:
         """Test that function executes even when tool retrieval fails."""
-        gantry = AgentGantry()
+        fetcher = DotFetch()
 
-        @gantry.register
+        @fetcher.register
         def some_tool(x: int) -> str:
             """A tool that exists."""
             return str(x)
 
-        selector = SemanticToolSelector(gantry)
+        selector = SemanticToolSelector(fetcher)
         function_called = False
 
         # Mock _retrieve_tools to raise an exception
@@ -527,14 +527,14 @@ class TestErrorScenarios:
     @pytest.mark.asyncio
     async def test_prompt_extraction_failure_graceful_degradation(self) -> None:
         """Test that function executes when prompt extraction fails."""
-        gantry = AgentGantry()
+        fetcher = DotFetch()
 
-        @gantry.register
+        @fetcher.register
         def some_tool(x: int) -> str:
             """A tool for testing."""
             return str(x)
 
-        selector = SemanticToolSelector(gantry)
+        selector = SemanticToolSelector(fetcher)
         function_called = False
         received_tools: list | None = "not_set"  # type: ignore[assignment]
 
@@ -554,11 +554,11 @@ class TestErrorScenarios:
         assert received_tools is None
 
     @pytest.mark.asyncio
-    async def test_empty_gantry_no_tools_injected(self) -> None:
-        """Test behavior when gantry has no registered tools."""
-        gantry = AgentGantry()  # No tools registered
+    async def test_empty_fetcher_no_tools_injected(self) -> None:
+        """Test behavior when fetcher has no registered tools."""
+        fetcher = DotFetch()  # No tools registered
 
-        selector = SemanticToolSelector(gantry, score_threshold=0.0)
+        selector = SemanticToolSelector(fetcher, score_threshold=0.0)
         received_tools: list | None = "not_set"  # type: ignore[assignment]
 
         @selector
@@ -571,21 +571,21 @@ class TestErrorScenarios:
 
         # Function should execute
         assert result == "Result: What is the weather?"
-        # No tools should be injected since gantry is empty
+        # No tools should be injected since fetcher is empty
         # (empty list or None are both acceptable)
         assert received_tools is None or received_tools == []
 
     @pytest.mark.asyncio
     async def test_sync_wrapper_retrieval_failure(self) -> None:
         """Test that sync wrapper handles retrieval failure gracefully."""
-        gantry = AgentGantry()
+        fetcher = DotFetch()
 
-        @gantry.register
+        @fetcher.register
         def some_tool(x: int) -> str:
             """A tool for testing."""
             return str(x)
 
-        selector = SemanticToolSelector(gantry)
+        selector = SemanticToolSelector(fetcher)
         function_called = False
 
         # Mock _retrieve_tools to raise an exception
@@ -618,21 +618,21 @@ class TestPositionalToolsArgument:
     """
 
     @pytest.fixture
-    def gantry(self) -> AgentGantry:
-        gantry = AgentGantry()
+    def fetcher(self) -> DotFetch:
+        fetcher = DotFetch()
 
-        @gantry.register
+        @fetcher.register
         def get_weather(city: str) -> str:
             """Get the current weather for a specified city location."""
             return f"Weather in {city}"
 
-        return gantry
+        return fetcher
 
     @pytest.mark.asyncio
     async def test_positional_none_is_replaced_not_duplicated(
-        self, gantry: AgentGantry
+        self, fetcher: DotFetch
     ) -> None:
-        selector = SemanticToolSelector(gantry, score_threshold=0.0)
+        selector = SemanticToolSelector(fetcher, score_threshold=0.0)
         captured: dict[str, Any] = {}
 
         @selector
@@ -644,8 +644,8 @@ class TestPositionalToolsArgument:
         assert captured["tools"]
 
     @pytest.mark.asyncio
-    async def test_positional_explicit_tools_is_left_alone(self, gantry: AgentGantry) -> None:
-        selector = SemanticToolSelector(gantry, score_threshold=0.0)
+    async def test_positional_explicit_tools_is_left_alone(self, fetcher: DotFetch) -> None:
+        selector = SemanticToolSelector(fetcher, score_threshold=0.0)
         captured: dict[str, Any] = {}
 
         @selector
@@ -657,8 +657,8 @@ class TestPositionalToolsArgument:
         await generate("What's the weather in Paris?", sentinel)
         assert captured["tools"] == sentinel
 
-    def test_positional_none_is_replaced_not_duplicated_sync(self, gantry: AgentGantry) -> None:
-        selector = SemanticToolSelector(gantry, score_threshold=0.0)
+    def test_positional_none_is_replaced_not_duplicated_sync(self, fetcher: DotFetch) -> None:
+        selector = SemanticToolSelector(fetcher, score_threshold=0.0)
         captured: dict[str, Any] = {}
 
         @selector

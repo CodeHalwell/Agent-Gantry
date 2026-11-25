@@ -12,10 +12,10 @@ import pytest
 
 pytest.importorskip("mcp")
 
-from agent_gantry import AgentGantry
-from agent_gantry.core.mcp_registry import MCPRegistry
-from agent_gantry.core.mcp_router import MCPRouter, MCPRoutingResult
-from agent_gantry.schema.mcp import MCPServerDefinition
+from dotfetch import DotFetch
+from dotfetch.core.mcp_registry import MCPRegistry
+from dotfetch.core.mcp_router import MCPRouter, MCPRoutingResult
+from dotfetch.schema.mcp import MCPServerDefinition
 
 
 class TestMCPServerDefinition:
@@ -276,18 +276,18 @@ class TestMCPRouter:
         mock_registry.get_server.assert_called_once_with("test", "default")
 
 
-class TestAgentGantryMCPIntegration:
-    """Tests for MCP server selection in AgentGantry."""
+class TestDotFetchMCPIntegration:
+    """Tests for MCP server selection in DotFetch."""
 
     @pytest.fixture
-    async def gantry(self) -> AgentGantry:
-        """Create a gantry instance."""
-        return AgentGantry()
+    async def fetcher(self) -> DotFetch:
+        """Create a fetcher instance."""
+        return DotFetch()
 
     @pytest.mark.asyncio
-    async def test_register_mcp_server(self, gantry: AgentGantry) -> None:
+    async def test_register_mcp_server(self, fetcher: DotFetch) -> None:
         """Test registering MCP server metadata."""
-        gantry.register_mcp_server(
+        fetcher.register_mcp_server(
             name="filesystem",
             command=["npx", "-y", "@modelcontextprotocol/server-filesystem"],
             description="Provides tools for reading and writing files",
@@ -298,17 +298,17 @@ class TestAgentGantryMCPIntegration:
         )
 
         # Verify server was registered
-        assert gantry._mcp_registry.server_count == 1
-        server = gantry._mcp_registry.get_server("filesystem")
+        assert fetcher._mcp_registry.server_count == 1
+        server = fetcher._mcp_registry.get_server("filesystem")
         assert server is not None
         assert server.name == "filesystem"
         assert "filesystem" in server.tags
 
     @pytest.mark.asyncio
-    async def test_discover_tools_from_server(self, gantry: AgentGantry) -> None:
+    async def test_discover_tools_from_server(self, fetcher: DotFetch) -> None:
         """Test discovering tools from a registered server."""
         # Register server
-        gantry.register_mcp_server(
+        fetcher.register_mcp_server(
             name="test_server",
             command=["test", "cmd"],
             description="Test server for tool discovery",
@@ -316,13 +316,13 @@ class TestAgentGantryMCPIntegration:
 
         # Mock the MCPClient to avoid actual connection
         with patch(
-            "agent_gantry.core.mcp_registry.MCPClient"
+            "dotfetch.core.mcp_registry.MCPClient"
         ):
             mock_client = AsyncMock()
 
             # Mock list_tools to return our test tools
             mock_client.list_tools = AsyncMock(return_value=[])
-            from agent_gantry.schema.tool import ToolDefinition
+            from dotfetch.schema.tool import ToolDefinition
 
             mock_client.list_tools.return_value = [
                 ToolDefinition(
@@ -333,48 +333,48 @@ class TestAgentGantryMCPIntegration:
             ]
 
             # Make get_client return our mock
-            gantry._mcp_registry._clients["default.test_server"] = mock_client
+            fetcher._mcp_registry._clients["default.test_server"] = mock_client
 
             # Discover tools
-            count = await gantry.discover_tools_from_server("test_server")
+            count = await fetcher.discover_tools_from_server("test_server")
             assert count == 1
 
             # Verify health was updated
-            server = gantry._mcp_registry.get_server("test_server")
+            server = fetcher._mcp_registry.get_server("test_server")
             assert server is not None
             assert server.health.available is True
 
     @pytest.mark.asyncio
-    async def test_discover_tools_failure_updates_health(self, gantry: AgentGantry) -> None:
+    async def test_discover_tools_failure_updates_health(self, fetcher: DotFetch) -> None:
         """Test that tool discovery failure updates server health."""
-        gantry.register_mcp_server(
+        fetcher.register_mcp_server(
             name="failing_server",
             command=["test", "cmd"],
             description="Server that will fail",
         )
 
         with patch(
-            "agent_gantry.core.mcp_registry.MCPClient"
+            "dotfetch.core.mcp_registry.MCPClient"
         ):
             mock_client = AsyncMock()
             mock_client.list_tools = AsyncMock(side_effect=Exception("Connection failed"))
 
-            gantry._mcp_registry._clients["default.failing_server"] = mock_client
+            fetcher._mcp_registry._clients["default.failing_server"] = mock_client
 
             # Try to discover tools - should raise exception
             with pytest.raises(Exception, match="Connection failed"):
-                await gantry.discover_tools_from_server("failing_server")
+                await fetcher.discover_tools_from_server("failing_server")
 
             # Verify health was updated
-            server = gantry._mcp_registry.get_server("failing_server")
+            server = fetcher._mcp_registry.get_server("failing_server")
             assert server is not None
             assert server.health.available is False
             assert server.health.consecutive_failures == 1
 
     @pytest.mark.asyncio
-    async def test_backward_compatibility_add_mcp_server(self, gantry: AgentGantry) -> None:
+    async def test_backward_compatibility_add_mcp_server(self, fetcher: DotFetch) -> None:
         """Test that add_mcp_server() still works as before."""
-        from agent_gantry.schema.config import MCPServerConfig
+        from dotfetch.schema.config import MCPServerConfig
 
         config = MCPServerConfig(
             name="test_server",
@@ -382,9 +382,9 @@ class TestAgentGantryMCPIntegration:
             namespace="default",
         )
 
-        with patch("agent_gantry.adapters.executors.mcp_client.MCPClient") as mock_client_class:
+        with patch("dotfetch.adapters.executors.mcp_client.MCPClient") as mock_client_class:
             mock_client = AsyncMock()
-            from agent_gantry.schema.tool import ToolDefinition
+            from dotfetch.schema.tool import ToolDefinition
 
             mock_client.list_tools = AsyncMock(
                 return_value=[
@@ -397,7 +397,7 @@ class TestAgentGantryMCPIntegration:
             )
             mock_client_class.return_value = mock_client
 
-            count = await gantry.add_mcp_server(config)
+            count = await fetcher.add_mcp_server(config)
             assert count == 1
 
 
@@ -407,10 +407,10 @@ class TestMCPWorkflow:
     @pytest.mark.asyncio
     async def test_complete_workflow(self) -> None:
         """Test complete workflow: register -> sync -> retrieve -> discover."""
-        gantry = AgentGantry()
+        fetcher = DotFetch()
 
         # Step 1: Register multiple servers
-        gantry.register_mcp_server(
+        fetcher.register_mcp_server(
             name="filesystem",
             command=["npx", "-y", "@modelcontextprotocol/server-filesystem"],
             description="Provides tools for reading and writing files on the local filesystem",
@@ -419,7 +419,7 @@ class TestMCPWorkflow:
             capabilities=["read_files", "write_files"],
         )
 
-        gantry.register_mcp_server(
+        fetcher.register_mcp_server(
             name="database",
             command=["python", "-m", "mcp_db"],
             description="Access SQL databases for querying and data manipulation",
@@ -429,17 +429,17 @@ class TestMCPWorkflow:
         )
 
         # Verify both servers are registered
-        assert gantry._mcp_registry.server_count == 2
+        assert fetcher._mcp_registry.server_count == 2
 
         # Step 2: Sync servers (would embed to vector store)
         # Note: This is a placeholder since we haven't completed vector store integration
-        count = await gantry.sync_mcp_servers()
+        count = await fetcher.sync_mcp_servers()
         # Currently returns 0 because storage isn't implemented yet
         assert count >= 0
 
         # Step 3: Retrieve relevant servers (would use semantic search)
         # Note: This requires vector store integration to work fully
-        # servers = await gantry.retrieve_mcp_servers("I need to read a file")
+        # servers = await fetcher.retrieve_mcp_servers("I need to read a file")
         # assert len(servers) > 0
 
         # Step 4: Discover tools from selected server
@@ -458,7 +458,7 @@ class TestMCPWorkflow:
         # Keep track of stored fingerprints in our mock
         stored_fps = {}
         def mock_add_tools(tools, embeddings, upsert=True):
-            from agent_gantry.utils.fingerprint import compute_tool_fingerprint
+            from dotfetch.utils.fingerprint import compute_tool_fingerprint
             for tool in tools:
                 stored_fps[f"{tool.namespace}.{tool.name}"] = compute_tool_fingerprint(tool)
             return len(tools)
@@ -475,10 +475,10 @@ class TestMCPWorkflow:
         # Inject through the constructor: the MCP manager/router are wired at
         # construction, so swapping private attributes afterwards would leave
         # them pointing at the defaults.
-        gantry = AgentGantry(vector_store=mock_vector_store, embedder=mock_embedder)
+        fetcher = DotFetch(vector_store=mock_vector_store, embedder=mock_embedder)
 
         # Register an MCP server
-        gantry.register_mcp_server(
+        fetcher.register_mcp_server(
             name="test_server",
             command=["test", "cmd"],
             description="Test server for fingerprinting",
@@ -486,19 +486,19 @@ class TestMCPWorkflow:
         )
 
         # First sync - should embed and return 1
-        count1 = await gantry.sync_mcp_servers()
+        count1 = await fetcher.sync_mcp_servers()
         assert count1 == 1
         assert mock_embedder.embed_batch.call_count == 1
         assert mock_vector_store.add_tools.call_count == 1
 
         # Second sync - fingerprints match, should return 0 and not embed
-        count2 = await gantry.sync_mcp_servers()
+        count2 = await fetcher.sync_mcp_servers()
         assert count2 == 0
         assert mock_embedder.embed_batch.call_count == 1  # Still 1
         assert mock_vector_store.add_tools.call_count == 1  # Still 1
 
         # Third sync with force=True - should embed again
-        count3 = await gantry.sync_mcp_servers(force=True)
+        count3 = await fetcher.sync_mcp_servers(force=True)
         assert count3 == 1
         assert mock_embedder.embed_batch.call_count == 2
         assert mock_vector_store.add_tools.call_count == 2
@@ -506,23 +506,23 @@ class TestMCPWorkflow:
     @pytest.mark.asyncio
     async def test_unconventional_server_names_sync(self) -> None:
         """Names outside ToolDefinition's pattern are sanitised, not rejected."""
-        gantry = AgentGantry()
+        fetcher = DotFetch()
         try:
             for name, namespace in (("MyServer", "default"), ("my.server", "default"), ("fs", "Team-A")):
-                gantry.register_mcp_server(
+                fetcher.register_mcp_server(
                     name=name,
                     namespace=namespace,
                     command=["echo"],
                     description=f"Server {name} registered under an unconventional name",
                 )
-            assert await gantry.sync_mcp_servers() == 3
-            servers = await gantry.retrieve_mcp_servers("unconventional name", limit=3)
+            assert await fetcher.sync_mcp_servers() == 3
+            servers = await fetcher.retrieve_mcp_servers("unconventional name", limit=3)
             assert {s.name for s in servers} == {"MyServer", "my.server", "fs"}
         finally:
-            await gantry.close()
+            await fetcher.close()
 
     def test_pseudo_tool_names_do_not_collide_after_sanitising(self) -> None:
-        from agent_gantry.core.mcp_manager import _pseudo_tool_name
+        from dotfetch.core.mcp_manager import _pseudo_tool_name
 
         first = MCPServerDefinition(
             name="a", namespace="b_c", description="First server here", command=["x"]
@@ -534,7 +534,7 @@ class TestMCPWorkflow:
 
     def test_pseudo_tool_names_are_stable(self) -> None:
         """The scheme is part of what a persistent store holds, so it must not drift."""
-        from agent_gantry.core.mcp_manager import _pseudo_tool_name
+        from dotfetch.core.mcp_manager import _pseudo_tool_name
 
         server = MCPServerDefinition(
             name="MyServer", namespace="Team-A", description="Pinned naming scheme", command=["x"]
@@ -545,10 +545,10 @@ class TestMCPWorkflow:
 @pytest.mark.asyncio
 async def test_sync_removes_pseudo_tools_no_server_owns() -> None:
     """A row under the pre-digest name, or for a server since removed, goes on the next sync."""
-    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-    from agent_gantry.adapters.vector_stores.memory import InMemoryVectorStore
-    from agent_gantry.core.mcp_manager import PSEUDO_NAMESPACE
-    from agent_gantry.schema.tool import ToolDefinition
+    from dotfetch.adapters.embedders.simple import SimpleEmbedder
+    from dotfetch.adapters.vector_stores.memory import InMemoryVectorStore
+    from dotfetch.core.mcp_manager import PSEUDO_NAMESPACE
+    from dotfetch.schema.tool import ToolDefinition
 
     store = InMemoryVectorStore()
     embedder = SimpleEmbedder(dimension=64)
@@ -560,21 +560,21 @@ async def test_sync_removes_pseudo_tools_no_server_owns() -> None:
     )
     await store.add_tools([legacy], [await embedder.embed_text(legacy.description)])
 
-    gantry = AgentGantry(vector_store=store, embedder=embedder)
+    fetcher = DotFetch(vector_store=store, embedder=embedder)
     try:
 
-        @gantry.register(tags=["math"])
+        @fetcher.register(tags=["math"])
         def double(x: int) -> int:
             """Double a number."""
             return x * 2
 
-        await gantry.sync()
-        gantry.register_mcp_server(name="fs", command=["echo"], description="File system server")
-        assert await gantry.sync_mcp_servers() == 1
+        await fetcher.sync()
+        fetcher.register_mcp_server(name="fs", command=["echo"], description="File system server")
+        assert await fetcher.sync_mcp_servers() == 1
         names = {tool.name for tool in await store.list_all(namespace=PSEUDO_NAMESPACE)}
         assert "mcp_server_default_fs" not in names
         assert len(names) == 1  # the one registered server, under its current name
         # The prune is confined to its namespace: a real tool is untouched.
         assert await store.get_by_name("double") is not None
     finally:
-        await gantry.close()
+        await fetcher.close()

@@ -1,15 +1,15 @@
 """
-Groq + Agent-Gantry integration demo.
+Groq + dotfetch integration demo.
 
-Shows three ways to hand Gantry-selected tools to Groq's chat completions:
+Shows three ways to hand dotfetch-selected tools to Groq's chat completions:
 manual ``retrieve_tools`` + execute, the ``@with_semantic_tools`` decorator,
 and the typed ``GroqAdapter``. Groq accepts OpenAI-style function schemas,
-so Gantry's default dialect needs no conversion.
+so dotfetch's default dialect needs no conversion.
 
 Requires GROQ_API_KEY; exits with a message if it is missing.
 
 Install:
-    pip install "agent-gantry[groq]"
+    pip install "dotfetch[groq]"
 """
 
 import asyncio
@@ -19,15 +19,15 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from agent_gantry import AgentGantry, set_default_gantry, with_semantic_tools
-from agent_gantry.schema.execution import ToolCall
+from dotfetch import DotFetch, set_default_fetcher, with_semantic_tools
+from dotfetch.schema.execution import ToolCall
 
 # Load environment variables
 load_dotenv()
 
 
 async def main():
-    print("=== Agent-Gantry + Groq Integration Demo ===\n")
+    print("=== dotfetch + Groq Integration Demo ===\n")
 
     # 1. Check for API Key
     api_key = os.environ.get("GROQ_API_KEY")
@@ -36,13 +36,13 @@ async def main():
         print("   Please set it in your .env file.")
         return
 
-    # 2. Initialize Gantry
-    gantry = AgentGantry()
-    set_default_gantry(gantry)  # Set default for decorator usage
+    # 2. Initialize dotfetch
+    fetcher = DotFetch()
+    set_default_fetcher(fetcher)  # Set default for decorator usage
 
     try:
         # 3. Register Tools
-        @gantry.register(
+        @fetcher.register(
             tags=["math"],
             examples=["calculate the factorial of 5", "what is 10 factorial"],
         )
@@ -52,8 +52,8 @@ async def main():
                 return 1
             return n * calculate_factorial(n - 1)
 
-        await gantry.sync()
-        print(f"✅ Registered {gantry.tool_count} tools\n")
+        await fetcher.sync()
+        print(f"✅ Registered {fetcher.tool_count} tools\n")
 
         # 4. Initialize Groq Client
         # Groq's own SDK mirrors the OpenAI chat-completions interface
@@ -67,8 +67,8 @@ async def main():
         print(f"User Query: '{query}'")
 
         # Retrieve tools
-        tools = await gantry.retrieve_tools(query, limit=1)
-        print(f"Gantry retrieved {len(tools)} tool(s)")
+        tools = await fetcher.retrieve_tools(query, limit=1)
+        print(f"dotfetch retrieved {len(tools)} tool(s)")
 
         # Call Groq
         response = await client.chat.completions.create(
@@ -83,8 +83,8 @@ async def main():
             for tc in tool_calls:
                 print(f"Groq decided to call: {tc.function.name}({tc.function.arguments})")
 
-                # Execute securely via Gantry
-                result = await gantry.execute(
+                # Execute securely via dotfetch
+                result = await fetcher.execute(
                     ToolCall(
                         tool_name=tc.function.name, arguments=json.loads(tc.function.arguments)
                     )
@@ -94,7 +94,7 @@ async def main():
         # --- Scenario: Using @with_semantic_tools Decorator (RECOMMENDED) ---
         print("\n--- Scenario: Using @with_semantic_tools Decorator (RECOMMENDED) ---")
 
-        # The decorator uses the default gantry set above
+        # The decorator uses the default fetcher set above
         # Groq uses OpenAI-compatible format, so no dialect parameter needed
         @with_semantic_tools(limit=1, prompt_param="user_query")
         async def chat_with_groq(user_query: str, tools: list[dict[str, Any]] = None):
@@ -121,17 +121,17 @@ async def main():
         await chat_with_groq("Calculate the factorial of 10")
 
         # --- Scenario: Typed GroqAdapter (provider-specific convenience) ---
-        # GroqAdapter(gantry).tools(query, limit=n) is equivalent to
-        # gantry.retrieve_tools(query, limit=n, dialect="groq"). Groq is
+        # GroqAdapter(fetcher).tools(query, limit=n) is equivalent to
+        # fetcher.retrieve_tools(query, limit=n, dialect="groq"). Groq is
         # OpenAI-compatible, so the schemas drop straight into chat.completions.
         print("\n--- Scenario: Typed GroqAdapter ---")
-        from agent_gantry.groq import GroqAdapter
+        from dotfetch.groq import GroqAdapter
 
         query_adapter = "Calculate the factorial of 7"
         print(f"User Query: '{query_adapter}'")
 
-        tools_adapter = await GroqAdapter(gantry).tools(query_adapter, limit=1)
-        print(f"Gantry retrieved {len(tools_adapter)} tool(s)")
+        tools_adapter = await GroqAdapter(fetcher).tools(query_adapter, limit=1)
+        print(f"dotfetch retrieved {len(tools_adapter)} tool(s)")
 
         response_adapter = await client.chat.completions.create(
             model="llama-3.3-70b-versatile",
@@ -143,7 +143,7 @@ async def main():
             tc = response_adapter.choices[0].message.tool_calls[0]
             print(f"Groq (via adapter) called: {tc.function.name}")
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 if __name__ == "__main__":

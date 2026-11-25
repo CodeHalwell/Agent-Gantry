@@ -1,0 +1,417 @@
+"""
+Configuration models for dotfetch.
+
+Single source of truth for all configuration options.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from dotfetch.schema.base import (
+    MCPTransport,
+    check_mcp_endpoint,
+    is_http_url,
+    reject_newlines,
+    resolve_mcp_transport,
+)
+
+
+class VectorStoreConfig(BaseModel):
+    """Configuration for vector store backend."""
+
+    type: Literal["memory", "qdrant", "chroma", "pgvector", "lancedb"] = "memory"
+    url: str | None = None
+    api_key: str | None = None
+    collection_name: str = "dotfetch"
+    dimension: int | None = None
+    db_path: str | None = Field(default=None, description="Path to local database (for LanceDB)")
+    options: dict[str, Any] = Field(default_factory=dict)
+
+
+class EmbedderConfig(BaseModel):
+    """Configuration for embedding backend."""
+
+    type: Literal["openai", "azure", "sentence_transformers", "nomic"] = "sentence_transformers"
+    model: str | None = Field(
+        default=None,
+        description=(
+            "Model name; unset means the backend's own default. Azure OpenAI has none: "
+            "give the deployment name."
+        ),
+    )
+    api_key: str | None = None
+    api_base: str | None = None
+    api_version: str | None = Field(default=None, description="API version (for Azure OpenAI)")
+    batch_size: int = 100
+    max_retries: int = 3
+    dimension: int | None = Field(
+        default=None, description="Output dimension (for Matryoshka truncation)"
+    )
+    task_type: str | None = Field(default=None, description="Task type for embeddings (for Nomic)")
+    on_unavailable: Literal["simple", "raise"] = Field(
+        default="simple",
+        description=(
+            "What to do when type is 'sentence_transformers' and that package is not "
+            "installed. 'simple' falls back to the hash-based SimpleEmbedder, which "
+            "matches tokens rather than meaning, and logs a WARNING. 'raise' raises "
+            "ImportError instead, for deployments that must not retrieve on it."
+        ),
+    )
+
+
+def _system_one_type(value: Any) -> Any:
+    """Accept the pre-0.23.0 ``"jev"`` spelling of the ``"system_one"`` type.
+
+    The backend was named after TypeSafe's Jev, its default model, before it
+    was renamed for what it is: any System One decision model. Stored configs
+    that still say ``"jev"`` load unchanged, with a ``DeprecationWarning``.
+    """
+    if value == "jev":
+        from dotfetch._deprecation import warn_renamed
+
+        warn_renamed('type="jev"', 'type="system_one"', stacklevel=2)
+        return "system_one"
+    return value
+
+
+class RerankerConfig(BaseModel):
+    """Configuration for reranker backend.
+
+    ``type="system_one"`` reranks with a System One decision model (TypeSafe's
+    Jev unless ``model`` names another). A reranker reorders the shortlist; it
+    cannot decline a query the way ``SelectorConfig`` can.
+    """
+
+    enabled: bool = False
+    type: Literal["cohere", "cross_encoder", "system_one"] = "cross_encoder"
+    model: str | None = None
+    top_k: int = 10
+
+    _accept_jev = field_validator("type", mode="before")(_system_one_type)
+
+
+class SelectorConfig(BaseModel):
+    """Configuration for a selector, the alternative to semantic routing.
+
+    A selector asks a decision model directly which catalogue entries are
+    relevant, instead of embedding the query and searching a vector store.
+    Every candidate is sent on every query, so cost grows with the catalogue
+    rather than staying flat — which is affordable for tens to a few hundred
+    entries and is why ``max_candidates`` exists. Above that, prefer semantic
+    retrieval with ``RerankerConfig(type="system_one")`` over its shortlist.
+
+    Retrieval falls back to the semantic router whenever the selector is
+    disabled, over its candidate ceiling, or unable to answer. A fallback is
+    reported on the result (``RetrievalResult.selector_fallback`` and
+    ``selector_fallback_reason``) and logged at WARNING; ``on_fallback="raise"``
+    turns it into an error.
+    """
+
+    enabled: bool = False
+    type: Literal["system_one"] = "system_one"
+    model: str | None = Field(
+        default=None,
+        description=(
+            "Decision model id. Unset uses the SDK's default, TypeSafe's Jev "
+            "(jev-latest); any other System One model id is accepted."
+        ),
+    )
+    threshold: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Minimum probability for an entry to be selected. TypeSafe's own "
+            "skill-selection recipe gates at 0.30."
+        ),
+    )
+    max_candidates: int = Field(
+        default=512,
+        ge=1,
+        description="Largest catalogue the selector will score in one call.",
+    )
+    group_after: int = Field(
+        default=120,
+        ge=1,
+        description=(
+            "Catalogue size above which selection narrows by group (namespace, "
+            "or originating MCP server) before scoring members."
+        ),
+    )
+    max_groups: int = Field(
+        default=5, ge=1, description="How many groups the narrowing pass keeps."
+    )
+    timeout_s: float | None = Field(
+        default=None, gt=0, description="Per-request timeout; the SDK's own default is 10s."
+    )
+    on_fallback: Literal["semantic", "raise"] = Field(
+        default="semantic",
+        description=(
+            "What retrieval does when the selector is asked and does not answer. "
+            "'semantic' (the default) fails open to the semantic router, which is "
+            "right in production. 'raise' raises SelectorFallbackError instead, "
+            "for evals and CI that must not pass on a different backend."
+        ),
+    )
+
+    _accept_jev = field_validator("type", mode="before")(_system_one_type)
+
+
+class LLMConfig(BaseModel):
+    """Configuration for LLM-based features (intent classification, etc.)."""
+
+    provider: Literal["openai", "anthropic", "google", "mistral", "groq"] = "openai"
+    # BREAKING (2026-08-03): default changed from "gpt-4o-mini", which OpenAI
+    # shuts down on 2026-10-23 — leaving the old default would break every
+    # deployment relying on it at that date. Callers pinning the old model
+    # must now set model="gpt-4o-mini" explicitly (until shutdown).
+    model: str = "gpt-5.4-mini"
+    api_key: str | None = None
+    base_url: str | None = Field(default=None, description="Custom base URL (for OpenRouter, etc.)")
+    max_tokens: int = 100
+    temperature: float = 0.0
+
+
+class RoutingConfig(BaseModel):
+    """Configuration for semantic routing."""
+
+    weights: dict[str, float] = Field(
+        default_factory=lambda: {
+            "semantic": 0.6,
+            "intent": 0.15,
+            "conversation": 0.1,
+            "health": 0.1,
+            "cost": 0.05,
+        }
+    )
+    enable_intent_classification: bool = True
+    use_llm_for_intent: bool = False
+    llm: LLMConfig = Field(default_factory=LLMConfig)
+    enable_mmr: bool = True
+    mmr_lambda: float = 0.7
+    chunk_long_text: bool = Field(
+        default=True,
+        description=(
+            "Index a tool's long description (over about 900 characters) a second "
+            "time in pieces, and score the tool by its best piece. Without it a tool "
+            "is searchable only by what fits in one embedding, which for the default "
+            "model is roughly its first thousand characters. Costs one extra "
+            "embedding per piece at sync. Turned off, pieces already indexed are "
+            "removed as their tool or skill is next updated."
+        ),
+    )
+
+
+class RateLimitConfig(BaseModel):
+    """Configuration for rate limiting."""
+
+    enabled: bool = True
+    strategy: Literal["sliding_window", "token_bucket", "fixed_window"] = "sliding_window"
+    max_calls_per_minute: int = 60
+    max_calls_per_hour: int = 1000
+    max_concurrent: int = 10
+    burst_size: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Token bucket capacity; defaults to max_calls_per_minute. Must be at "
+            "least 1: a zero-capacity bucket can never accumulate the token a "
+            "call needs, so it would block the key permanently rather than "
+            "limiting it."
+        ),
+    )
+    per_tool: bool = Field(default=True, description="Rate limit per tool (vs. globally)")
+    per_namespace: bool = Field(default=False, description="Rate limit per namespace")
+
+
+class ExecutionConfig(BaseModel):
+    """Configuration for tool execution."""
+
+    default_timeout_ms: int = 30000
+    max_retries: int = 3
+    circuit_breaker_threshold: int = 5
+    circuit_breaker_timeout_s: int = 60
+    enable_sandbox: bool = False
+    sandbox_type: Literal["none", "subprocess", "docker"] = "none"
+    rate_limit: RateLimitConfig = Field(default_factory=RateLimitConfig)
+
+
+class TelemetryConfig(BaseModel):
+    """Configuration for observability."""
+
+    enabled: bool = True
+    type: Literal["console", "opentelemetry", "prometheus"] = "console"
+    otlp_endpoint: str | None = None
+    service_name: str = "dotfetch"
+    prometheus_port: int = 9090
+
+
+class MCPServerConfig(BaseModel):
+    """Configuration for an MCP server to connect to.
+
+    Exactly one of ``command`` (a local stdio server) or ``url`` (a remote
+    HTTP server) must be given. ``transport`` is inferred from that — stdio
+    for a command, Streamable HTTP for a URL — and only needs setting to
+    ``"sse"`` for a remote server that still speaks the legacy SSE transport.
+
+    Example::
+
+        MCPServerConfig(name="fs", command=["npx", "-y", "@modelcontextprotocol/server-filesystem"])
+        MCPServerConfig(name="search", url="https://mcp.example.com/mcp",
+                        headers={"Authorization": "Bearer ..."})
+    """
+
+    name: str
+    command: list[str] = Field(
+        default_factory=list,
+        description="Command (and leading arguments) that starts a local stdio server.",
+    )
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict, repr=False)
+    namespace: str = "default"
+    url: str | None = Field(
+        default=None,
+        description="Endpoint of a remote MCP server (Streamable HTTP or SSE).",
+    )
+    headers: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Extra HTTP headers for remote servers (auth tokens go here). "
+            "Kept out of repr(), which is NOT the same as kept out of "
+            "model_dump() or to_config() - redact before logging either."
+        ),
+        repr=False,
+    )
+    transport: MCPTransport | None = Field(
+        default=None,
+        description="Transport to use; inferred from command/url when unset.",
+    )
+    timeout_s: float = Field(
+        default=30.0,
+        gt=0,
+        description="HTTP request timeout for remote transports, in seconds.",
+    )
+
+    model_config = ConfigDict(validate_assignment=True)
+
+    _reject_newline_identifiers = field_validator("name", "namespace")(reject_newlines)
+
+    @model_validator(mode="after")
+    def _check_endpoint(self) -> MCPServerConfig:
+        check_mcp_endpoint(self.name, self.command, self.url, self.transport)
+        return self
+
+    @property
+    def resolved_transport(self) -> MCPTransport:
+        """The transport this config uses, inferring it from the endpoint given."""
+        return resolve_mcp_transport(self.command, self.transport)
+
+    @property
+    def endpoint(self) -> str:
+        """Human-readable endpoint for logs: the command line or the URL."""
+        if self.command:
+            return " ".join(self.command + self.args)
+        return self.url or ""
+
+
+class MCPConfig(BaseModel):
+    """Configuration for MCP integration."""
+
+    servers: list[MCPServerConfig] = Field(default_factory=list)
+
+
+class A2AAgentConfig(BaseModel):
+    """Configuration for an A2A agent to connect to."""
+
+    name: str
+    url: str
+    namespace: str = "default"
+
+    model_config = ConfigDict(validate_assignment=True)
+
+    _reject_newline_identifiers = field_validator("name", "namespace")(reject_newlines)
+
+    @field_validator("url")
+    @classmethod
+    def _http_url(cls, value: str) -> str:
+        if not is_http_url(value):
+            raise ValueError(f"'url' must be an http(s) URL, got {value!r}.")
+        return value
+
+
+class A2AConfig(BaseModel):
+    """Configuration for A2A integration."""
+
+    agents: list[A2AAgentConfig] = Field(default_factory=list)
+
+
+class DotFetchConfig(BaseModel):
+    """
+    Main configuration for dotfetch.
+
+    Can be loaded from YAML files or constructed programmatically.
+    """
+
+    vector_store: VectorStoreConfig = Field(default_factory=VectorStoreConfig)
+    embedder: EmbedderConfig = Field(default_factory=EmbedderConfig)
+    reranker: RerankerConfig = Field(default_factory=RerankerConfig)
+    selector: SelectorConfig = Field(default_factory=SelectorConfig)
+    routing: RoutingConfig = Field(default_factory=RoutingConfig)
+    execution: ExecutionConfig = Field(default_factory=ExecutionConfig)
+    telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
+    mcp: MCPConfig = Field(default_factory=MCPConfig)
+    a2a: A2AConfig = Field(default_factory=A2AConfig)
+
+    auto_sync: bool = True
+    sync_on_register: bool = False
+    prune_on_sync: bool = Field(
+        default=False,
+        description=(
+            "Delete tools from the vector store that are no longer registered with this "
+            "fetcher when sync() runs. Off by default: several gantries may legitimately "
+            "share one persistent store and register different subsets."
+        ),
+    )
+
+    @classmethod
+    def from_yaml(cls, path: str) -> DotFetchConfig:
+        """
+        Load configuration from a YAML file.
+
+        Args:
+            path: Path to the YAML configuration file
+
+        Returns:
+            Configured DotFetchConfig instance
+
+        Raises:
+            FileNotFoundError: If the config file doesn't exist
+            ValueError: If the YAML is invalid or doesn't match schema
+        """
+        from pathlib import Path as PathLib
+
+        import yaml  # type: ignore[import-untyped]
+
+        config_path = PathLib(path)
+        if not config_path.exists():
+            raise FileNotFoundError(
+                f"Configuration file not found: {path}\n"
+                f"Create a config file or use DotFetchConfig() for defaults."
+            )
+
+        try:
+            with open(config_path) as f:
+                data = yaml.safe_load(f)
+        except yaml.YAMLError as e:
+            raise ValueError(f"Invalid YAML in {path}: {e}") from e
+
+        if data is None:
+            data = {}
+
+        try:
+            return cls(**data)
+        except Exception as e:
+            raise ValueError(f"Invalid configuration in {path}: {e}") from e

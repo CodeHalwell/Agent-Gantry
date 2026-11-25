@@ -1,11 +1,11 @@
 """Cross-framework conformance matrix for the native tool adapters.
 
-Every ``<Framework>Adapter`` in ``agent_gantry.integrations.frameworks`` must
+Every ``<Framework>Adapter`` in ``dotfetch.integrations.frameworks`` must
 honor the same contract regardless of which third-party framework it targets:
 
 1. It exposes ``select`` (async select+convert) and ``convert`` (single convert
    staticmethod), both importable without the framework installed.
-2. ``select`` runs semantic selection against a real gantry and returns one
+2. ``select`` runs semantic selection against a real fetcher and returns one
    converted tool per selected tool — verified end-to-end, per framework,
    through a lightweight ``sys.modules`` stub (mirroring how the real package
    would be structured) so the check runs everywhere without needing every
@@ -31,16 +31,16 @@ from typing import Any
 
 import pytest
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-from agent_gantry.agent_framework import AgentFrameworkAdapter
-from agent_gantry.core.security import SecurityPolicy
-from agent_gantry.integrations import frameworks as F  # noqa: N812
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
+from dotfetch.agent_framework import AgentFrameworkAdapter
+from dotfetch.core.security import SecurityPolicy
+from dotfetch.integrations import frameworks as F  # noqa: N812
 
 
 @pytest.fixture
-async def gantry():
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+async def fetcher():
+    g = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
     @g.register(tags=["email"])
     def send_email(to: str, body: str = "") -> str:
@@ -57,22 +57,22 @@ async def gantry():
 
 
 @pytest.fixture
-async def gantry_with_failing_tool(gantry: AgentGantry) -> AgentGantry:
-    """The shared conformance ``gantry`` plus one tool that always raises.
+async def fetcher_with_failing_tool(fetcher: DotFetch) -> DotFetch:
+    """The shared conformance ``fetcher`` plus one tool that always raises.
 
     Shared by the tool-failure conformance test (below) and reused verbatim
     by the pattern already proven in ``tests/frameworks/test_dspy.py`` /
-    ``test_strands.py``. A separate fixture (rather than extending ``gantry``
+    ``test_strands.py``. A separate fixture (rather than extending ``fetcher``
     itself) keeps this tool out of every other conformance test's tool count.
     """
 
-    @gantry.register(tags=["danger"])
+    @fetcher.register(tags=["danger"])
     def explode() -> str:
         "Always raises when invoked."
         raise RuntimeError("boom: this tool always fails")
 
-    await gantry.sync()
-    return gantry
+    await fetcher.sync()
+    return fetcher
 
 
 # --------------------------------------------------------------------------- #
@@ -234,16 +234,16 @@ class AdapterCase:
             ``{"model": ...}`` for LangGraph, whose native hook is bound to a
             specific chat model). ``None`` when ``live()`` needs nothing
             beyond ``limit``/``score_threshold``/``namespaces``.
-        error_kind: How a failing ``gantry.execute()`` surfaces through the
+        error_kind: How a failing ``fetcher.execute()`` surfaces through the
             native tool object this adapter's ``convert()`` produces.
             ``"raises"`` (every adapter, currently) — the native object's own
             call convention (``.func``/``._run``/``.forward``/``.method``/…)
-            propagates :class:`~agent_gantry.integrations.frameworks.base.ToolExecutionError`
+            propagates :class:`~dotfetch.integrations.frameworks.base.ToolExecutionError`
             uncaught, matching the documented default contract (see
             "Error-handling policy" in ``integrations/frameworks/README.md``).
             ``"native_tool_exception"`` (LangChain, LangGraph) -- the failure
             is re-raised as LangChain's ``ToolException`` chained from the
-            :class:`~agent_gantry.integrations.frameworks.base.ToolExecutionError`;
+            :class:`~dotfetch.integrations.frameworks.base.ToolExecutionError`;
             the tool sets ``handle_tool_error=True``, so the model receives an
             error ``ToolMessage`` instead of the run ending.
             ``error_mode="raise"`` restores ``"raises"``.
@@ -261,7 +261,7 @@ class AdapterCase:
             re-raised as the framework's own ``ToolFailed`` (``ModelRetry``
             for argument errors, ``ApprovalRequired`` for confirmation-gated
             calls), chained from the
-            :class:`~agent_gantry.integrations.frameworks.base.ToolExecutionError`,
+            :class:`~dotfetch.integrations.frameworks.base.ToolExecutionError`,
             so the model sees it instead of the run ending; ``error_mode="raise"``
             restores ``"raises"``.
             The three deliberate "framework absorbs the error" deviations
@@ -500,7 +500,7 @@ def test_per_run_tier_still_equals_its_old_spelling() -> None:
     import pickle
     import warnings
 
-    from agent_gantry.integrations.frameworks.base import PER_RUN_TIER
+    from dotfetch.integrations.frameworks.base import PER_RUN_TIER
 
     with warnings.catch_warnings():
         warnings.simplefilter("error")  # the new spelling never warns
@@ -530,7 +530,7 @@ def test_the_old_spelling_warning_points_at_the_comparison() -> None:
     the library, where the default filter also hides it."""
     import warnings
 
-    from agent_gantry.integrations.frameworks.base import PER_RUN_TIER
+    from dotfetch.integrations.frameworks.base import PER_RUN_TIER
 
     forms = {
         "==": lambda: PER_RUN_TIER == "per-call",
@@ -575,7 +575,7 @@ def test_adapter_live_tier_matches_capability_table(case: AdapterCase) -> None:
     OpenAI Agents SDK, Google ADK, and Strands
     genuinely re-select tools on every model turn (``"per-turn"``); LangChain,
     CrewAI, Agno, and Haystack fix their tool list at agent
-    construction with no native mid-run hook, so the deepest Gantry can do is
+    construction with no native mid-run hook, so the deepest dotfetch can do is
     rebuild before each new top-level call (``"per-run"``).
     """
     assert case.adapter_cls.live_tier == case.live_tier, (
@@ -593,7 +593,7 @@ def test_adapter_live_delegates_to_bespoke_method(case: AdapterCase, monkeypatch
     (``case.live_delegate``) on the adapter class with a recorder, calls
     ``live()`` with distinctive ``limit``/``score_threshold``/``namespaces``,
     and asserts the recorder saw them and that ``live()`` returned the
-    recorder's sentinel unchanged. No real gantry or framework install is
+    recorder's sentinel unchanged. No real fetcher or framework install is
     needed — this only proves the wiring, not the bespoke method's own
     behaviour (that's covered by each framework's dedicated live tests).
     """
@@ -606,7 +606,7 @@ def test_adapter_live_delegates_to_bespoke_method(case: AdapterCase, monkeypatch
 
     monkeypatch.setattr(case.adapter_cls, case.live_delegate, _recorder)
 
-    adapter = case.adapter_cls(gantry=None)  # type: ignore[arg-type]
+    adapter = case.adapter_cls(fetcher=None)  # type: ignore[arg-type]
     extra = case.live_extra_kwargs() if case.live_extra_kwargs is not None else {}
     result = adapter.live(limit=7, score_threshold=0.3, namespaces=["ns1"], **extra)
 
@@ -624,7 +624,7 @@ def test_adapter_live_delegates_to_bespoke_method(case: AdapterCase, monkeypatch
 
 def test_langchain_live_is_a_bound_select_alias(monkeypatch) -> None:
     """LangChain has no framework-native live hook, so ``live()`` is a thin,
-    uniform-signature alias of :meth:`~agent_gantry.integrations.frameworks.langchain.LangChainAdapter.select`
+    uniform-signature alias of :meth:`~dotfetch.integrations.frameworks.langchain.LangChainAdapter.select`
     (see that method's docstring for why: the mid-run hook lives one layer up,
     in ``LangGraphAdapter``). ``live()`` itself must stay synchronous (it
     returns an object, matching every other adapter) — the returned callable
@@ -638,7 +638,7 @@ def test_langchain_live_is_a_bound_select_alias(monkeypatch) -> None:
 
     monkeypatch.setattr(F.LangChainAdapter, "select", _fake_select)
 
-    adapter = F.LangChainAdapter(gantry=None)  # type: ignore[arg-type]
+    adapter = F.LangChainAdapter(fetcher=None)  # type: ignore[arg-type]
     live_select = adapter.live(limit=7, score_threshold=0.3, namespaces=["ns1"])
     assert not isinstance(live_select, list), (
         "live() must return an object, not run selection eagerly"
@@ -669,7 +669,7 @@ def test_missing_framework_raises_clean_importerror(case: AdapterCase, monkeypat
     for mod in case.modules:
         monkeypatch.setitem(sys.modules, mod, None)
 
-    from agent_gantry.integrations.frameworks.base import ToolSpec
+    from dotfetch.integrations.frameworks.base import ToolSpec
 
     dummy = ToolSpec(
         name="t",
@@ -678,7 +678,7 @@ def test_missing_framework_raises_clean_importerror(case: AdapterCase, monkeypat
         parameters={"type": "object", "properties": {}},
         requires_confirmation=False,
         score=0.0,
-        _gantry=None,  # type: ignore[arg-type]
+        _fetcher=None,  # type: ignore[arg-type]
         _namespace="default",
     )
 
@@ -698,9 +698,9 @@ def _install_stub(monkeypatch, modules: list[str], attrs: dict[str, object]) -> 
 
 @pytest.mark.parametrize("case", ADAPTERS, ids=[c.name for c in ADAPTERS])
 async def test_for_each_framework_selects_and_converts(
-    case: AdapterCase, gantry, monkeypatch
+    case: AdapterCase, fetcher, monkeypatch
 ) -> None:
-    """Smoke every adapter's ``select`` end-to-end against a real gantry.
+    """Smoke every adapter's ``select`` end-to-end against a real fetcher.
 
     Each adapter gets a lightweight ``sys.modules`` stub (see the factories
     above) just structured enough for ``convert`` to build something, so this
@@ -710,21 +710,21 @@ async def test_for_each_framework_selects_and_converts(
     if case.stub_attrs is not None:
         _install_stub(monkeypatch, case.modules, case.stub_attrs())
 
-    tools = await case.adapter_cls(gantry).select("send an email to my boss", limit=2)
+    tools = await case.adapter_cls(fetcher).select("send an email to my boss", limit=2)
     assert tools, f"{case.name}: expected at least one converted tool"
 
 
 @pytest.mark.parametrize("case", ADAPTERS, ids=[c.name for c in ADAPTERS])
 async def test_for_each_framework_select_with_required(
-    case: AdapterCase, gantry, monkeypatch
+    case: AdapterCase, fetcher, monkeypatch
 ) -> None:
     """``select(required=...)`` pins a tool outside the semantic slice, uniformly.
 
     Regression guard for porting ``required``/``always_include`` from the
-    Microsoft Agent Framework provider (``GantryContextProvider``) into the
+    Microsoft Agent Framework provider (``DotFetchContextProvider``) into the
     shared ``BaseFrameworkAdapter.select`` — every adapter shares the same
-    ``GantryToolset.select`` under the hood (see
-    ``agent_gantry/integrations/frameworks/base.py``), so a ``required`` tool
+    ``DotFetchToolset.select`` under the hood (see
+    ``dotfetch/integrations/frameworks/base.py``), so a ``required`` tool
     the semantic slice (bounded by ``limit``) wouldn't otherwise have picked
     must still surface, uncounted against ``limit``, regardless of which
     framework is converting it.
@@ -736,7 +736,7 @@ async def test_for_each_framework_select_with_required(
     # (send_email); "add" is unrelated and would not otherwise be selected,
     # so its presence proves `required` was threaded through, and the total
     # count proves it wasn't counted against `limit`.
-    tools = await case.adapter_cls(gantry).select(
+    tools = await case.adapter_cls(fetcher).select(
         "send an email to my boss", limit=1, required=["add"]
     )
     assert len(tools) == 2, (
@@ -748,7 +748,7 @@ async def test_for_each_framework_select_with_required(
 # Error-handling policy (see "Error-handling policy" in
 # integrations/frameworks/README.md for the full write-up):
 #
-#   Default contract: a failing `gantry.execute()` raises `ToolExecutionError`
+#   Default contract: a failing `fetcher.execute()` raises `ToolExecutionError`
 #   out of `ToolSpec.ainvoke`/`invoke`, and every adapter's native wrapper
 #   (`.func`/`._run`/`.forward`/…) lets it propagate uncaught so the
 #   framework's own error handling takes over. That is `error_kind="raises"`
@@ -760,10 +760,10 @@ async def test_for_each_framework_select_with_required(
 #   The *live* workbench-style providers return an error
 #   `ToolResult(is_error=True)`; Strands' real `Agent` tool-execution loop
 #   (`DecoratedFunctionTool.stream`) converts any exception into an error
-#   `ToolResult` — that one is Strands' own native contract, not Gantry code.
+#   `ToolResult` — that one is Strands' own native contract, not dotfetch code.
 #
 #   Every *_live.py per-turn selection path (a *different* failure mode --
-#   `gantry.retrieve()`/selection failing, not tool execution) must not raise
+#   `fetcher.retrieve()`/selection failing, not tool execution) must not raise
 #   at all: it logs a WARNING and degrades gracefully, either to "no tools
 #   this turn" (stateless per-turn recomputation: Google ADK, LangGraph,
 #   LlamaIndex, Pydantic AI) or "leave the previous turn's tools in place"
@@ -774,11 +774,11 @@ async def test_for_each_framework_select_with_required(
 
 @pytest.mark.parametrize("case", ADAPTERS, ids=[c.name for c in ADAPTERS])
 async def test_adapter_tool_failure_matches_documented_error_kind(
-    case: AdapterCase, gantry_with_failing_tool: AgentGantry, monkeypatch
+    case: AdapterCase, fetcher_with_failing_tool: DotFetch, monkeypatch
 ) -> None:
-    """A failing ``gantry.execute()`` surfaces per the documented ``error_kind``.
+    """A failing ``fetcher.execute()`` surfaces per the documented ``error_kind``.
 
-    Selects the ``explode`` tool (registered by ``gantry_with_failing_tool``,
+    Selects the ``explode`` tool (registered by ``fetcher_with_failing_tool``,
     always raises), converts it via ``adapter_cls.convert``, then invokes the
     *native* object the way that framework's own runtime would
     (``case.invoke_failure``) — not ``spec.ainvoke`` directly, so this proves
@@ -791,9 +791,9 @@ async def test_adapter_tool_failure_matches_documented_error_kind(
         for module, attrs in (case.extra_stub_modules or dict)().items():
             _install_stub(monkeypatch, [module], attrs)
 
-    from agent_gantry.integrations.frameworks.base import GantryToolset, ToolExecutionError
+    from dotfetch.integrations.frameworks.base import DotFetchToolset, ToolExecutionError
 
-    specs = await GantryToolset(gantry_with_failing_tool).select("always raises", limit=1)
+    specs = await DotFetchToolset(fetcher_with_failing_tool).select("always raises", limit=1)
     assert specs, f"{case.name}: failing tool not found by selection"
     native = case.adapter_cls.convert(specs[0])
 
@@ -847,7 +847,7 @@ def test_tool_execution_error_message_format() -> None:
     so downstream users (a LangChain ``try/except``, a CrewAI callback, …) can
     rely on ``.tool_name`` / ``.status`` / ``.error`` rather than string-parsing.
     """
-    from agent_gantry.integrations.frameworks.base import ToolExecutionError
+    from dotfetch.integrations.frameworks.base import ToolExecutionError
 
     err = ToolExecutionError("send_email", "failure", "SMTP connection refused")
 
@@ -864,10 +864,10 @@ def test_tool_execution_error_message_format() -> None:
 # --------------------------------------------------------------------------- #
 # Per-turn live selection-failure policy
 #
-# A *different* failure mode from tool execution above: `gantry.retrieve()`
+# A *different* failure mode from tool execution above: `fetcher.retrieve()`
 # (semantic selection) itself raising mid-conversation -- e.g. the vector
 # store is briefly unavailable. Every per-turn live provider must not let
-# that kill the agent's turn. `GantryToolset.select` is the single choke
+# that kill the agent's turn. `DotFetchToolset.select` is the single choke
 # point every *_live.py per-turn provider's selection call routes through
 # (directly, or via `select_or_empty`), so patching it here exercises all
 # eight uniformly.
@@ -880,21 +880,21 @@ async def _raise_on_select(self: Any, query: str, **kwargs: Any) -> list[Any]:
 
 @pytest.fixture
 def broken_selection(monkeypatch) -> None:
-    """Make every ``GantryToolset.select`` call raise (simulates a broken retrieval)."""
-    from agent_gantry.integrations.frameworks.base import GantryToolset
+    """Make every ``DotFetchToolset.select`` call raise (simulates a broken retrieval)."""
+    from dotfetch.integrations.frameworks.base import DotFetchToolset
 
-    monkeypatch.setattr(GantryToolset, "select", _raise_on_select)
+    monkeypatch.setattr(DotFetchToolset, "select", _raise_on_select)
 
 
 async def test_google_adk_live_selection_failure_degrades_gracefully(
-    gantry: AgentGantry, broken_selection, caplog
+    fetcher: DotFetch, broken_selection, caplog
 ) -> None:
-    from agent_gantry.integrations.frameworks.google_adk_live import _inject_selected_tools
+    from dotfetch.integrations.frameworks.google_adk_live import _inject_selected_tools
 
     llm_request = types.SimpleNamespace(config=types.SimpleNamespace(tools=[]), tools_dict={})
     with caplog.at_level("WARNING"):
         injected = await _inject_selected_tools(
-            gantry, "weather", llm_request, limit=3, score_threshold=0.0
+            fetcher, "weather", llm_request, limit=3, score_threshold=0.0
         )
 
     assert injected == []  # stateless per-turn: degrades to "no tools this turn"
@@ -902,22 +902,22 @@ async def test_google_adk_live_selection_failure_degrades_gracefully(
 
 
 async def test_langgraph_live_selection_failure_degrades_gracefully(
-    gantry: AgentGantry, broken_selection, caplog
+    fetcher: DotFetch, broken_selection, caplog
 ) -> None:
-    from agent_gantry.integrations.frameworks.langgraph_live import _select_tools_for_state
+    from dotfetch.integrations.frameworks.langgraph_live import _select_tools_for_state
 
     state = {"messages": [{"role": "user", "content": "weather forecast"}]}
     with caplog.at_level("WARNING"):
-        tools = await _select_tools_for_state(gantry, state, limit=3, score_threshold=0.0)
+        tools = await _select_tools_for_state(fetcher, state, limit=3, score_threshold=0.0)
 
     assert tools == []  # stateless per-turn: degrades to "no tools this turn"
     assert any("semantic retrieval failed" in r.message for r in caplog.records)
 
 
 async def test_llamaindex_live_selection_failure_degrades_gracefully(
-    gantry: AgentGantry, broken_selection, caplog, monkeypatch
+    fetcher: DotFetch, broken_selection, caplog, monkeypatch
 ) -> None:
-    import agent_gantry.integrations.frameworks.llamaindex_live as li_live
+    import dotfetch.integrations.frameworks.llamaindex_live as li_live
 
     class _FakeObjectRetriever:
         pass
@@ -929,7 +929,7 @@ async def test_llamaindex_live_selection_failure_degrades_gracefully(
     monkeypatch.setitem(sys.modules, "llama_index.core.objects", stub_objects)
 
     # The subclass is cached per base class, so the stub gets its own build.
-    retriever = li_live._gantry_tool_retriever(gantry, limit=3)
+    retriever = li_live._fetcher_tool_retriever(fetcher, limit=3)
     with caplog.at_level("WARNING"):
         tools = await retriever.aretrieve("weather forecast")
 
@@ -938,9 +938,9 @@ async def test_llamaindex_live_selection_failure_degrades_gracefully(
 
 
 async def test_pydantic_ai_live_selection_failure_degrades_gracefully(
-    gantry: AgentGantry, broken_selection, caplog, monkeypatch
+    fetcher: DotFetch, broken_selection, caplog, monkeypatch
 ) -> None:
-    import agent_gantry.integrations.frameworks.pydantic_ai_live as pai_live
+    import dotfetch.integrations.frameworks.pydantic_ai_live as pai_live
 
     class _FakeToolDefinition:
         def __init__(self, **kwargs: Any) -> None:
@@ -966,7 +966,7 @@ async def test_pydantic_ai_live_selection_failure_degrades_gracefully(
     monkeypatch.setitem(sys.modules, "pydantic_ai.toolsets", pa_toolsets)
     monkeypatch.setitem(sys.modules, "pydantic_ai.toolsets.abstract", pa_toolsets_abstract)
 
-    toolset = pai_live._gantry_toolset(gantry, limit=3)
+    toolset = pai_live._fetcher_toolset(fetcher, limit=3)
     toolset.set_query("weather forecast")
     with caplog.at_level("WARNING"):
         tools = await toolset.get_tools(types.SimpleNamespace(max_retries=1))
@@ -976,14 +976,14 @@ async def test_pydantic_ai_live_selection_failure_degrades_gracefully(
 
 
 async def test_openai_agents_live_selection_failure_degrades_gracefully(
-    gantry: AgentGantry, broken_selection, caplog, monkeypatch
+    fetcher: DotFetch, broken_selection, caplog, monkeypatch
 ) -> None:
     monkeypatch.setitem(sys.modules, "agents", types.ModuleType("agents"))
-    from agent_gantry.integrations.frameworks.openai_agents_live import _refresh_agent_tools
+    from dotfetch.integrations.frameworks.openai_agents_live import _refresh_agent_tools
 
     agent = types.SimpleNamespace(tools=["existing_tool"])
     with caplog.at_level("WARNING"):
-        tools = await _refresh_agent_tools(agent, gantry, "weather forecast", limit=3)
+        tools = await _refresh_agent_tools(agent, fetcher, "weather forecast", limit=3)
 
     # stateful (`agent.tools` persists across turns): the mutation is skipped,
     # so both the return value and `agent.tools` keep the previous turn's tools.
@@ -993,11 +993,11 @@ async def test_openai_agents_live_selection_failure_degrades_gracefully(
 
 
 async def test_strands_live_selection_failure_degrades_gracefully(
-    gantry: AgentGantry, broken_selection, caplog
+    fetcher: DotFetch, broken_selection, caplog
 ) -> None:
-    from agent_gantry.integrations.frameworks.strands_live import GantryStrandsToolHook
+    from dotfetch.integrations.frameworks.strands_live import DotFetchStrandsToolHook
 
-    hook = GantryStrandsToolHook(gantry, limit=3)
+    hook = DotFetchStrandsToolHook(fetcher, limit=3)
     sentinel = object()
     tool_registry = types.SimpleNamespace(registry={"stale": sentinel}, dynamic_tools={})
     event = types.SimpleNamespace(
@@ -1027,7 +1027,7 @@ async def test_strands_live_selection_failure_degrades_gracefully(
 #   - `context_provider`, `approval_middleware`, `observability_middleware`,
 #     `tool_choice_middleware` all require `agent-framework` and raise a
 #     clean ImportError when it's absent.
-#   - `tool_bridge` is the deliberate exception: `GantryToolBridge` degrades
+#   - `tool_bridge` is the deliberate exception: `DotFetchToolBridge` degrades
 #     to bare callables when `agent-framework` is missing (see
 #     `agent_framework_bridge._maybe_wrap_as_function_tool`), so it never
 #     raises — that graceful-degradation contract is asserted explicitly
@@ -1117,7 +1117,7 @@ def test_agent_framework_adapter_missing_framework_raises_clean_importerror(
     # cached and reused. Clear it here so this test's "framework absent"
     # simulation can't be short-circuited by a previous test (in this file or
     # elsewhere in the suite) that already built the middleware for real.
-    from agent_gantry.integrations.agent_framework_middleware import _build_middleware_classes
+    from dotfetch.integrations.agent_framework_middleware import _build_middleware_classes
 
     _build_middleware_classes.cache_clear()
 
@@ -1131,7 +1131,7 @@ def test_agent_framework_adapter_tool_bridge_degrades_gracefully_without_framewo
     monkeypatch,
 ) -> None:
     """Unlike the other four entry points, `tool_bridge()` never requires
-    agent-framework: `GantryToolBridge` falls back to bare callables when AF
+    agent-framework: `DotFetchToolBridge` falls back to bare callables when AF
     is absent, so building it (and using it) must NOT raise."""
     monkeypatch.setitem(sys.modules, "agent_framework", None)
     adapter = AgentFrameworkAdapter(object())
@@ -1139,14 +1139,14 @@ def test_agent_framework_adapter_tool_bridge_degrades_gracefully_without_framewo
     assert bridge is not None
 
 
-async def test_agent_framework_adapter_select_and_convert_smoke(gantry) -> None:
+async def test_agent_framework_adapter_select_and_convert_smoke(fetcher) -> None:
     """`tool_bridge().get_tools(...)` is AgentFrameworkAdapter's select→convert
-    equivalent. Exercised with no stub: `GantryToolBridge` degrades to bare
+    equivalent. Exercised with no stub: `DotFetchToolBridge` degrades to bare
     callables when `agent-framework` is absent and upgrades to real
     `FunctionTool`s when it's installed (it is, in this venv, via the
     `agent-frameworks` extra) — either way the result is a list of callables.
     """
-    bridge = AgentFrameworkAdapter(gantry).tool_bridge()
+    bridge = AgentFrameworkAdapter(fetcher).tool_bridge()
     tools = await bridge.get_tools("send an email to my boss", limit=2)
     assert tools, "agent_framework: tool_bridge().get_tools() returned no tools"
     assert all(callable(t) for t in tools)
@@ -1161,9 +1161,9 @@ async def test_agent_framework_adapter_select_and_convert_smoke(gantry) -> None:
 def test_adapter_live_rejects_out_of_bounds_limit(case: AdapterCase) -> None:
     """``live(limit=60)`` raises at once instead of building an agent that
     silently runs with no tools (the per-turn hooks used to swallow it)."""
-    from agent_gantry.integrations.frameworks.base import QueryBoundsError
+    from dotfetch.integrations.frameworks.base import QueryBoundsError
 
-    adapter = case.adapter_cls(gantry=None)  # type: ignore[arg-type]
+    adapter = case.adapter_cls(fetcher=None)  # type: ignore[arg-type]
     extra = case.live_extra_kwargs() if case.live_extra_kwargs is not None else {}
     with pytest.raises(QueryBoundsError, match="limit=60"):
         adapter.live(limit=60, **extra)
@@ -1173,47 +1173,47 @@ def test_adapter_live_rejects_out_of_bounds_limit(case: AdapterCase) -> None:
     "case", [c for c in ADAPTERS if c.live_extra_kwargs is not None], ids=lambda c: c.name
 )
 def test_adapter_live_missing_required_kwarg_is_a_type_error(case: AdapterCase) -> None:
-    adapter = case.adapter_cls(gantry=None)  # type: ignore[arg-type]
+    adapter = case.adapter_cls(fetcher=None)  # type: ignore[arg-type]
     with pytest.raises(TypeError, match="requires"):
         adapter.live()
 
 
-async def test_live_hooks_and_builders_propagate_bounds_errors(gantry: AgentGantry) -> None:
+async def test_live_hooks_and_builders_propagate_bounds_errors(fetcher: DotFetch) -> None:
     """Per-turn hooks re-raise ``QueryBoundsError`` (unlike a transient
     retrieval failure) and per-run builders reject it at construction."""
-    from agent_gantry.integrations.frameworks.base import QueryBoundsError
-    from agent_gantry.integrations.frameworks.google_adk_live import _inject_selected_tools
-    from agent_gantry.integrations.frameworks.langgraph_live import _select_tools_for_state
-    from agent_gantry.integrations.frameworks.live_wrappers import GantryLiveCrewAgent
-    from agent_gantry.integrations.frameworks.strands_live import GantryStrandsToolHook
+    from dotfetch.integrations.frameworks.base import QueryBoundsError
+    from dotfetch.integrations.frameworks.google_adk_live import _inject_selected_tools
+    from dotfetch.integrations.frameworks.langgraph_live import _select_tools_for_state
+    from dotfetch.integrations.frameworks.live_wrappers import DotFetchLiveCrewAgent
+    from dotfetch.integrations.frameworks.strands_live import DotFetchStrandsToolHook
 
     state = {"messages": [{"role": "user", "content": "send an email"}]}
     with pytest.raises(QueryBoundsError):
-        await _select_tools_for_state(gantry, state, limit=60)
+        await _select_tools_for_state(fetcher, state, limit=60)
     with pytest.raises(QueryBoundsError):
         await _inject_selected_tools(
-            gantry, "send an email", types.SimpleNamespace(), limit=60, score_threshold=0.0
+            fetcher, "send an email", types.SimpleNamespace(), limit=60, score_threshold=0.0
         )
     with pytest.raises(QueryBoundsError):
-        GantryStrandsToolHook(gantry, limit=60)
+        DotFetchStrandsToolHook(fetcher, limit=60)
     with pytest.raises(QueryBoundsError):
-        GantryLiveCrewAgent(gantry, limit=60)
+        DotFetchLiveCrewAgent(fetcher, limit=60)
 
 
 async def test_openai_agents_hook_leaves_other_agents_alone(
-    gantry: AgentGantry, monkeypatch
+    fetcher: DotFetch, monkeypatch
 ) -> None:
     """Run hooks fire for every agent in a run (handoff targets included);
-    only the bound agent's ``tools`` are Gantry's to rewrite."""
+    only the bound agent's ``tools`` are dotfetch's to rewrite."""
     stub = types.ModuleType("agents")
     stub.RunHooks = type("RunHooks", (), {})
     stub.FunctionTool = _echo
     monkeypatch.setitem(sys.modules, "agents", stub)
-    from agent_gantry.integrations.frameworks.openai_agents_live import _gantry_run_hooks
+    from dotfetch.integrations.frameworks.openai_agents_live import _fetcher_run_hooks
 
     bound = types.SimpleNamespace(tools=[])
     other = types.SimpleNamespace(tools=["theirs"])
-    hooks = _gantry_run_hooks(gantry, bound, limit=1)
+    hooks = _fetcher_run_hooks(fetcher, bound, limit=1)
     turn = [{"role": "user", "content": "send an email message to a recipient"}]
 
     await hooks.on_llm_start(None, other, None, turn)

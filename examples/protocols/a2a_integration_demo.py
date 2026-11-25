@@ -2,7 +2,7 @@
 A2A (Agent-to-Agent) Integration Demo.
 
 This example demonstrates, without any network access:
-1. Generating the Agent Card AgentGantry would serve at ``/.well-known/agent.json``
+1. Generating the Agent Card DotFetch would serve at ``/.well-known/agent.json``
 2. Configuring an external A2A agent (``A2AAgentConfig``) for ``add_a2a_agent``
 3. How a remote agent's skills map onto ``ToolDefinition`` entries, using a
    mocked Agent Card
@@ -10,7 +10,7 @@ This example demonstrates, without any network access:
 
 No API key needed. Nothing connects to a remote agent or binds a port; the
 calls that would (``add_a2a_agent``, ``serve_a2a``) are shown as comments.
-``serve_a2a`` itself needs ``pip install agent-gantry[a2a]`` (FastAPI + uvicorn).
+``serve_a2a`` itself needs ``pip install dotfetch[a2a]`` (FastAPI + uvicorn).
 
 Run with::
 
@@ -19,29 +19,29 @@ Run with::
 
 import asyncio
 
-from agent_gantry import AgentGantry
-from agent_gantry.schema.config import A2AAgentConfig
+from dotfetch import DotFetch
+from dotfetch.schema.config import A2AAgentConfig
 
 
 async def demo_a2a_client():
     """Demonstrate consuming an external A2A agent."""
     print("\n=== A2A Client Demo ===\n")
 
-    # Initialize AgentGantry
-    gantry = AgentGantry()
+    # Initialize DotFetch
+    fetcher = DotFetch()
     try:
         # Register some local tools
-        @gantry.register(tags=["math"], examples=["add 3 and 4", "what is 10 plus 5"])
+        @fetcher.register(tags=["math"], examples=["add 3 and 4", "what is 10 plus 5"])
         def calculate_sum(a: int, b: int) -> int:
             """Calculate the sum of two numbers."""
             return a + b
 
-        @gantry.register(tags=["math"], examples=["multiply 6 by 7", "what is 12 times 3"])
+        @fetcher.register(tags=["math"], examples=["multiply 6 by 7", "what is 12 times 3"])
         def calculate_product(a: int, b: int) -> int:
             """Calculate the product of two numbers."""
             return a * b
 
-        await gantry.sync()
+        await fetcher.sync()
 
         # Configure an external A2A agent
         # Note: This is a hypothetical external agent - replace with actual agent URL
@@ -55,31 +55,31 @@ async def demo_a2a_client():
         print(f"Agent URL: {external_agent.url}")
 
         # In a real scenario, you would discover and register the agent:
-        # count = await gantry.add_a2a_agent(external_agent)
+        # count = await fetcher.add_a2a_agent(external_agent)
         # print(f"Discovered {count} skills from external agent")
 
         # Only the two local tools are listed: the external agent was
         # configured above, not connected, so none of its skills are here yet.
-        tools = await gantry.list_tools()
+        tools = await fetcher.list_tools()
         print(f"\nTotal tools available: {len(tools)}")
 
         for tool in tools:
             print(f"  - {tool.name} ({tool.source.value}): {tool.description[:60]}...")
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def demo_agent_card():
     """Demonstrate Agent Card generation."""
     print("\n=== Agent Card Demo ===\n")
 
-    from agent_gantry.servers.a2a_server import generate_agent_card
+    from dotfetch.servers.a2a_server import generate_agent_card
 
-    # Initialize AgentGantry with some tools
-    gantry = AgentGantry()
+    # Initialize DotFetch with some tools
+    fetcher = DotFetch()
     try:
 
-        @gantry.register(
+        @fetcher.register(
             tags=["data", "query"],
             examples=["how many orders came in last week", "look up customer 42 in the database"],
         )
@@ -87,7 +87,7 @@ async def demo_agent_card():
             """Query a database and return results."""
             return f"Results for: {query}"
 
-        @gantry.register(
+        @fetcher.register(
             tags=["communication"],
             examples=["notify Sam that the build is done", "ping the on-call engineer"],
         )
@@ -95,10 +95,10 @@ async def demo_agent_card():
             """Send a notification to a recipient."""
             return f"Sent '{message}' to {recipient}"
 
-        await gantry.sync()
+        await fetcher.sync()
 
         # Generate Agent Card
-        agent_card = generate_agent_card(gantry, "http://localhost:8080")
+        agent_card = generate_agent_card(fetcher, "http://localhost:8080")
 
         print(f"Agent Name: {agent_card.name}")
         print(f"Description: {agent_card.description}")
@@ -119,7 +119,7 @@ async def demo_agent_card():
 
         print(json.dumps(agent_card.model_dump(), indent=2))
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def demo_a2a_server():
@@ -129,10 +129,10 @@ async def demo_a2a_server():
     # Note: This requires FastAPI and uvicorn to be installed
     # pip install fastapi uvicorn
 
-    gantry = AgentGantry()
+    fetcher = DotFetch()
     try:
 
-        @gantry.register(
+        @fetcher.register(
             tags=["analysis"],
             examples=["analyse this sales data for trends", "what insights are in these numbers"],
         )
@@ -140,10 +140,10 @@ async def demo_a2a_server():
             """Analyze provided data and return insights."""
             return f"Analysis of '{data}': [insights here]"
 
-        await gantry.sync()
+        await fetcher.sync()
 
         print("To start the A2A server, use:")
-        print("\n  gantry.serve_a2a(host='0.0.0.0', port=8080)")
+        print("\n  fetcher.serve_a2a(host='0.0.0.0', port=8080)")
         print("\nThe server will expose:")
         print("  - Agent Card: http://localhost:8080/.well-known/agent.json")
         print("  - Task endpoint: http://localhost:8080/tasks/send")
@@ -152,17 +152,17 @@ async def demo_a2a_server():
         print("  - tool_execution: Execute tools with retries and circuit breakers")
 
         # Uncomment to actually run the server:
-        # gantry.serve_a2a(host="0.0.0.0", port=8080)
+        # fetcher.serve_a2a(host="0.0.0.0", port=8080)
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def demo_skill_to_tool_mapping():
     """Demonstrate how A2A skills are mapped to tools."""
     print("\n=== Skill to Tool Mapping Demo ===\n")
 
-    from agent_gantry.providers.a2a_client import A2AClient
-    from agent_gantry.schema.a2a import AgentCard, AgentSkill
+    from dotfetch.providers.a2a_client import A2AClient
+    from dotfetch.schema.a2a import AgentCard, AgentSkill
 
     # Create a mock agent card
     mock_card = AgentCard(
@@ -220,7 +220,7 @@ async def demo_skill_to_tool_mapping():
 async def main():
     """Run all A2A demos."""
     print("=" * 70)
-    print("Agent-Gantry A2A Integration Demo")
+    print("dotfetch A2A Integration Demo")
     print("=" * 70)
 
     await demo_agent_card()

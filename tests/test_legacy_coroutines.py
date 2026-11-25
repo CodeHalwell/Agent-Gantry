@@ -7,9 +7,9 @@ import inspect
 import threading
 from unittest.mock import AsyncMock
 
-from agent_gantry import ToolCall
-from agent_gantry.integrations.semantic_tools import SemanticToolSelector
-from agent_gantry.schema.execution import ExecutionStatus
+from dotfetch import ToolCall
+from dotfetch.integrations.semantic_tools import SemanticToolSelector
+from dotfetch.schema.execution import ExecutionStatus
 
 
 def _mark_legacy(function):
@@ -20,13 +20,13 @@ def _mark_legacy(function):
 
 
 async def test_legacy_async_generation_keeps_retrieval_and_usage_on_the_calling_loop(
-    gantry,
+    fetcher,
     monkeypatch,
 ):
     loop = asyncio.get_running_loop()
     response = {"model": "test-model", "usage": {"prompt_tokens": 10, "completion_tokens": 2}}
     tools = [{"type": "function", "function": {"name": "lookup"}}]
-    selector = SemanticToolSelector(gantry)
+    selector = SemanticToolSelector(fetcher)
 
     async def retrieve(prompt):
         assert asyncio.get_running_loop() is loop
@@ -35,7 +35,7 @@ async def test_legacy_async_generation_keeps_retrieval_and_usage_on_the_calling_
 
     monkeypatch.setattr(selector, "_retrieve_tools", retrieve)
     usage = AsyncMock()
-    monkeypatch.setattr(gantry.telemetry, "record_token_usage", usage)
+    monkeypatch.setattr(fetcher.telemetry, "record_token_usage", usage)
 
     @_mark_legacy
     def generate(prompt: str, *, tools=None):
@@ -54,7 +54,7 @@ async def test_legacy_async_generation_keeps_retrieval_and_usage_on_the_calling_
     assert usage.await_args.kwargs["model_name"] == "test-model"
 
 
-async def test_legacy_handler_starts_on_the_calling_thread(gantry):
+async def test_legacy_handler_starts_on_the_calling_thread(fetcher):
     loop_thread = threading.get_ident()
 
     @_mark_legacy
@@ -67,13 +67,13 @@ async def test_legacy_handler_starts_on_the_calling_thread(gantry):
 
         return complete()
 
-    gantry.register(double)
-    result = await gantry.execute(ToolCall(tool_name="double", arguments={"value": 3}))
+    fetcher.register(double)
+    result = await fetcher.execute(ToolCall(tool_name="double", arguments={"value": 3}))
     assert result.status == ExecutionStatus.SUCCESS
     assert result.result == 6
 
 
-async def test_legacy_health_check_is_awaited(gantry, monkeypatch):
+async def test_legacy_health_check_is_awaited(fetcher, monkeypatch):
     called = []
 
     @_mark_legacy
@@ -84,7 +84,7 @@ async def test_legacy_health_check_is_awaited(gantry, monkeypatch):
 
         return complete()
 
-    monkeypatch.setattr(gantry.telemetry, "health_check", health_check)
-    health = await gantry.health_check()
+    monkeypatch.setattr(fetcher.telemetry, "health_check", health_check)
+    health = await fetcher.health_check()
     assert health["telemetry"] is False
     assert called == [True]

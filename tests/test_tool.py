@@ -10,8 +10,8 @@ from typing import Annotated, NewType
 import pytest
 from pydantic import Field
 
-from agent_gantry.schema.introspection import build_parameters_schema
-from agent_gantry.schema.tool import (
+from dotfetch.schema.introspection import build_parameters_schema
+from dotfetch.schema.tool import (
     SchemaDialect,
     ToolCapability,
     ToolCost,
@@ -124,7 +124,7 @@ class TestToolSource:
     def test_framework_member_exists(self) -> None:
         """FRAMEWORK is a valid source for tools imported from other agent
         frameworks (LangChain/CrewAI/LlamaIndex/...) via
-        agent_gantry.integrations.importers."""
+        dotfetch.integrations.importers."""
         assert ToolSource.FRAMEWORK == "framework"
         assert ToolSource("framework") is ToolSource.FRAMEWORK
 

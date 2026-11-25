@@ -2,9 +2,9 @@
 
 Guide to the pytest suite. Tests mirror the roadmap phases and the primary user flows:
 
-- `conftest.py`: Shared fixtures for a pre-wired gantry instance, sample tools, telemetry fakes, and
+- `conftest.py`: Shared fixtures for a pre-wired fetcher instance, sample tools, telemetry fakes, and
   temporary directories.
-- `test_gantry.py`: Core facade behavior (registration, syncing, execution, health checks).
+- `test_fetcher.py`: Core facade behavior (registration, syncing, execution, health checks).
 - `test_tool.py`: Validation rules and schema conversions for `ToolDefinition`.
 - `test_retrieval.py`: Semantic routing and retrieval result behavior.
 - `test_phase2.py`: Phase 2 robustness milestones (retries, timeouts, circuit breakers).

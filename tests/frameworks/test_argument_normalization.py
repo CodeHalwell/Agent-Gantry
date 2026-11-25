@@ -6,7 +6,7 @@ from datetime import datetime
 
 import pytest
 
-from agent_gantry.integrations.frameworks.base import _json_native
+from dotfetch.integrations.frameworks.base import _json_native
 
 
 @pytest.mark.parametrize(

@@ -1,14 +1,14 @@
 """
 Tests for semantic skill selection: the in-memory store's skill support and
-the AgentGantry facade API (add/retrieve/prompt-injection/delete/list/count).
+the DotFetch facade API (add/retrieve/prompt-injection/delete/list/count).
 """
 
 from __future__ import annotations
 
 import pytest
 
-from agent_gantry import AgentGantry, Skill, SkillCategory
-from agent_gantry.adapters.vector_stores.memory import InMemoryVectorStore
+from dotfetch import DotFetch, Skill, SkillCategory
+from dotfetch.adapters.vector_stores.memory import InMemoryVectorStore
 
 
 def _make_skills() -> list[Skill]:
@@ -99,54 +99,54 @@ async def test_memory_store_skill_search_and_filters():
 
 
 # ---------------------------------------------------------------------------
-# AgentGantry facade
+# DotFetch facade
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_gantry_skill_roundtrip():
-    gantry = AgentGantry()
+async def test_fetcher_skill_roundtrip():
+    fetcher = DotFetch()
     skills = _make_skills()
-    assert await gantry.add_skills(skills) == 3
-    assert await gantry.count_skills() == 3
+    assert await fetcher.add_skills(skills) == 3
+    assert await fetcher.count_skills() == 3
 
     # Identical text embeds to the identical vector, so querying with a
     # skill's own embedding text must rank that skill first regardless of
     # which embedder backs the store.
-    results = await gantry.retrieve_skills(skills[0].to_embedding_text(), limit=2)
+    results = await fetcher.retrieve_skills(skills[0].to_embedding_text(), limit=2)
     assert results and results[0].skill.name == "api_pagination"
     assert results[0].score == pytest.approx(1.0, abs=1e-5)
 
-    prompt = await gantry.retrieve_skills_as_prompt(skills[0].to_embedding_text(), limit=1)
+    prompt = await fetcher.retrieve_skills_as_prompt(skills[0].to_embedding_text(), limit=1)
     assert "Api Pagination" in prompt
     assert "cursor-based pagination" in prompt
     assert "Related tools: fetch_page" in prompt
 
     # Namespace + category filters pass through
-    ops_only = await gantry.retrieve_skills(
+    ops_only = await fetcher.retrieve_skills(
         skills[2].to_embedding_text(), limit=5, namespace="ops"
     )
     assert {r.skill.name for r in ops_only} == {"db_migration"}
 
-    assert await gantry.delete_skill("retry_backoff") is True
-    assert await gantry.count_skills() == 2
-    assert {s.name for s in await gantry.list_skills()} == {"api_pagination", "db_migration"}
+    assert await fetcher.delete_skill("retry_backoff") is True
+    assert await fetcher.count_skills() == 2
+    assert {s.name for s in await fetcher.list_skills()} == {"api_pagination", "db_migration"}
 
 
 @pytest.mark.asyncio
-async def test_gantry_skill_prompt_empty_when_no_match():
-    gantry = AgentGantry()
-    assert await gantry.retrieve_skills_as_prompt("anything") == ""
+async def test_fetcher_skill_prompt_empty_when_no_match():
+    fetcher = DotFetch()
+    assert await fetcher.retrieve_skills_as_prompt("anything") == ""
 
 
 @pytest.mark.asyncio
-async def test_gantry_skills_unsupported_store_raises():
+async def test_fetcher_skills_unsupported_store_raises():
     class NoSkillsStore:
         async def initialize(self) -> None: ...
 
-    gantry = AgentGantry(vector_store=NoSkillsStore())  # type: ignore[arg-type]
+    fetcher = DotFetch(vector_store=NoSkillsStore())  # type: ignore[arg-type]
     with pytest.raises(NotImplementedError, match="does not support skills"):
-        await gantry.add_skills(_make_skills())
+        await fetcher.add_skills(_make_skills())
 
 
 @pytest.mark.asyncio
@@ -169,10 +169,10 @@ async def test_memory_store_add_skills_length_mismatch_raises():
 
 
 @pytest.mark.asyncio
-async def test_gantry_add_skill_singular():
-    gantry = AgentGantry()
-    await gantry.add_skill(_make_skills()[0])
-    assert await gantry.count_skills() == 1
+async def test_fetcher_add_skill_singular():
+    fetcher = DotFetch()
+    await fetcher.add_skill(_make_skills()[0])
+    assert await fetcher.count_skills() == 1
 
 
 @pytest.mark.asyncio
@@ -180,7 +180,7 @@ async def test_skills_reembedded_after_embedder_change():
     """Reopening a store with a different embedder must re-embed persisted
     skills — otherwise queries embed with the new model but search the old
     model's vectors, silently returning wrong guidance."""
-    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+    from dotfetch.adapters.embedders.simple import SimpleEmbedder
 
     class ShiftedEmbedder(SimpleEmbedder):
         """Same dimension, different vector space and identity."""
@@ -202,20 +202,20 @@ async def test_skills_reembedded_after_embedder_change():
     store = InMemoryVectorStore()
     skills = _make_skills()
 
-    gantry_a = AgentGantry(vector_store=store)
-    await gantry_a.add_skills(skills)
+    fetcher_a = DotFetch(vector_store=store)
+    await fetcher_a.add_skills(skills)
 
     # Same store, different embedder: retrieval must self-heal by
     # re-embedding, so an exact-text query still ranks its skill first with
     # a perfect score
-    gantry_b = AgentGantry(vector_store=store, embedder=ShiftedEmbedder())
-    results = await gantry_b.retrieve_skills(skills[0].to_embedding_text(), limit=1)
+    fetcher_b = DotFetch(vector_store=store, embedder=ShiftedEmbedder())
+    results = await fetcher_b.retrieve_skills(skills[0].to_embedding_text(), limit=1)
     assert results and results[0].skill.name == "api_pagination"
     assert results[0].score == pytest.approx(1.0, abs=1e-5)
 
 
 def _shifted_embedder_cls():
-    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+    from dotfetch.adapters.embedders.simple import SimpleEmbedder
 
     class ShiftedEmbedder(SimpleEmbedder):
         @property
@@ -242,8 +242,8 @@ async def test_concurrent_retrievals_wait_for_skill_migration():
 
     store = InMemoryVectorStore()
     skills = _make_skills()
-    gantry_a = AgentGantry(vector_store=store)
-    await gantry_a.add_skills(skills)
+    fetcher_a = DotFetch(vector_store=store)
+    await fetcher_a.add_skills(skills)
 
     # Slow the migration's skill listing so a second caller overlaps it
     original_list = store.list_all_skills
@@ -254,11 +254,11 @@ async def test_concurrent_retrievals_wait_for_skill_migration():
 
     store.list_all_skills = slow_list  # type: ignore[method-assign]
 
-    gantry_b = AgentGantry(vector_store=store, embedder=_shifted_embedder_cls()())
+    fetcher_b = DotFetch(vector_store=store, embedder=_shifted_embedder_cls()())
     query = skills[0].to_embedding_text()
     first, second = await asyncio.gather(
-        gantry_b.retrieve_skills(query, limit=1),
-        gantry_b.retrieve_skills(query, limit=1),
+        fetcher_b.retrieve_skills(query, limit=1),
+        fetcher_b.retrieve_skills(query, limit=1),
     )
     for results in (first, second):
         assert results and results[0].skill.name == "api_pagination"
@@ -271,8 +271,8 @@ async def test_skill_migration_retries_after_transient_failure():
     migration complete — the next call retries it."""
     store = InMemoryVectorStore()
     skills = _make_skills()
-    gantry_a = AgentGantry(vector_store=store)
-    await gantry_a.add_skills(skills)
+    fetcher_a = DotFetch(vector_store=store)
+    await fetcher_a.add_skills(skills)
 
     original_get = store.get_metadata
     calls = {"n": 0}
@@ -285,13 +285,13 @@ async def test_skill_migration_retries_after_transient_failure():
 
     store.get_metadata = flaky_get  # type: ignore[method-assign]
 
-    gantry_b = AgentGantry(vector_store=store, embedder=_shifted_embedder_cls()())
+    fetcher_b = DotFetch(vector_store=store, embedder=_shifted_embedder_cls()())
     query = skills[0].to_embedding_text()
     with pytest.raises(RuntimeError, match="transient metadata outage"):
-        await gantry_b.retrieve_skills(query, limit=1)
+        await fetcher_b.retrieve_skills(query, limit=1)
 
     # Retry migrates and succeeds
-    results = await gantry_b.retrieve_skills(query, limit=1)
+    results = await fetcher_b.retrieve_skills(query, limit=1)
     assert results and results[0].skill.name == "api_pagination"
     assert results[0].score == pytest.approx(1.0, abs=1e-5)
 
@@ -303,7 +303,7 @@ async def test_lancedb_list_all_skills_propagates_table_errors(tmp_path):
     check record success after listing nothing."""
     pytest.importorskip("lancedb")
 
-    from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+    from dotfetch.adapters.vector_stores.lancedb import LanceDBVectorStore
 
     store = LanceDBVectorStore(db_path=str(tmp_path / "db"), dimension=8)
     await store.initialize()
@@ -335,44 +335,44 @@ async def test_skill_embedder_marker_scoped_per_table():
     skills = _make_skills()
 
     # Both tables hold vectors from the default embedder
-    await AgentGantry(vector_store=store_a).add_skills(skills)
-    await AgentGantry(vector_store=store_b).add_skills(skills)
+    await DotFetch(vector_store=store_a).add_skills(skills)
+    await DotFetch(vector_store=store_b).add_skills(skills)
 
     shifted = _shifted_embedder_cls()
     # Migrate table A to the shifted embedder
-    await AgentGantry(vector_store=store_a, embedder=shifted()).retrieve_skills("q")
+    await DotFetch(vector_store=store_a, embedder=shifted()).retrieve_skills("q")
 
-    # Table B must still migrate for its own gantry — A's marker is not B's
-    gantry_b = AgentGantry(vector_store=store_b, embedder=shifted())
+    # Table B must still migrate for its own fetcher — A's marker is not B's
+    fetcher_b = DotFetch(vector_store=store_b, embedder=shifted())
     query = skills[0].to_embedding_text()
-    results = await gantry_b.retrieve_skills(query, limit=1)
+    results = await fetcher_b.retrieve_skills(query, limit=1)
     assert results and results[0].skill.name == "api_pagination"
     assert results[0].score == pytest.approx(1.0, abs=1e-5)
 
 
 @pytest.mark.asyncio
-async def test_gantry_skill_roundtrip_lancedb(tmp_path):
+async def test_fetcher_skill_roundtrip_lancedb(tmp_path):
     """Full facade round trip against the other skill-capable store."""
     pytest.importorskip("lancedb")
 
-    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-    from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+    from dotfetch.adapters.embedders.simple import SimpleEmbedder
+    from dotfetch.adapters.vector_stores.lancedb import LanceDBVectorStore
 
     embedder = SimpleEmbedder()
     store = LanceDBVectorStore(db_path=str(tmp_path / "db"), dimension=embedder.dimension)
-    gantry = AgentGantry(vector_store=store, embedder=embedder)
+    fetcher = DotFetch(vector_store=store, embedder=embedder)
 
     skills = _make_skills()
-    assert await gantry.add_skills(skills) == 3
-    assert await gantry.count_skills() == 3
+    assert await fetcher.add_skills(skills) == 3
+    assert await fetcher.count_skills() == 3
 
-    results = await gantry.retrieve_skills(skills[0].to_embedding_text(), limit=2)
+    results = await fetcher.retrieve_skills(skills[0].to_embedding_text(), limit=2)
     assert results and results[0].skill.name == "api_pagination"
     assert results[0].score == pytest.approx(1.0, abs=1e-2)
 
-    assert await gantry.delete_skill("retry_backoff") is True
-    assert await gantry.count_skills() == 2
-    assert {s.name for s in await gantry.list_skills()} == {"api_pagination", "db_migration"}
+    assert await fetcher.delete_skill("retry_backoff") is True
+    assert await fetcher.count_skills() == 2
+    assert {s.name for s in await fetcher.list_skills()} == {"api_pagination", "db_migration"}
 
 
 @pytest.mark.asyncio
@@ -382,8 +382,8 @@ async def test_lancedb_search_skills_combines_namespace_and_category(tmp_path):
     namespace constraint is silently dropped."""
     pytest.importorskip("lancedb")
 
-    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-    from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+    from dotfetch.adapters.embedders.simple import SimpleEmbedder
+    from dotfetch.adapters.vector_stores.lancedb import LanceDBVectorStore
 
     embedder = SimpleEmbedder()
     store = LanceDBVectorStore(db_path=str(tmp_path / "db"), dimension=embedder.dimension)
@@ -433,8 +433,8 @@ async def test_lancedb_empty_namespace_list_matches_nothing(tmp_path):
     """namespace=[] must return no matches, not build invalid 'IN ()' SQL."""
     pytest.importorskip("lancedb")
 
-    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-    from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+    from dotfetch.adapters.embedders.simple import SimpleEmbedder
+    from dotfetch.adapters.vector_stores.lancedb import LanceDBVectorStore
 
     embedder = SimpleEmbedder()
     store = LanceDBVectorStore(db_path=str(tmp_path / "db"), dimension=embedder.dimension)
@@ -453,11 +453,11 @@ async def test_lancedb_empty_namespace_list_matches_nothing(tmp_path):
 async def test_blank_query_retrieves_nothing():
     """A blank query embeds to a zero vector where every skill ties at 0.0 —
     it must return nothing rather than prompt-inject arbitrary guidance."""
-    gantry = AgentGantry()
-    await gantry.add_skills(_make_skills())
-    assert await gantry.retrieve_skills("") == []
-    assert await gantry.retrieve_skills("   ") == []
-    assert await gantry.retrieve_skills_as_prompt("") == ""
+    fetcher = DotFetch()
+    await fetcher.add_skills(_make_skills())
+    assert await fetcher.retrieve_skills("") == []
+    assert await fetcher.retrieve_skills("   ") == []
+    assert await fetcher.retrieve_skills_as_prompt("") == ""
 
 
 @pytest.mark.asyncio

@@ -19,11 +19,11 @@ from agno.agent import Agent  # noqa: E402
 from agno.models.base import Model  # noqa: E402
 from agno.models.response import ModelResponse  # noqa: E402
 
-from agent_gantry import AgentGantry, current_tool_invocation  # noqa: E402
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder  # noqa: E402
-from agent_gantry.agno import AgnoAdapter, AgnoToolError, current_run_context  # noqa: E402
-from agent_gantry.core.security import SecurityPolicy  # noqa: E402
-from agent_gantry.integrations.frameworks.base import ToolExecutionError  # noqa: E402
+from dotfetch import DotFetch, current_tool_invocation  # noqa: E402
+from dotfetch.adapters.embedders.simple import SimpleEmbedder  # noqa: E402
+from dotfetch.agno import AgnoAdapter, AgnoToolError, current_run_context  # noqa: E402
+from dotfetch.core.security import SecurityPolicy  # noqa: E402
+from dotfetch.integrations.frameworks.base import ToolExecutionError  # noqa: E402
 
 
 @dataclass
@@ -72,8 +72,8 @@ class ScriptedModel(Model):
         raise NotImplementedError
 
 
-async def _build(**kwargs: Any) -> AgentGantry:
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=256), **kwargs)
+async def _build(**kwargs: Any) -> DotFetch:
+    g = DotFetch(embedder=SimpleEmbedder(dimension=256), **kwargs)
     g.sent = []  # type: ignore[attr-defined]
 
     @g.register(examples=["what's the weather in London", "weather forecast for Paris"])
@@ -113,7 +113,7 @@ async def _build(**kwargs: Any) -> AgentGantry:
 
 
 @pytest.fixture
-async def gantry():
+async def fetcher():
     g = await _build()
     try:
         yield g
@@ -121,8 +121,8 @@ async def gantry():
         await g.close()
 
 
-async def _agent(gantry, query, *steps, **adapter_kwargs):
-    tools = await AgnoAdapter(gantry, **adapter_kwargs).select(query, limit=6)
+async def _agent(fetcher, query, *steps, **adapter_kwargs):
+    tools = await AgnoAdapter(fetcher, **adapter_kwargs).select(query, limit=6)
     model = ScriptedModel(steps=list(steps))
     return Agent(name="clerk", model=model, tools=tools), model
 
@@ -132,8 +132,8 @@ def _tool(run: Any) -> Any:
     return tool
 
 
-async def test_tool_failure_is_a_failed_tool_result(gantry):
-    agent, model = await _agent(gantry, "divide", [("divide", {"a": 1, "b": 0})])
+async def test_tool_failure_is_a_failed_tool_result(fetcher):
+    agent, model = await _agent(fetcher, "divide", [("divide", {"a": 1, "b": 0})])
     run = await agent.arun("divide 1 by 0")
     tool = _tool(run)
     assert tool.tool_call_error is True
@@ -142,9 +142,9 @@ async def test_tool_failure_is_a_failed_tool_result(gantry):
     assert run.content == "done"
 
 
-async def test_error_formatter_rewrites_the_text(gantry):
+async def test_error_formatter_rewrites_the_text(fetcher):
     agent, _ = await _agent(
-        gantry,
+        fetcher,
         "divide",
         [("divide", {"a": 1, "b": 0})],
         error_formatter=lambda exc: f"{exc.error_type}: [redacted]",
@@ -153,8 +153,8 @@ async def test_error_formatter_rewrites_the_text(gantry):
     assert _tool(run).result == "ZeroDivisionError: [redacted]"
 
 
-async def test_failures_are_tool_execution_errors(gantry):
-    [tool] = await AgnoAdapter(gantry).select("divide", limit=1)
+async def test_failures_are_tool_execution_errors(fetcher):
+    [tool] = await AgnoAdapter(fetcher).select("divide", limit=1)
     with pytest.raises(AgnoToolError) as info:
         tool.entrypoint(a=1, b=0)
     assert isinstance(info.value, ToolExecutionError)
@@ -162,8 +162,8 @@ async def test_failures_are_tool_execution_errors(gantry):
     assert str(info.value) == "ZeroDivisionError: division by zero"
 
 
-async def test_error_mode_raise_leaves_the_plain_error(gantry):
-    agent, _ = await _agent(gantry, "divide", [("divide", {"a": 1, "b": 0})], error_mode="raise")
+async def test_error_mode_raise_leaves_the_plain_error(fetcher):
+    agent, _ = await _agent(fetcher, "divide", [("divide", {"a": 1, "b": 0})], error_mode="raise")
     run = await agent.arun("divide")
     tool = _tool(run)
     assert tool.tool_call_error is True
@@ -171,18 +171,18 @@ async def test_error_mode_raise_leaves_the_plain_error(gantry):
 
 
 @pytest.mark.parametrize("approve", [True, False])
-async def test_gated_call_pauses_and_continues(gantry, approve):
-    agent, _ = await _agent(gantry, "send an email message", [("send_email", {"to": "bob@x"})])
+async def test_gated_call_pauses_and_continues(fetcher, approve):
+    agent, _ = await _agent(fetcher, "send an email message", [("send_email", {"to": "bob@x"})])
     run = await agent.arun("email bob")
     assert run.is_paused
     [requirement] = run.active_requirements
     assert requirement.tool_execution.tool_name == "send_email"
     assert requirement.tool_execution.tool_args == {"to": "bob@x"}
-    assert gantry.sent == []
+    assert fetcher.sent == []
 
     requirement.confirm() if approve else requirement.reject()
     resumed = await agent.acontinue_run(run_response=run)
-    assert gantry.sent == (["bob@x"] if approve else [])  # exactly once when approved
+    assert fetcher.sent == (["bob@x"] if approve else [])  # exactly once when approved
     assert resumed.content == "done"
     assert (_tool(resumed).result == "sent:bob@x") is approve
 
@@ -202,98 +202,98 @@ async def test_security_policy_pattern_also_pauses():
         await g.close()
 
 
-async def test_sync_run_pauses_and_continues_too(gantry):
-    agent, _ = await _agent(gantry, "send an email message", [("send_email", {"to": "bob@x"})])
+async def test_sync_run_pauses_and_continues_too(fetcher):
+    agent, _ = await _agent(fetcher, "send an email message", [("send_email", {"to": "bob@x"})])
     run = agent.run("email bob")
     [requirement] = run.active_requirements
     requirement.confirm()
     agent.continue_run(run_response=run)
-    assert gantry.sent == ["bob@x"]
+    assert fetcher.sent == ["bob@x"]
 
 
-async def test_direct_call_of_a_gated_tool_is_reported_not_run(gantry):
-    [tool] = await AgnoAdapter(gantry).select("send an email message", limit=1)
+async def test_direct_call_of_a_gated_tool_is_reported_not_run(fetcher):
+    [tool] = await AgnoAdapter(fetcher).select("send an email message", limit=1)
     assert tool.requires_confirmation is True
     with pytest.raises(AgnoToolError, match="approval"):
         tool.entrypoint(to="bob@x")
-    assert gantry.sent == []
+    assert fetcher.sent == []
 
 
-async def test_error_mode_raise_has_no_pause_and_never_runs_it(gantry):
+async def test_error_mode_raise_has_no_pause_and_never_runs_it(fetcher):
     agent, _ = await _agent(
-        gantry, "send an email message", [("send_email", {"to": "bob@x"})], error_mode="raise"
+        fetcher, "send an email message", [("send_email", {"to": "bob@x"})], error_mode="raise"
     )
     run = await agent.arun("email bob")
     assert not run.is_paused
     assert _tool(run).tool_call_error is True
-    assert gantry.sent == []
+    assert fetcher.sent == []
 
 
-async def test_run_context_reaches_gantry_handlers(gantry):
-    agent, _ = await _agent(gantry, "who am I", [("whoami", {})])
+async def test_run_context_reaches_fetcher_handlers(fetcher):
+    agent, _ = await _agent(fetcher, "who am I", [("whoami", {})])
     run = await agent.arun("who am I", user_id="dan", dependencies={"db": "prod"})
     assert _tool(run).result == ("user=dan;deps={'db': 'prod'};call=call_1_0;agent=clerk;fw=agno")
 
 
-async def test_injected_parameters_stay_out_of_the_schema(gantry):
-    [tool] = await AgnoAdapter(gantry).select("weather forecast for Paris", limit=1)
+async def test_injected_parameters_stay_out_of_the_schema(fetcher):
+    [tool] = await AgnoAdapter(fetcher).select("weather forecast for Paris", limit=1)
     agent = Agent(model=ScriptedModel(steps=[[("get_weather", {"city": "Paris"})]]), tools=[tool])
     run = await agent.arun("weather in Paris")
     assert _tool(run).result == "sunny in Paris"
     assert set(tool.parameters["properties"]) == {"city"}
 
 
-async def test_per_run_agent_reselects_for_each_run(gantry):
+async def test_per_run_agent_reselects_for_each_run(fetcher):
     model = ScriptedModel()
-    agent = AgnoAdapter(gantry).agent(model=model, limit=1)
+    agent = AgnoAdapter(fetcher).agent(model=model, limit=1)
     await agent.arun("what's the weather forecast for Paris")
     await agent.arun("divide integer a by integer b")
     assert model.offered == [["get_weather"], ["divide"]]
 
 
 @pytest.mark.parametrize("approve", [True, False])
-async def test_per_run_agent_resumes_an_approved_call(gantry, approve):
+async def test_per_run_agent_resumes_an_approved_call(fetcher, approve):
     model = ScriptedModel(steps=[[("send_email", {"to": "bob@x"})]])
-    agent = AgnoAdapter(gantry).agent(model=model, limit=1)
+    agent = AgnoAdapter(fetcher).agent(model=model, limit=1)
     run = await agent.arun("send an email message to bob")
     [requirement] = run.active_requirements
     requirement.confirm() if approve else requirement.reject()
     await agent.acontinue_run(run_response=run)
-    assert gantry.sent == (["bob@x"] if approve else [])
+    assert fetcher.sent == (["bob@x"] if approve else [])
     assert model.offered == [["send_email"], ["send_email"]]
 
 
-async def test_paused_run_outlives_many_later_runs(gantry, monkeypatch):
-    from agent_gantry.integrations.frameworks import agno as agno_module
+async def test_paused_run_outlives_many_later_runs(fetcher, monkeypatch):
+    from dotfetch.integrations.frameworks import agno as agno_module
 
     monkeypatch.setattr(agno_module, "_MAX_REMEMBERED_RUNS", 2)
     model = ScriptedModel(steps=[[("send_email", {"to": "bob@x"})]])
-    agent = AgnoAdapter(gantry).agent(model=model, limit=1)
+    agent = AgnoAdapter(fetcher).agent(model=model, limit=1)
     run = await agent.arun("send an email message to bob")
     for _ in range(5):
         await agent.arun("what's the weather forecast for Paris")
     [requirement] = run.active_requirements
     requirement.confirm()
     await agent.acontinue_run(run_response=run)
-    assert gantry.sent == ["bob@x"]
+    assert fetcher.sent == ["bob@x"]
     assert model.offered[-1] == ["send_email"]
 
 
-async def test_new_runs_still_select_while_paused_runs_fill_the_cache(gantry, monkeypatch):
-    from agent_gantry.integrations.frameworks import agno as agno_module
+async def test_new_runs_still_select_while_paused_runs_fill_the_cache(fetcher, monkeypatch):
+    from dotfetch.integrations.frameworks import agno as agno_module
 
     monkeypatch.setattr(agno_module, "_MAX_REMEMBERED_RUNS", 2)
     steps = [[("send_email", {"to": f"user{i}@x"})] for i in range(3)]
     model = ScriptedModel(steps=steps)
-    agent = AgnoAdapter(gantry).agent(model=model, limit=1)
+    agent = AgnoAdapter(fetcher).agent(model=model, limit=1)
     for _ in range(3):
         assert (await agent.arun("send an email message to bob")).is_paused
     await agent.arun("what's the weather forecast for Paris")
     assert model.offered[-1] == ["get_weather"]
 
 
-async def test_unreadable_stored_input_is_logged(gantry, caplog):
-    from agent_gantry.integrations.frameworks.agno import _stored_input
+async def test_unreadable_stored_input_is_logged(fetcher, caplog):
+    from dotfetch.integrations.frameworks.agno import _stored_input
 
     class BrokenAgent:
         def get_run_output(self, **kwargs):
@@ -304,10 +304,10 @@ async def test_unreadable_stored_input_is_logged(gantry, caplog):
     assert "could not read run" in caplog.text
 
 
-def test_one_agent_serves_runs_from_many_threads(gantry):
+def test_one_agent_serves_runs_from_many_threads(fetcher):
     from concurrent.futures import ThreadPoolExecutor
 
-    agent = AgnoAdapter(gantry).agent(model=ScriptedModel(), limit=1)
+    agent = AgnoAdapter(fetcher).agent(model=ScriptedModel(), limit=1)
 
     def one(i: int) -> None:
         agent.run(f"what's the weather forecast for city {i}")
@@ -318,18 +318,18 @@ def test_one_agent_serves_runs_from_many_threads(gantry):
     assert not selector._tools and not selector._queries
 
 
-async def test_finished_runs_are_forgotten(gantry):
-    agent = AgnoAdapter(gantry).agent(model=ScriptedModel(), limit=1)
+async def test_finished_runs_are_forgotten(fetcher):
+    agent = AgnoAdapter(fetcher).agent(model=ScriptedModel(), limit=1)
     selector = agent.tools.__self__
     await agent.arun("what's the weather forecast for Paris")
     assert not selector._tools and not selector._queries
 
 
-async def test_another_agent_object_resumes_from_the_shared_db(gantry):
+async def test_another_agent_object_resumes_from_the_shared_db(fetcher):
     from agno.db.in_memory import InMemoryDb
 
     db = InMemoryDb()
-    first = AgnoAdapter(gantry).agent(
+    first = AgnoAdapter(fetcher).agent(
         model=ScriptedModel(steps=[[("send_email", {"to": "bob@x"})]]), limit=1, db=db
     )
     run = await first.arun("send an email message to bob", session_id="s1")
@@ -337,19 +337,19 @@ async def test_another_agent_object_resumes_from_the_shared_db(gantry):
     requirement.confirm()
 
     model = ScriptedModel()
-    second = AgnoAdapter(gantry).agent(model=model, limit=1, db=db)
+    second = AgnoAdapter(fetcher).agent(model=model, limit=1, db=db)
     await second.acontinue_run(run_id=run.run_id, session_id="s1", requirements=run.requirements)
-    assert gantry.sent == ["bob@x"]
+    assert fetcher.sent == ["bob@x"]
     assert model.offered == [["send_email"]]
 
 
-async def test_another_agent_object_resumes_from_a_shared_async_db(gantry, tmp_path):
+async def test_another_agent_object_resumes_from_a_shared_async_db(fetcher, tmp_path):
     for module in ("aiosqlite", "sqlalchemy", "greenlet"):  # AsyncSqliteDb's own deps
         pytest.importorskip(module)
     from agno.db.sqlite import AsyncSqliteDb
 
     db_file = str(tmp_path / "runs.db")
-    first = AgnoAdapter(gantry).agent(
+    first = AgnoAdapter(fetcher).agent(
         model=ScriptedModel(steps=[[("send_email", {"to": "bob@x"})]]),
         limit=1,
         db=AsyncSqliteDb(db_file=db_file),
@@ -359,16 +359,16 @@ async def test_another_agent_object_resumes_from_a_shared_async_db(gantry, tmp_p
     requirement.confirm()
 
     model = ScriptedModel()
-    second = AgnoAdapter(gantry).agent(model=model, limit=1, db=AsyncSqliteDb(db_file=db_file))
+    second = AgnoAdapter(fetcher).agent(model=model, limit=1, db=AsyncSqliteDb(db_file=db_file))
     await second.acontinue_run(run_id=run.run_id, session_id="s1", requirements=run.requirements)
-    assert gantry.sent == ["bob@x"]
+    assert fetcher.sent == ["bob@x"]
     assert model.offered == [["send_email"]]
 
 
-async def test_an_async_db_input_is_read_on_the_run_loop(gantry):
+async def test_an_async_db_input_is_read_on_the_run_loop(fetcher):
     from agno.db.base import AsyncBaseDb
 
-    from agent_gantry.integrations.frameworks.agno import _RunSelector
+    from dotfetch.integrations.frameworks.agno import _RunSelector
 
     class AnyAsyncDb(AsyncBaseDb):  # only its type matters here
         pass
@@ -394,61 +394,61 @@ async def test_an_async_db_input_is_read_on_the_run_loop(gantry):
         run_id = "r1"
         session_id = "s1"
 
-    selector = _RunSelector(AgnoAdapter(gantry), {"limit": 1})
+    selector = _RunSelector(AgnoAdapter(fetcher), {"limit": 1})
     pending = selector.tools(agent=ResumingAgent(), run_context=Context())
     tools = await pending
     assert [tool.name for tool in tools] == ["get_weather"]
     assert selector.tools(agent=ResumingAgent(), run_context=Context()) == tools
 
 
-async def test_per_run_agent_uses_the_adapter_settings(gantry):
+async def test_per_run_agent_uses_the_adapter_settings(fetcher):
     model = ScriptedModel(steps=[[("divide", {"a": 1, "b": 0})]])
-    agent = AgnoAdapter(gantry, error_formatter=lambda exc: "[redacted]").agent(
+    agent = AgnoAdapter(fetcher, error_formatter=lambda exc: "[redacted]").agent(
         model=model, limit=1
     )
     run = await agent.arun("divide integer a by integer b")
     assert _tool(run).result == "[redacted]"
 
 
-async def test_per_run_agent_keeps_user_pre_hooks(gantry):
+async def test_per_run_agent_keeps_user_pre_hooks(fetcher):
     seen = []
-    agent = AgnoAdapter(gantry).agent(
+    agent = AgnoAdapter(fetcher).agent(
         model=ScriptedModel(), limit=1, pre_hooks=[lambda run_input: seen.append(run_input)]
     )
     await agent.arun("weather in Paris")
     assert len(seen) == 1
 
 
-async def test_per_run_agent_keeps_user_post_hooks(gantry):
+async def test_per_run_agent_keeps_user_post_hooks(fetcher):
     seen = []
-    agent = AgnoAdapter(gantry).agent(
+    agent = AgnoAdapter(fetcher).agent(
         model=ScriptedModel(), limit=1, post_hooks=[lambda run_output: seen.append(run_output)]
     )
     await agent.arun("weather in Paris")
     assert len(seen) == 1
 
 
-async def test_per_run_agent_offers_pins_when_retrieval_fails(gantry, caplog):
+async def test_per_run_agent_offers_pins_when_retrieval_fails(fetcher, caplog):
     model = ScriptedModel()
-    agent = AgnoAdapter(gantry).agent(model=model, limit=1, always_include=["get_weather"])
+    agent = AgnoAdapter(fetcher).agent(model=model, limit=1, always_include=["get_weather"])
 
     async def down(*args, **kwargs):
         raise RuntimeError("vector store down")
 
-    gantry.retrieve = down
+    fetcher.retrieve = down
     with caplog.at_level("WARNING"):
         await agent.arun("weather in Leeds")
     assert model.offered == [["get_weather"]]
     assert "semantic retrieval failed" in caplog.text
 
 
-async def test_per_run_agent_rejects_static_tools(gantry):
+async def test_per_run_agent_rejects_static_tools(fetcher):
     with pytest.raises(TypeError, match="tools"):
-        AgnoAdapter(gantry).agent(model=ScriptedModel(), tools=[])
+        AgnoAdapter(fetcher).agent(model=ScriptedModel(), tools=[])
 
 
-async def test_agent_builder_uses_the_adapter_settings(gantry):
-    builder = AgnoAdapter(gantry, error_formatter=lambda exc: "[redacted]").agent_builder(
+async def test_agent_builder_uses_the_adapter_settings(fetcher):
+    builder = AgnoAdapter(fetcher, error_formatter=lambda exc: "[redacted]").agent_builder(
         limit=1, model=ScriptedModel(steps=[[("divide", {"a": 1, "b": 0})]])
     )
     agent = await builder.build("divide integer a by integer b")

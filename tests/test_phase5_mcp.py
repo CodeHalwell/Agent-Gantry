@@ -13,11 +13,11 @@ import pytest
 
 pytest.importorskip("mcp")
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.executors.mcp_client import MCPClient
-from agent_gantry.schema.config import MCPServerConfig
-from agent_gantry.schema.tool import ToolDefinition, ToolSource
-from agent_gantry.servers.mcp_server import MCPServer, create_mcp_server
+from dotfetch import DotFetch
+from dotfetch.adapters.executors.mcp_client import MCPClient
+from dotfetch.schema.config import MCPServerConfig
+from dotfetch.schema.tool import ToolDefinition, ToolSource
+from dotfetch.servers.mcp_server import MCPServer, create_mcp_server
 
 
 class TestMCPClient:
@@ -119,38 +119,38 @@ class TestMCPServer:
     """Tests for MCP server functionality."""
 
     @pytest.fixture
-    async def gantry(self) -> AgentGantry:
-        """Create a gantry instance with sample tools."""
-        gantry = AgentGantry()
+    async def fetcher(self) -> DotFetch:
+        """Create a fetcher instance with sample tools."""
+        fetcher = DotFetch()
 
-        @gantry.register
+        @fetcher.register
         def add_numbers(a: int, b: int) -> int:
             """Add two numbers together."""
             return a + b
 
-        @gantry.register
+        @fetcher.register
         def get_weather(city: str) -> str:
             """Get weather for a city."""
             return f"Weather in {city}: Sunny, 72°F"
 
-        await gantry.sync()
-        return gantry
+        await fetcher.sync()
+        return fetcher
 
     @pytest.fixture
-    def mcp_server_dynamic(self, gantry: AgentGantry) -> MCPServer:
+    def mcp_server_dynamic(self, fetcher: DotFetch) -> MCPServer:
         """Create MCP server in dynamic mode."""
-        return create_mcp_server(gantry, mode="dynamic", name="test-server")
+        return create_mcp_server(fetcher, mode="dynamic", name="test-server")
 
     @pytest.fixture
-    def mcp_server_static(self, gantry: AgentGantry) -> MCPServer:
+    def mcp_server_static(self, fetcher: DotFetch) -> MCPServer:
         """Create MCP server in static mode."""
-        return create_mcp_server(gantry, mode="static", name="test-server")
+        return create_mcp_server(fetcher, mode="static", name="test-server")
 
     def test_server_initialization(
-        self, mcp_server_dynamic: MCPServer, gantry: AgentGantry
+        self, mcp_server_dynamic: MCPServer, fetcher: DotFetch
     ) -> None:
         """Test MCP server initialization."""
-        assert mcp_server_dynamic.gantry == gantry
+        assert mcp_server_dynamic.fetcher == fetcher
         assert mcp_server_dynamic.mode == "dynamic"
         assert mcp_server_dynamic.name == "test-server"
         assert mcp_server_dynamic.server is not None
@@ -166,15 +166,15 @@ class TestMCPServer:
         # Verify the server is in dynamic mode
         assert mcp_server_dynamic.mode == "dynamic"
 
-        # Verify tools are still accessible through gantry
-        tools = await mcp_server_dynamic.gantry.list_tools()
+        # Verify tools are still accessible through fetcher
+        tools = await mcp_server_dynamic.fetcher.list_tools()
         assert len(tools) > 0
 
     @pytest.mark.asyncio
     async def test_static_mode_tools(self, mcp_server_static: MCPServer) -> None:
         """Test that static mode exposes all tools."""
-        # In static mode, tools should be accessible through the gantry
-        tools = await mcp_server_static.gantry.list_tools()
+        # In static mode, tools should be accessible through the fetcher
+        tools = await mcp_server_static.fetcher.list_tools()
         assert len(tools) >= 2  # At least our registered tools
 
         tool_names = [t.name for t in tools]
@@ -228,25 +228,25 @@ class TestMCPServer:
             )
 
 
-class TestAgentGantryMCPIntegration:
-    """Tests for MCP integration in AgentGantry."""
+class TestDotFetchMCPIntegration:
+    """Tests for MCP integration in DotFetch."""
 
     @pytest.fixture
-    async def gantry(self) -> AgentGantry:
-        """Create a gantry instance."""
-        gantry = AgentGantry()
+    async def fetcher(self) -> DotFetch:
+        """Create a fetcher instance."""
+        fetcher = DotFetch()
 
-        @gantry.register
+        @fetcher.register
         def sample_tool(x: int) -> int:
             """A sample tool."""
             return x * 2
 
-        await gantry.sync()
-        return gantry
+        await fetcher.sync()
+        return fetcher
 
     @pytest.mark.asyncio
-    async def test_add_mcp_server(self, gantry: AgentGantry) -> None:
-        """Test adding an MCP server to AgentGantry."""
+    async def test_add_mcp_server(self, fetcher: DotFetch) -> None:
+        """Test adding an MCP server to DotFetch."""
         config = MCPServerConfig(
             name="test-server",
             command=["python", "-m", "test_mcp_server"],
@@ -254,7 +254,7 @@ class TestAgentGantryMCPIntegration:
         )
 
         # Mock the MCPClient to avoid actual connection
-        with patch("agent_gantry.adapters.executors.mcp_client.MCPClient") as mock_client_class:
+        with patch("dotfetch.adapters.executors.mcp_client.MCPClient") as mock_client_class:
             mock_client = AsyncMock()
             mock_tools = [
                 ToolDefinition(
@@ -266,56 +266,56 @@ class TestAgentGantryMCPIntegration:
             mock_client.list_tools = AsyncMock(return_value=mock_tools)
             mock_client_class.return_value = mock_client
 
-            count = await gantry.add_mcp_server(config)
+            count = await fetcher.add_mcp_server(config)
 
             assert count == 1
             # Verify the tool was added
-            tool = await gantry.get_tool("external_tool")
+            tool = await fetcher.get_tool("external_tool")
             assert tool is not None
             assert tool.name == "external_tool"
 
     @pytest.mark.asyncio
-    async def test_serve_mcp_dynamic(self, gantry: AgentGantry) -> None:
+    async def test_serve_mcp_dynamic(self, fetcher: DotFetch) -> None:
         """Test serving as MCP server in dynamic mode."""
         # Mock the server to avoid actually starting it
-        with patch("agent_gantry.servers.mcp_server.create_mcp_server") as mock_create_server:
+        with patch("dotfetch.servers.mcp_server.create_mcp_server") as mock_create_server:
             mock_server = AsyncMock()
             mock_server.run_stdio = AsyncMock()
             mock_create_server.return_value = mock_server
 
             # This would normally block, so we'll just verify it's called correctly
-            await gantry.serve_mcp(transport="stdio", mode="dynamic")
+            await fetcher.serve_mcp(transport="stdio", mode="dynamic")
 
             mock_create_server.assert_called_once_with(
-                gantry, mode="dynamic", name="agent-gantry", expose=None
+                fetcher, mode="dynamic", name="dotfetch", expose=None
             )
             mock_server.run_stdio.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_serve_mcp_http_transports(self, gantry: AgentGantry) -> None:
+    async def test_serve_mcp_http_transports(self, fetcher: DotFetch) -> None:
         """The HTTP transports route to the server's runners with host/port/path."""
-        with patch("agent_gantry.servers.mcp_server.create_mcp_server") as mock_create_server:
+        with patch("dotfetch.servers.mcp_server.create_mcp_server") as mock_create_server:
             mock_server = AsyncMock()
             mock_create_server.return_value = mock_server
 
-            await gantry.serve_mcp(
+            await fetcher.serve_mcp(
                 transport="http", mode="hybrid", expose=["add_numbers"], port=9999, path="/x"
             )
             mock_create_server.assert_called_once_with(
-                gantry, mode="hybrid", name="agent-gantry", expose=["add_numbers"]
+                fetcher, mode="hybrid", name="dotfetch", expose=["add_numbers"]
             )
             mock_server.run_http.assert_awaited_once_with(host="127.0.0.1", port=9999, path="/x")
 
-            await gantry.serve_mcp(transport="sse", host="0.0.0.0", allowed_hosts=["a:1"])
+            await fetcher.serve_mcp(transport="sse", host="0.0.0.0", allowed_hosts=["a:1"])
             mock_server.run_sse.assert_awaited_once_with(
                 host="0.0.0.0", port=8000, allowed_hosts=["a:1"]
             )
 
     @pytest.mark.asyncio
-    async def test_serve_mcp_invalid_transport(self, gantry: AgentGantry) -> None:
+    async def test_serve_mcp_invalid_transport(self, fetcher: DotFetch) -> None:
         """Test that invalid transport raises error."""
         with pytest.raises(ValueError, match="Unsupported transport"):
-            await gantry.serve_mcp(transport="invalid")
+            await fetcher.serve_mcp(transport="invalid")
 
 
 class TestMCPProtocolCompliance:
@@ -324,17 +324,17 @@ class TestMCPProtocolCompliance:
     @pytest.mark.asyncio
     async def test_tool_schema_format(self) -> None:
         """Test that tool schemas comply with MCP format."""
-        gantry = AgentGantry()
+        fetcher = DotFetch()
 
-        @gantry.register
+        @fetcher.register
         def test_tool(param1: str, param2: int) -> str:
             """Test tool with parameters for MCP schema validation."""
             return f"{param1}: {param2}"
 
-        await gantry.sync()
+        await fetcher.sync()
 
-        # Get the tool from gantry
-        tool = await gantry.get_tool("test_tool")
+        # Get the tool from fetcher
+        tool = await fetcher.get_tool("test_tool")
         assert tool is not None
 
         # Verify the tool has proper MCP-compatible schema
@@ -350,7 +350,7 @@ class TestMCPProtocolCompliance:
         assert "param2" in schema["properties"]
 
         # Test conversion to MCP Tool format
-        server = create_mcp_server(gantry, mode="static")
+        server = create_mcp_server(fetcher, mode="static")
         mcp_tool = server._convert_tool(tool)
         assert mcp_tool.name == "test_tool"
         assert hasattr(mcp_tool, "description")
@@ -360,16 +360,16 @@ class TestMCPProtocolCompliance:
     @pytest.mark.asyncio
     async def test_meta_tool_discovery_flow(self) -> None:
         """Test the complete meta-tool discovery and execution flow."""
-        gantry = AgentGantry()
+        fetcher = DotFetch()
 
-        @gantry.register
+        @fetcher.register
         def calculate_sum(a: int, b: int) -> int:
             """Calculate the sum of two numbers."""
             return a + b
 
-        await gantry.sync()
+        await fetcher.sync()
 
-        server = create_mcp_server(gantry, mode="dynamic")
+        server = create_mcp_server(fetcher, mode="dynamic")
 
         # Step 1: Discover tools using find_relevant_tools
         discovery_result = await server._handle_find_relevant_tools(
@@ -392,13 +392,13 @@ class TestMCPProtocolCompliance:
     @pytest.mark.asyncio
     async def test_context_window_minimization(self) -> None:
         """Test that dynamic mode minimizes context window usage."""
-        gantry = AgentGantry()
+        fetcher = DotFetch()
 
         # Register many tools
         for i in range(20):
             # Use closure to capture the loop variable correctly
             def make_tool(idx):
-                @gantry.register(name=f"tool_{idx}")
+                @fetcher.register(name=f"tool_{idx}")
                 def tool_fn(x: int) -> int:
                     """Tool for testing context window minimization with many tools."""
                     return x + idx
@@ -407,14 +407,14 @@ class TestMCPProtocolCompliance:
 
             make_tool(i)
 
-        await gantry.sync()
+        await fetcher.sync()
 
         # Verify all tools were registered
-        all_tools = await gantry.list_tools()
+        all_tools = await fetcher.list_tools()
         assert len(all_tools) >= 20
 
         # Dynamic mode exposes meta-tools for discovery
-        dynamic_server = create_mcp_server(gantry, mode="dynamic")
+        dynamic_server = create_mcp_server(fetcher, mode="dynamic")
         assert dynamic_server.mode == "dynamic"
 
         # In dynamic mode, clients would first call find_relevant_tools
@@ -426,8 +426,8 @@ class TestMCPProtocolCompliance:
         assert len(result) <= 3
 
         # Static mode would expose all tools directly
-        static_server = create_mcp_server(gantry, mode="static")
-        static_tools = await static_server.gantry.list_tools()
+        static_server = create_mcp_server(fetcher, mode="static")
+        static_tools = await static_server.fetcher.list_tools()
         assert len(static_tools) >= 20  # All registered tools
 
 
@@ -437,8 +437,8 @@ async def test_a_client_dropped_outside_a_loop_is_still_closed_at_shutdown() -> 
     synchronous thread there is none, so the close was skipped and the client
     was gone from the cache -- leaving its HTTP connection or stdio
     subprocess alive with nothing able to reach it."""
-    from agent_gantry.core.mcp_registry import MCPRegistry
-    from agent_gantry.schema.mcp import MCPServerDefinition
+    from dotfetch.core.mcp_registry import MCPRegistry
+    from dotfetch.schema.mcp import MCPServerDefinition
 
     class _FakeClient:
         def __init__(self, name: str) -> None:
@@ -477,7 +477,7 @@ async def test_a_client_added_during_shutdown_is_not_silently_dropped() -> None:
     """``close_all_clients`` cleared its bookkeeping *after* the gather, so a
     client cached while that await was in flight was neither closed by it nor
     reachable through the cache afterwards; it clears first now."""
-    from agent_gantry.core.mcp_registry import MCPRegistry
+    from dotfetch.core.mcp_registry import MCPRegistry
 
     registry = MCPRegistry()
 
@@ -518,8 +518,8 @@ async def test_a_server_registered_mid_sync_is_not_dropped_from_the_buffer() -> 
     server was never embedded and ``_synced`` stayed True, so nothing tried
     again. The tool-side buffer was fixed for exactly this; the MCP path kept
     the blanket clear."""
-    from agent_gantry.core.mcp_registry import MCPRegistry
-    from agent_gantry.schema.mcp import MCPServerDefinition
+    from dotfetch.core.mcp_registry import MCPRegistry
+    from dotfetch.schema.mcp import MCPServerDefinition
 
     def _definition(name: str) -> MCPServerDefinition:
         return MCPServerDefinition(
@@ -572,20 +572,20 @@ async def test_an_empty_discovery_is_authoritative() -> None:
         for i in range(3)
     ]
 
-    gantry = AgentGantry()
+    fetcher = DotFetch()
     try:
-        gantry._register_mcp_tool_handlers(client, tools, resolve_client=lambda: client)
-        gantry._pending_tools.extend(tools)
-        await gantry.sync()
-        assert len(gantry._registry.list_tools("mcp")) == 3
+        fetcher._register_mcp_tool_handlers(client, tools, resolve_client=lambda: client)
+        fetcher._pending_tools.extend(tools)
+        await fetcher.sync()
+        assert len(fetcher._registry.list_tools("mcp")) == 3
 
         # A server that still lists some tools prunes only the rest.
-        await gantry._remove_stale_mcp_tools(client, tools[:1])
-        assert [t.name for t in gantry._registry.list_tools("mcp")] == ["read_file_0"]
+        await fetcher._remove_stale_mcp_tools(client, tools[:1])
+        assert [t.name for t in fetcher._registry.list_tools("mcp")] == ["read_file_0"]
 
         # ...and one that lists none prunes them all, from the store too.
-        await gantry._remove_stale_mcp_tools(client, [])
-        assert gantry._registry.list_tools("mcp") == []
-        assert await gantry._vector_store.list_all(namespace="mcp") == []
+        await fetcher._remove_stale_mcp_tools(client, [])
+        assert fetcher._registry.list_tools("mcp") == []
+        assert await fetcher._vector_store.list_all(namespace="mcp") == []
     finally:
-        await gantry.close()
+        await fetcher.close()

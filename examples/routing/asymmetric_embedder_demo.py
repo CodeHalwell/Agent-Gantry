@@ -8,7 +8,7 @@ v1.5 wants ``search_document:`` on a stored tool and ``search_query:`` on the
 prompt; E5 wants ``passage:`` and ``query:``; BGE wants a bare passage and an
 instruction-prefixed query.
 
-Gantry uses one embedder instance for both sides, so the adapter decides:
+dotfetch uses one embedder instance for both sides, so the adapter decides:
 
 * ``embed_text(text)``  — the document side. Used when tools are synced.
 * ``embed_query(query)`` — the query side. Used when a prompt is routed.
@@ -31,9 +31,9 @@ from __future__ import annotations
 import asyncio
 import hashlib
 
-from agent_gantry import AgentGantry, ConversationContext, ToolQuery
-from agent_gantry.adapters.embedders.base import EmbeddingAdapter
-from agent_gantry.schema.tool import ToolDefinition
+from dotfetch import ConversationContext, DotFetch, ToolQuery
+from dotfetch.adapters.embedders.base import EmbeddingAdapter
+from dotfetch.schema.tool import ToolDefinition
 
 
 def _fake_vector(text: str, dimension: int) -> list[float]:
@@ -103,9 +103,9 @@ class SymmetricEmbedder(PrefixedEmbedder):
 
 
 async def show(label: str, embedder: PrefixedEmbedder) -> None:
-    gantry = AgentGantry(embedder=embedder)
+    fetcher = DotFetch(embedder=embedder)
     try:
-        await gantry.add_tool(
+        await fetcher.add_tool(
             ToolDefinition(
                 name="send_email",
                 description="Send an email message to a named recipient.",
@@ -114,7 +114,7 @@ async def show(label: str, embedder: PrefixedEmbedder) -> None:
             ),
             lambda: None,
         )
-        await gantry.retrieve(
+        await fetcher.retrieve(
             ToolQuery(
                 context=ConversationContext(query="email Priya about the report"),
                 score_threshold=0.0,
@@ -124,7 +124,7 @@ async def show(label: str, embedder: PrefixedEmbedder) -> None:
         for call in embedder.calls:
             print(f"    {call}")
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def main() -> None:

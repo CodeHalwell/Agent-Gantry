@@ -2,41 +2,41 @@
 import DocsLayout from '../../../../layouts/DocsLayout.astro';
 import CodeBlock from '../../../../components/CodeBlock.astro';
 ---
-<DocsLayout title="Haystack guide | Agent-Gantry" description="Integrate Agent-Gantry with the Haystack Agent: tools re-selected every step through Agent hooks, error tool results, approval through ConfirmationHook, and the Agent State.">
+<DocsLayout title="Haystack guide | dotfetch" description="Integrate dotfetch with the Haystack Agent: tools re-selected every step through Agent hooks, error tool results, approval through ConfirmationHook, and the Agent State.">
   <p class="eyebrow">Framework guide</p>
   <h1>Haystack</h1>
-  <p class="lead">Agent-Gantry plugs into the Haystack <code>Agent</code>'s own mechanisms: hooks and a dynamic <code>Toolset</code> that pick each step's tools, error tool results for failures, <code>ConfirmationHook</code> for human approval, and the <code>State</code> for your run data.</p>
+  <p class="lead">dotfetch plugs into the Haystack <code>Agent</code>'s own mechanisms: hooks and a dynamic <code>Toolset</code> that pick each step's tools, error tool results for failures, <code>ConfirmationHook</code> for human approval, and the <code>State</code> for your run data.</p>
   <p><a class="pill" href="/Agent-Gantry/docs/frameworks/haystack/advanced/">Advanced Haystack usage →</a></p>
 
   <h2>Install</h2>
-  <CodeBlock lang="bash" code={`uv add "agent-gantry[haystack]"   # haystack-ai >= 3.0`} />
+  <CodeBlock lang="bash" code={`uv add "dotfetch[haystack]"   # haystack-ai >= 3.0`} />
 
   <h2>Basic page: tools picked every step</h2>
-  <CodeBlock lang="python" code={`from agent_gantry import AgentGantry
-from agent_gantry.haystack import HaystackAdapter
+  <CodeBlock lang="python" code={`from dotfetch import DotFetch
+from dotfetch.haystack import HaystackAdapter
 from haystack.components.generators.chat import OpenAIChatGenerator
 from haystack.dataclasses import ChatMessage
 
-gantry = AgentGantry()
+fetcher = DotFetch()
 
-@gantry.register(examples=["where is my order", "has order 4471 shipped"])
+@fetcher.register(examples=["where is my order", "has order 4471 shipped"])
 def get_order_status(order_id: str) -> str:
     """Return the current shipping status for an order."""
     return "in_transit"
 
-await gantry.sync()
-agent = HaystackAdapter(gantry).agent(chat_generator=OpenAIChatGenerator(), limit=5)
+await fetcher.sync()
+agent = HaystackAdapter(fetcher).agent(chat_generator=OpenAIChatGenerator(), limit=5)
 result = agent.run(messages=[ChatMessage.from_user("Has order 4471 shipped?")])   # or run_async`} />
   <p>For a fixed set, pass <code>Agent(tools=await adapter.select(query))</code> instead.</p>
 
   <h2>What the model sees when a tool fails</h2>
   <p>A failed call becomes an error tool result with the text <code>"&lt;type&gt;: &lt;message&gt;"</code>, capped at 2,000 characters, so the model can correct a bad argument or try something else.</p>
-  <div class="callout"><strong>Redact or opt out:</strong> <code>HaystackAdapter(gantry, error_formatter=redact)</code> rewrites the text; <code>error_mode="raise"</code> raises the plain <code>ToolExecutionError</code> instead.</div>
+  <div class="callout"><strong>Redact or opt out:</strong> <code>HaystackAdapter(fetcher, error_formatter=redact)</code> rewrites the text; <code>error_mode="raise"</code> raises the plain <code>ToolExecutionError</code> instead.</div>
 
-  <h2>Reading run state from a Gantry tool</h2>
-  <CodeBlock lang="python" code={`from agent_gantry.haystack import current_agent_state
+  <h2>Reading run state from a dotfetch tool</h2>
+  <CodeBlock lang="python" code={`from dotfetch.haystack import current_agent_state
 
-@gantry.register
+@fetcher.register
 def get_balance(account: str) -> str:
     """Fetch an account balance for the signed-in user."""
     state = current_agent_state()            # the Agent's State, or None outside a run

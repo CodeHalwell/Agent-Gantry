@@ -2,7 +2,7 @@
 import DocsLayout from '../../../../layouts/DocsLayout.astro';
 import CodeBlock from '../../../../components/CodeBlock.astro';
 ---
-<DocsLayout title="Advanced Agno guide | Agent-Gantry" description="Approval through requires_confirmation and continue_run, per-run selection, run context and error modes for the Agent-Gantry Agno integration.">
+<DocsLayout title="Advanced Agno guide | dotfetch" description="Approval through requires_confirmation and continue_run, per-run selection, run context and error modes for the dotfetch Agno integration.">
   <p class="eyebrow">Advanced framework guide</p>
   <h1>Advanced Agno</h1>
   <p class="lead">Approval with <code>continue_run</code>, how per-run selection works, and run context.</p>
@@ -19,11 +19,11 @@ if run.is_paused:
         else:
             requirement.reject()
     run = await agent.acontinue_run(run_response=run)`} />
-  <p>A confirmed call runs once through <code>gantry.execute</code> with only the confirmation gate cleared; a rejected one never runs and the model is told. A tool called directly, outside an agent, reports that it needs approval. With <code>error_mode="raise"</code> there is no pause and gated calls report as not run.</p>
+  <p>A confirmed call runs once through <code>fetcher.execute</code> with only the confirmation gate cleared; a rejected one never runs and the model is told. A tool called directly, outside an agent, reports that it needs approval. With <code>error_mode="raise"</code> there is no pause and gated calls report as not run.</p>
 
   <h2>Per-run selection</h2>
   <ul>
-    <li><strong>Mechanism:</strong> <code>agent()</code> gives the <code>Agent</code> a callable <code>tools</code> factory (<code>cache_callables=False</code>) plus a pre-hook that records the run's input, so Agno itself asks Gantry for each run's tools.</li>
+    <li><strong>Mechanism:</strong> <code>agent()</code> gives the <code>Agent</code> a callable <code>tools</code> factory (<code>cache_callables=False</code>) plus a pre-hook that records the run's input, so Agno itself asks dotfetch for each run's tools.</li>
     <li><strong>Query:</strong> the run's input.</li>
     <li><strong>Resuming:</strong> the selection is kept per <code>run_id</code>, so <code>continue_run</code> after an approval sees the same tools. Another agent object resuming the run reads its input back from the shared <code>db</code>.</li>
     <li><strong>Failure:</strong> if retrieval fails the pinned tools (<code>required</code> / <code>always_include</code>) are still offered and a warning is logged.</li>
@@ -31,5 +31,5 @@ if run.is_paused:
   </ul>
 
   <h2>Run context and tracing</h2>
-  <p><code>current_run_context()</code> returns Agno's <code>RunContext</code>: <code>.dependencies</code>, <code>.session_state</code>, <code>.user_id</code>, <code>.session_id</code>, <code>.run_id</code> and <code>.metadata</code>. <code>current_tool_invocation()</code> carries it too, with <code>deps</code> set to <code>dependencies</code>, <code>tool_call_id</code> to the model's call id and metadata <code>agent_name</code>, <code>session_id</code> and <code>user_id</code>. The active OpenTelemetry span becomes the Gantry <code>ToolCall</code>'s trace.</p>
+  <p><code>current_run_context()</code> returns Agno's <code>RunContext</code>: <code>.dependencies</code>, <code>.session_state</code>, <code>.user_id</code>, <code>.session_id</code>, <code>.run_id</code> and <code>.metadata</code>. <code>current_tool_invocation()</code> carries it too, with <code>deps</code> set to <code>dependencies</code>, <code>tool_call_id</code> to the model's call id and metadata <code>agent_name</code>, <code>session_id</code> and <code>user_id</code>. The active OpenTelemetry span becomes the dotfetch <code>ToolCall</code>'s trace.</p>
 </DocsLayout>

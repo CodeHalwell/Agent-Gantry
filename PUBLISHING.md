@@ -1,4 +1,4 @@
-# Publishing Agent-Gantry
+# Publishing dotfetch
 
 The GitHub [Publish to PyPI workflow](.github/workflows/publish.yml) is the
 supported publishing path; local `uv publish` bypasses the release checks and

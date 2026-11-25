@@ -1,6 +1,6 @@
 ---
 name: 🐛 Bug Report
-about: Report a bug or unexpected behavior in Agent-Gantry
+about: Report a bug or unexpected behavior in dotfetch
 title: "[Bug] "
 labels: ["bug"]
 assignees: []
@@ -26,7 +26,7 @@ assignees: []
 <!-- If applicable, provide a minimal code example that reproduces the issue -->
 
 ```python
-from agent_gantry import AgentGantry
+from dotfetch import DotFetch
 
 # Your code here
 ```
@@ -41,7 +41,7 @@ Paste error message here
 ## Environment
 <!-- Please complete the following information -->
 
-- **Agent-Gantry Version**: [e.g., 1.0.0]
+- **dotfetch Version**: [e.g., 1.0.0]
 - **Python Version**: [e.g., 3.10.5]
 - **Operating System**: [e.g., Ubuntu 22.04, macOS 13.0, Windows 11]
 - **Installation Method**: [e.g., pip, source]

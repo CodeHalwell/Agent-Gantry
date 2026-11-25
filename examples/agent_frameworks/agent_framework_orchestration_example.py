@@ -1,7 +1,7 @@
 """
-Microsoft Agent Framework (1.5.0+) — multi-agent orchestration with Agent-Gantry.
+Microsoft Agent Framework (1.5.0+) — multi-agent orchestration with dotfetch.
 
-Demonstrates three production orchestration patterns, each powered by Gantry's
+Demonstrates three production orchestration patterns, each powered by dotfetch's
 semantic tool routing:
 
 1. **Sequential**: a research agent pipes its answer into a writer agent.
@@ -11,7 +11,7 @@ semantic tool routing:
    off to a specialist.
 
 Each participating agent uses a distinct, semantically selected subset of
-the Gantry tool registry, so the LLM only sees the tools relevant to that
+the dotfetch tool registry, so the LLM only sees the tools relevant to that
 agent's role (i.e. the token-saving benefit compounds across participants).
 
 Version notes:
@@ -27,13 +27,13 @@ Version notes:
   ``result.startswith(...)`` on a bare string needs adapting.
 * AF 1.3.0 adds ``ClassSkill`` and ``allowed_tools`` for OpenAI/Gemini
   tool-choice filtering, plus experimental session/todo-list/memory
-  context providers. Gantry has not yet exposed an ``allowed_tools``
-  pass-through in :class:`GantryToolBridge`; subset selection is still
+  context providers. dotfetch has not yet exposed an ``allowed_tools``
+  pass-through in :class:`DotFetchToolBridge`; subset selection is still
   achieved via ``query`` + ``limit``.
 
 Run:
 
-    pip install "agent-gantry[agent-frameworks]"
+    pip install "dotfetch[agent-frameworks]"
     export OPENAI_API_KEY=...
     python examples/agent_frameworks/agent_framework_orchestration_example.py
 """
@@ -44,9 +44,9 @@ import asyncio
 
 from dotenv import load_dotenv
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
+from dotfetch.integrations.agent_framework_bridge import DotFetchToolBridge
 
 try:
     from agent_framework.openai import OpenAIChatClient
@@ -57,12 +57,12 @@ except ImportError:
 load_dotenv()
 
 
-async def build_gantry() -> AgentGantry:
+async def build_fetcher() -> DotFetch:
     """Register a realistic multi-role tool set for customer support."""
-    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
+    fetcher = DotFetch(embedder=SimpleEmbedder(dimension=256))
 
     # Research role
-    @gantry.register(
+    @fetcher.register(
         tags=["research"],
         examples=[
             "find the support article on password resets",
@@ -73,7 +73,7 @@ async def build_gantry() -> AgentGantry:
         """Search the internal KB for support articles."""
         return f"3 articles matching '{query}'"
 
-    @gantry.register(
+    @fetcher.register(
         tags=["research"],
         examples=[
             "where is order 12345",
@@ -85,7 +85,7 @@ async def build_gantry() -> AgentGantry:
         return {"order_id": order_id, "status": "shipped", "carrier": "DHL"}
 
     # Billing role
-    @gantry.register(
+    @fetcher.register(
         tags=["billing"],
         examples=[
             "send me my latest invoice",
@@ -97,7 +97,7 @@ async def build_gantry() -> AgentGantry:
         return {"user_id": user_id, "amount_due": "$0.00"}
 
     # Writing role
-    @gantry.register(
+    @fetcher.register(
         tags=["writing"],
         examples=[
             "draft a reply to the customer",
@@ -108,14 +108,14 @@ async def build_gantry() -> AgentGantry:
         """Draft a customer-facing email response."""
         return f"DRAFT: {subject}\n\n{body}"
 
-    await gantry.sync()
-    return gantry
+    await fetcher.sync()
+    return fetcher
 
 
 async def sequential_pipeline(
-    bridge: GantryToolBridge, client: OpenAIChatClient, query: str
+    bridge: DotFetchToolBridge, client: OpenAIChatClient, query: str
 ) -> None:
-    """Research → Write pipeline with distinct Gantry tool slices per step."""
+    """Research → Write pipeline with distinct dotfetch tool slices per step."""
     researcher = await bridge.build_agent(
         client,
         query="research tools (search knowledge base, lookup order)",
@@ -139,7 +139,7 @@ async def sequential_pipeline(
 
 
 async def concurrent_analysts(
-    bridge: GantryToolBridge, client: OpenAIChatClient, brief: str
+    bridge: DotFetchToolBridge, client: OpenAIChatClient, brief: str
 ) -> None:
     """Two analysts fan out on the same brief, outputs aggregated."""
     billing_analyst = await bridge.build_agent(
@@ -167,7 +167,7 @@ async def concurrent_analysts(
 
 
 async def handoff_triage(
-    bridge: GantryToolBridge, client: OpenAIChatClient, query: str
+    bridge: DotFetchToolBridge, client: OpenAIChatClient, query: str
 ) -> None:
     """Triage agent routes to either billing or research specialist."""
     triage = await bridge.build_agent(
@@ -214,12 +214,12 @@ async def handoff_triage(
 
 
 async def main() -> None:
-    gantry = await build_gantry()
+    fetcher = await build_fetcher()
     try:
 
         # score_threshold defaults to 0.0; raising it silently drops tools
         # on longer queries, so leave it alone unless you have measured.
-        bridge = GantryToolBridge(gantry)
+        bridge = DotFetchToolBridge(fetcher)
 
         # Selection needs no client, so show each role's slice first — the same
         # `get_tools` call `build_agent` makes for that role below.
@@ -265,7 +265,7 @@ async def main() -> None:
             bridge, client, "My latest invoice looks wrong, can you check?"
         )
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 if __name__ == "__main__":

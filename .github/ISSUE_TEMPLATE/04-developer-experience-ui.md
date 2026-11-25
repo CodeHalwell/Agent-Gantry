@@ -1,6 +1,6 @@
 ---
 name: "🎨 Developer Experience & UI"
-about: Feature requests for Gantry Dashboard, visualization, testing, and debugging tools
+about: Feature requests for dotfetch Dashboard, visualization, testing, and debugging tools
 title: "[DX] "
 labels: ["enhancement", "dx", "ui", "tooling"]
 assignees: []
@@ -8,7 +8,7 @@ assignees: []
 
 ## Feature Area
 <!-- Check the area(s) this feature request relates to -->
-- [ ] Gantry Dashboard (Web UI)
+- [ ] dotfetch Dashboard (Web UI)
 - [ ] Simulation & Replay (Snapshot Testing)
 - [ ] Visualization Tools
 - [ ] Debugging Tools
@@ -52,14 +52,14 @@ assignees: []
 
 ## Context: Current Developer Tools
 
-Agent-Gantry currently provides:
-- ✅ CLI for listing and searching tools (`agent-gantry list`, `agent-gantry search`)
+dotfetch currently provides:
+- ✅ CLI for listing and searching tools (`dotfetch list`, `dotfetch search`)
 - ✅ Structured logging and telemetry
 - ✅ OpenTelemetry integration for tracing
 
 This feature request aims to enhance the developer experience with additional tooling.
 
-### Gantry Dashboard (Web UI)
+### dotfetch Dashboard (Web UI)
 - **Goal**: Lightweight local web server for development and debugging
 - **Technology**: Streamlit, FastUI, or similar
 - **Features**:

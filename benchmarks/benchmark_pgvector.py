@@ -2,8 +2,8 @@ import asyncio
 import time
 from unittest.mock import AsyncMock, MagicMock
 
-from agent_gantry.adapters.vector_stores.remote import PGVectorStore
-from agent_gantry.schema.tool import ToolDefinition
+from dotfetch.adapters.vector_stores.remote import PGVectorStore
+from dotfetch.schema.tool import ToolDefinition
 
 
 async def main():

@@ -3,7 +3,7 @@
 Exercises :meth:`LangGraphAdapter.react_agent` against the *real* installed
 ``langchain.agents.create_agent`` API surface (the ``langgraph.prebuilt.
 create_react_agent`` replacement — the latter is removed in LangGraph 2.0): the
-agent must re-select tools from Gantry on every model turn via a
+agent must re-select tools from dotfetch on every model turn via a
 ``wrap_model_call`` middleware hook and bind exactly those tools to the chat
 model (so the tools advertised to the LLM change turn-to-turn as the
 conversation pivots).
@@ -28,9 +28,9 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langgraph.warnings import LangGraphDeprecatedSinceV10
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-from agent_gantry.langgraph import LangGraphAdapter
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
+from dotfetch.langgraph import LangGraphAdapter
 
 
 class RecordingChatModel(BaseChatModel):
@@ -63,8 +63,8 @@ class RecordingChatModel(BaseChatModel):
 
 
 @pytest.fixture
-async def gantry():
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+async def fetcher():
+    g = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
     @g.register(tags=["weather", "forecast"])
     def get_weather(city: str) -> str:
@@ -88,37 +88,37 @@ async def gantry():
 # -- per-turn selection function (real API surface, fake model) ------------- #
 
 
-async def test_select_tools_for_weather_state(gantry):
+async def test_select_tools_for_weather_state(fetcher):
     """Weather-oriented state selects the weather StructuredTool."""
     state = {"messages": [HumanMessage(content="what's the weather in Paris?")]}
-    tools = await LangGraphAdapter(gantry).select_for_state(state, limit=1)
+    tools = await LangGraphAdapter(fetcher).select_for_state(state, limit=1)
     assert tools, "expected at least one tool to be selected"
     assert tools[0].name == "get_weather"
 
 
-async def test_select_tools_for_email_state(gantry):
+async def test_select_tools_for_email_state(fetcher):
     """Email-oriented state selects the email StructuredTool (per-turn pivot)."""
     state = {"messages": [HumanMessage(content="send an email to my boss")]}
-    tools = await LangGraphAdapter(gantry).select_for_state(state, limit=1)
+    tools = await LangGraphAdapter(fetcher).select_for_state(state, limit=1)
     assert tools, "expected at least one tool to be selected"
     assert tools[0].name == "send_email"
 
 
-async def test_selected_tool_routes_through_gantry(gantry):
-    """The selected StructuredTool executes via Gantry."""
+async def test_selected_tool_routes_through_fetcher(fetcher):
+    """The selected StructuredTool executes via dotfetch."""
     state = {"messages": [HumanMessage(content="weather forecast for Tokyo")]}
-    tools = await LangGraphAdapter(gantry).select_for_state(state, limit=1)
+    tools = await LangGraphAdapter(fetcher).select_for_state(state, limit=1)
     assert await tools[0].coroutine(city="Tokyo") == "weather:Tokyo:sunny"
 
 
 # -- full compiled graph with the create_agent wrap_model_call middleware --- #
 
 
-async def test_react_agent_binds_weather_tool_per_turn(gantry):
+async def test_react_agent_binds_weather_tool_per_turn(fetcher):
     """Driving the compiled agent binds the weather tool for a weather state."""
     model = RecordingChatModel()
     model.bound_tool_names.clear()
-    agent = LangGraphAdapter(gantry).react_agent(model, limit=1)
+    agent = LangGraphAdapter(fetcher).react_agent(model, limit=1)
 
     await agent.ainvoke(
         {"messages": [HumanMessage(content="what's the weather in Paris?")]}
@@ -129,11 +129,11 @@ async def test_react_agent_binds_weather_tool_per_turn(gantry):
     assert last_bound == ["get_weather"]
 
 
-async def test_react_agent_binds_email_tool_per_turn(gantry):
+async def test_react_agent_binds_email_tool_per_turn(fetcher):
     """Re-selection: an email state binds the email tool, not weather."""
     model = RecordingChatModel()
     model.bound_tool_names.clear()
-    agent = LangGraphAdapter(gantry).react_agent(model, limit=1)
+    agent = LangGraphAdapter(fetcher).react_agent(model, limit=1)
 
     await agent.ainvoke(
         {"messages": [HumanMessage(content="send an email to my boss")]}
@@ -144,11 +144,11 @@ async def test_react_agent_binds_email_tool_per_turn(gantry):
     assert last_bound == ["send_email"]
 
 
-async def test_react_agent_superset_covers_all_tools(gantry):
+async def test_react_agent_superset_covers_all_tools(fetcher):
     """The static ToolNode superset includes every registered tool."""
-    from agent_gantry.integrations.frameworks.langgraph_live import _all_tools
+    from dotfetch.integrations.frameworks.langgraph_live import _all_tools
 
-    superset = await _all_tools(gantry)
+    superset = await _all_tools(fetcher)
     names = {t.name for t in superset}
     assert {"get_weather", "send_email", "convert_currency"} <= names
 
@@ -156,7 +156,7 @@ async def test_react_agent_superset_covers_all_tools(gantry):
 # -- regression guard: the deprecated create_react_agent must stay gone ----- #
 
 
-async def test_react_agent_build_does_not_use_deprecated_create_react_agent(gantry):
+async def test_react_agent_build_does_not_use_deprecated_create_react_agent(fetcher):
     """Building and driving the live agent must never touch ``create_react_agent``.
 
     ``langgraph.prebuilt.create_react_agent`` is deprecated in LangGraph 1.x
@@ -171,7 +171,7 @@ async def test_react_agent_build_does_not_use_deprecated_create_react_agent(gant
         warnings.simplefilter("error", category=LangGraphDeprecatedSinceV10)
 
         model = RecordingChatModel()
-        agent = LangGraphAdapter(gantry).react_agent(model, limit=1)
+        agent = LangGraphAdapter(fetcher).react_agent(model, limit=1)
         await agent.ainvoke(
             {"messages": [HumanMessage(content="what's the weather in Paris?")]}
         )

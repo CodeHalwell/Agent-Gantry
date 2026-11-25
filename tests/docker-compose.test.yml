@@ -1,6 +1,6 @@
 version: "3.8"
 
-# Docker Compose for Agent-Gantry integration tests.
+# Docker Compose for dotfetch integration tests.
 # Usage: docker compose -f tests/docker-compose.test.yml up -d
 
 services:
@@ -19,4 +19,4 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: agent_gantry
+      POSTGRES_DB: dotfetch

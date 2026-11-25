@@ -1,23 +1,23 @@
 """
 End-to-end integration test: real ``agent_framework`` agent driving real
-gantry-wrapped tools, executed via ``asyncio.run`` per request to mirror
+fetcher-wrapped tools, executed via ``asyncio.run`` per request to mirror
 the loop topology of ``agent_framework_durabletask.DurableAIAgentWorker``.
 
 ``DurableAIAgentWorker._handle_request`` calls
 ``asyncio.run(self._agent_entity.run(request))`` for every inbound request,
 which constructs and tears down a fresh event loop each time. A
-module-level :class:`AgentGantry` therefore sees N distinct loops over its
+module-level :class:`DotFetch` therefore sees N distinct loops over its
 lifetime — the exact topology that previously surfaced as
 ``"Error: Function failed."`` for integrators.
 
-This test does the full thing without mocks of the gantry surface:
+This test does the full thing without mocks of the fetcher surface:
 
-1. Build an ``AgentGantry`` at module scope (no running loop).
+1. Build an ``DotFetch`` at module scope (no running loop).
 2. Build a real :class:`agent_framework.RawAgent` driven by a small
    :class:`agent_framework.BaseChatClient` subclass that emits one or
    more ``function_call`` items on the first turn and final text on the
    second turn — exercising AF's actual tool-invocation pipeline,
-   ``GantryToolBridge``'s wrappers, the gantry executor, the rate
+   ``DotFetchToolBridge``'s wrappers, the fetcher executor, the rate
    limiter, and the registered handlers.
 3. Drive the agent via ``asyncio.run`` repeatedly (and from a worker
    thread), asserting the tool results come back with the expected
@@ -38,9 +38,9 @@ import pytest
 
 af = pytest.importorskip("agent_framework")
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
+from dotfetch.integrations.agent_framework_bridge import DotFetchToolBridge
 
 
 def _run_on_worker_loop(coro_factory: Callable[[], Coroutine[Any, Any, Any]]) -> Any:
@@ -123,16 +123,16 @@ class _FakeChatClient(af.FunctionInvocationLayer, af.BaseChatClient):  # type: i
 
 
 # ---------------------------------------------------------------------------
-# Module-scope gantry — mirrors the integrator's pattern of building the
-# gantry at import time so the durable worker can register the instance.
+# Module-scope fetcher — mirrors the integrator's pattern of building the
+# fetcher at import time so the durable worker can register the instance.
 # Tools are registered up front; ``sync()`` is called from a throwaway loop
 # (also matches the documented "build at startup" pattern).
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture(scope="module")
-def module_gantry() -> AgentGantry:
-    g = AgentGantry(embedder=SimpleEmbedder())
+def module_fetcher() -> DotFetch:
+    g = DotFetch(embedder=SimpleEmbedder())
 
     @g.register
     def add_one(x: int) -> int:
@@ -155,11 +155,11 @@ def module_gantry() -> AgentGantry:
 
 
 @pytest.fixture(scope="module")
-def function_tools(module_gantry: AgentGantry) -> list[Any]:
+def function_tools(module_fetcher: DotFetch) -> list[Any]:
     """Pre-resolve the wrapped tools once, the way an integrator typically
     would (e.g. fetched at startup or via a context provider's
     ``before_run`` hook)."""
-    bridge = GantryToolBridge(module_gantry, as_function_tool=True)
+    bridge = DotFetchToolBridge(module_fetcher, as_function_tool=True)
     tools = _run_on_worker_loop(
         lambda: bridge.get_tools("add", limit=2, score_threshold=0.0)
     )
@@ -208,7 +208,7 @@ def test_sync_tool_executes_across_repeated_asyncio_run(
     """Sequential ``asyncio.run`` requests, sync handler, single tool call.
 
     Each iteration tears down its event loop. The same module-level
-    gantry must keep working — exercising the executor's ``to_thread``
+    fetcher must keep working — exercising the executor's ``to_thread``
     path on a fresh loop every time.
     """
     for i in range(5):
@@ -273,7 +273,7 @@ def test_sequential_requests_get_distinct_loops(
 def test_no_function_failed_envelope_in_results(function_tools: list[Any]) -> None:
     """Belt-and-braces: ensure none of the returned tool results contain
     AF's catch-all ``"Error: Function failed."`` string. If a future
-    regression makes ``gantry.execute`` raise, the bridge wrapper now
+    regression makes ``fetcher.execute`` raise, the bridge wrapper now
     surfaces a JSON ``{"error": ...}`` envelope, which would also fail
     this assertion.
     """

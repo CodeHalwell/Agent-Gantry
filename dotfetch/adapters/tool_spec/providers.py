@@ -1,0 +1,776 @@
+"""
+Provider-specific tool specification adapters.
+
+Implementations for OpenAI (Chat Completions & Responses API), Anthropic,
+Gemini, Mistral, Groq, and Microsoft Agent Framework.
+"""
+
+from __future__ import annotations
+
+import copy
+import dataclasses
+import datetime
+import decimal
+import enum
+import json
+import logging
+import pathlib
+import uuid
+from typing import TYPE_CHECKING, Any
+
+from pydantic import BaseModel
+
+from dotfetch.adapters.tool_spec.base import ToolCallPayload
+from dotfetch.adapters.tool_spec.schema_utils import (
+    sanitize_gemini_schema,
+    strict_json_schema,
+    unsupported_strict_paths,
+)
+from dotfetch.schema.execution import ToolCall
+
+if TYPE_CHECKING:
+    from dotfetch.schema.tool import ToolDefinition
+
+_logger = logging.getLogger(__name__)
+
+
+def _emitted_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """A caller-owned deep copy of a tool's parameter schema.
+
+    The registry holds one canonical ``ToolDefinition.parameters_schema``
+    per tool, so nothing emitted may alias it. An empty schema becomes the
+    no-argument object schema, the only spelling every provider accepts.
+    """
+    return copy.deepcopy(schema) if schema else {"type": "object", "properties": {}}
+
+
+def _jsonable(obj: Any) -> Any:
+    """``json.dumps`` fallback for the values tool handlers actually return.
+
+    A bare ``json.dumps(result)`` made ``DotFetch.execute_tool_calls``
+    raise ``TypeError`` for any tool returning a datetime, ``Decimal``,
+    dataclass, Pydantic model or set — all ordinary return types. Each is
+    rendered the way its own JSON convention does; anything else falls back
+    to ``str`` so a result is never lost to the model over its type.
+    """
+    if isinstance(obj, BaseModel):
+        return obj.model_dump(mode="json")
+    if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+        return dataclasses.asdict(obj)
+    if isinstance(obj, (datetime.datetime, datetime.date, datetime.time)):
+        return obj.isoformat()
+    if isinstance(obj, enum.Enum):
+        return obj.value
+    if isinstance(obj, (uuid.UUID, decimal.Decimal, pathlib.PurePath)):
+        return str(obj)
+    if isinstance(obj, (set, frozenset)):
+        return list(obj)
+    if isinstance(obj, (bytes, bytearray)):
+        return obj.decode("utf-8", errors="replace")
+    return str(obj)
+
+
+def _json_keys(value: Any) -> Any:
+    """``value`` with every mapping key JSON can name.
+
+    ``default=`` reaches values, never keys, so a dict keyed by an enum or a
+    tuple has to be rebuilt before ``json.dumps`` sees it. ``str``/``int``/
+    ``float``/``bool``/``None`` keys are left alone.
+    """
+    if isinstance(value, dict):
+        return {
+            (key if isinstance(key, (str, int, float, bool)) or key is None else str(key)): (
+                _json_keys(item)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_json_keys(item) for item in value]
+    return value
+
+
+def _json_text(result: Any) -> str:
+    """``result`` as the JSON text the OpenAI-shaped and Anthropic replies carry."""
+    return json.dumps(_json_keys(result), default=_jsonable)
+
+
+def _result_text(result: Any) -> str:
+    """``result`` as reply text: strings verbatim, anything else as JSON."""
+    return result if isinstance(result, str) else _json_text(result)
+
+
+def _json_native(result: Any) -> Any:
+    """``result`` rebuilt from JSON-native values only.
+
+    Gemini takes the function response as a structured object rather than
+    text, so the SDK serializes it itself and chokes on the same types
+    :func:`_jsonable` covers, anywhere in the structure. A round trip through
+    the text form converts every nested leaf in one pass.
+    """
+    return json.loads(_json_text(result))
+
+
+def _decode_arguments(arguments: Any, tool_name: str, adapter: str) -> dict[str, Any]:
+    """``arguments`` as the object ``ToolCallPayload`` requires, or ``{}``.
+
+    A JSON string is decoded first. Malformed JSON, or JSON that is not an
+    object (``"null"``, ``"[]"``, ``"1"``), is logged and treated as no
+    arguments rather than failing the whole turn.
+    """
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except json.JSONDecodeError:
+            _logger.warning(
+                "%s: malformed JSON in tool arguments for '%s', defaulting to empty dict: %s",
+                adapter,
+                tool_name,
+                arguments[:200],
+            )
+            return {}
+    if isinstance(arguments, dict):
+        return arguments
+    _logger.warning(
+        "%s: tool arguments for '%s' decoded to %s rather than an object, "
+        "defaulting to empty dict: %r",
+        adapter,
+        tool_name,
+        type(arguments).__name__,
+        arguments,
+    )
+    return {}
+
+
+def _close_objects_in_place(node: Any) -> None:
+    """Set ``additionalProperties: false`` on every object schema in ``node``.
+
+    Anthropic strict tool use requires it on *every* object, not only the
+    root; the root alone left nested objects open and the API rejected the
+    tool. Only this one keyword is added — unlike OpenAI strict mode,
+    Anthropic keeps optional properties optional, so ``strict_json_schema``
+    would be the wrong transform here.
+    """
+    if isinstance(node, list):
+        for item in node:
+            _close_objects_in_place(item)
+        return
+    if not isinstance(node, dict):
+        return
+    properties = node.get("properties")
+    if isinstance(properties, dict):
+        node["additionalProperties"] = False
+        for subschema in properties.values():
+            _close_objects_in_place(subschema)
+    # These are the keys the SDK's own ``transform_schema`` recurses into, and
+    # deliberately not ``schema_utils._SUBSCHEMA_KEYS``: the SDK leaves objects
+    # under ``not``/``contains``/``additionalItems`` open, so closing them here
+    # would constrain shapes Anthropic itself does not, and diverge from the
+    # agreement ``test_closed_paths_agree_with_the_anthropic_sdk`` pins down.
+    for key in ("items", "anyOf", "oneOf", "allOf", "prefixItems"):
+        if key in node:
+            _close_objects_in_place(node[key])
+    # ``$defs`` and its pre-2019 spelling. ``_collect_open_maps`` and
+    # ``_strict_in_place`` already walk both, and a hand-authored or Pydantic
+    # v1 schema still uses ``definitions``: leaving it unwalked published
+    # ``strict: true`` with the ``$ref`` target's nested objects open.
+    for defs_key in ("$defs", "definitions"):
+        if isinstance(node.get(defs_key), dict):
+            for subschema in node[defs_key].values():
+                _close_objects_in_place(subschema)
+
+
+def _strict_parameters(tool: ToolDefinition, dialect: str) -> tuple[dict[str, Any], bool]:
+    """Strict-mode ``parameters`` for ``tool``, and whether strict is usable.
+
+    OpenAI rejects the whole request when a tool marked ``strict: true``
+    carries an object with arbitrary keys — a ``dict[str, int]`` parameter,
+    an untyped ``dict`` — because strict mode cannot express one. Publishing
+    the tool without the flag keeps it callable (merely unconstrained),
+    where honouring the caller's ``strict=True`` verbatim would take down
+    every request the tool appears in.
+    """
+    strict = strict_json_schema(tool.parameters_schema)
+    unsupported = unsupported_strict_paths(tool.parameters_schema, strict_schema=strict)
+    if unsupported:
+        _logger.warning(
+            "Tool %r cannot use %s strict mode: %s describes an object with "
+            "arbitrary keys, which strict mode cannot express. Emitting the "
+            "tool without strict:true so the request still succeeds — declare "
+            "the object's properties explicitly to make it strict-compatible.",
+            tool.name,
+            dialect,
+            ", ".join(unsupported),
+        )
+        return _emitted_schema(tool.parameters_schema), False
+    return strict, True
+
+
+def _openai_function(tool: ToolDefinition, strict: bool, dialect: str) -> dict[str, Any]:
+    """The ``name``/``description``/``parameters`` fields both OpenAI APIs share."""
+    if strict:
+        parameters, use_strict = _strict_parameters(tool, dialect)
+    else:
+        parameters, use_strict = _emitted_schema(tool.parameters_schema), False
+    function: dict[str, Any] = {
+        "name": tool.name,
+        "description": tool.description,
+        "parameters": parameters,
+    }
+    if use_strict:
+        function["strict"] = True
+    return function
+
+
+class _ToolCallMixin:
+    """``to_tool_call`` is dialect-independent: the payload is already unified."""
+
+    def to_tool_call(
+        self,
+        payload: ToolCallPayload,
+        timeout_ms: int | None = None,
+        retry_count: int | None = None,
+    ) -> ToolCall:
+        overrides: dict[str, Any] = {}
+        if timeout_ms is not None:
+            overrides["timeout_ms"] = timeout_ms
+        if retry_count is not None:
+            overrides["retry_count"] = retry_count
+        return ToolCall(
+            tool_name=payload.tool_name,
+            arguments=payload.arguments,
+            trace_id=payload.tool_call_id,
+            **overrides,
+        )
+
+
+class OpenAIAdapter(_ToolCallMixin):
+    """
+    Tool specification adapter for OpenAI Chat Completions API.
+
+    Converts to/from OpenAI function calling format:
+    {
+        "type": "function",
+        "function": {
+            "name": "...",
+            "description": "...",
+            "parameters": {...}
+        }
+    }
+
+    For the Responses API, use OpenAIResponsesAdapter instead.
+    """
+
+    @property
+    def dialect_name(self) -> str:
+        return "openai"
+
+    def to_provider_schema(
+        self,
+        tool: ToolDefinition,
+        *,
+        strict: bool = False,
+        **options: Any,
+    ) -> dict[str, Any]:
+        """
+        Convert ToolDefinition to OpenAI function calling format.
+
+        Args:
+            tool: The tool definition to convert
+            strict: Enable OpenAI's structured-outputs strict mode. The
+                parameter schema is rewritten to satisfy it: every object gets
+                ``additionalProperties: false`` and lists all of its properties
+                in ``required``, with formerly-optional properties widened to
+                admit ``null``. Setting the flag without that rewrite makes the
+                API reject any tool that has an optional parameter. The
+                ToolDefinition's own schema is never mutated. Defaults to False.
+                A tool whose schema contains an object with arbitrary keys (a
+                ``dict[str, int]`` parameter, an untyped ``dict``) has no
+                strict-mode representation; it is emitted unmodified and
+                *without* ``strict: true``, with a warning, since claiming
+                strict there makes OpenAI reject the entire request.
+                Source: https://platform.openai.com/docs/guides/function-calling
+            **options: Additional provider-specific options
+
+        Returns:
+            OpenAI-compatible tool schema
+        """
+        return {"type": "function", "function": _openai_function(tool, strict, self.dialect_name)}
+
+    def from_provider_payload(
+        self,
+        payload: dict[str, Any],
+    ) -> ToolCallPayload:
+        """
+        Parse an OpenAI tool call from the API response.
+
+        Expected format:
+        {
+            "id": "call_xxx",
+            "type": "function",
+            "function": {
+                "name": "tool_name",
+                "arguments": "{\"arg\": \"value\"}"
+            }
+        }
+        """
+        function_data = payload.get("function") or {}
+        tool_name = function_data.get("name", "")
+        return ToolCallPayload(
+            tool_name=tool_name,
+            tool_call_id=payload.get("id"),
+            arguments=_decode_arguments(
+                function_data.get("arguments", {}), tool_name, "OpenAIAdapter"
+            ),
+            raw_payload=payload,
+        )
+
+    def format_tool_result(
+        self,
+        tool_name: str,
+        result: Any,
+        tool_call_id: str | None = None,
+        *,
+        is_error: bool = False,
+    ) -> dict[str, Any]:
+        """Format result for OpenAI tool_outputs."""
+        response: dict[str, Any] = {
+            "role": "tool",
+            "content": _result_text(result),
+            "name": tool_name,
+        }
+        if tool_call_id:
+            response["tool_call_id"] = tool_call_id
+        return response
+
+
+class OpenAIResponsesAdapter(_ToolCallMixin):
+    """
+    Tool specification adapter for OpenAI Responses API.
+
+    The Responses API is a newer API that uses a different format:
+    - Tools are specified with "type": "function" and "name" at top level
+    - Tool calls come as output items with type "function_call"
+    - Tool results use "function_call_output" type
+
+    Tool schema format:
+    {
+        "type": "function",
+        "name": "...",
+        "description": "...",
+        "parameters": {...}
+    }
+
+    Tool call format (from response.output):
+    {
+        "type": "function_call",
+        "call_id": "...",
+        "name": "tool_name",
+        "arguments": "{\"arg\": \"value\"}"
+    }
+
+    Tool result format:
+    {
+        "type": "function_call_output",
+        "call_id": "...",
+        "output": "result string"
+    }
+    """
+
+    @property
+    def dialect_name(self) -> str:
+        return "openai_responses"
+
+    def to_provider_schema(
+        self,
+        tool: ToolDefinition,
+        *,
+        strict: bool = False,
+        **options: Any,
+    ) -> dict[str, Any]:
+        """Convert ToolDefinition to the Responses API shape.
+
+        The same fields (and ``strict`` semantics) as
+        :meth:`OpenAIAdapter.to_provider_schema`, flat rather than nested
+        under ``function``.
+        """
+        return {"type": "function", **_openai_function(tool, strict, self.dialect_name)}
+
+    def from_provider_payload(
+        self,
+        payload: dict[str, Any],
+    ) -> ToolCallPayload:
+        """
+        Parse an OpenAI Responses API function_call from the response output.
+
+        Expected format (from response.output array):
+        {
+            "type": "function_call",
+            "call_id": "call_xxx",
+            "name": "tool_name",
+            "arguments": "{\"arg\": \"value\"}"
+        }
+        """
+        tool_name = payload.get("name", "")
+        return ToolCallPayload(
+            tool_name=tool_name,
+            tool_call_id=payload.get("call_id"),
+            arguments=_decode_arguments(
+                payload.get("arguments", {}), tool_name, "OpenAIResponsesAdapter"
+            ),
+            raw_payload=payload,
+        )
+
+    def format_tool_result(
+        self,
+        tool_name: str,
+        result: Any,
+        tool_call_id: str | None = None,
+        *,
+        is_error: bool = False,
+    ) -> dict[str, Any]:
+        """
+        Format result for OpenAI Responses API function_call_output.
+
+        Returns format suitable for sending back as input to responses.create():
+        {
+            "type": "function_call_output",
+            "call_id": "...",
+            "output": "result string"
+        }
+        """
+        response: dict[str, Any] = {
+            "type": "function_call_output",
+            "output": _result_text(result),
+        }
+        if tool_call_id:
+            response["call_id"] = tool_call_id
+        return response
+
+
+class AnthropicAdapter(_ToolCallMixin):
+    """
+    Tool specification adapter for Anthropic (Claude).
+
+    Converts to/from Anthropic tool format:
+    {
+        "name": "...",
+        "description": "...",
+        "input_schema": {...}
+    }
+    """
+
+    @property
+    def dialect_name(self) -> str:
+        return "anthropic"
+
+    def to_provider_schema(
+        self,
+        tool: ToolDefinition,
+        *,
+        strict: bool = False,
+        **options: Any,
+    ) -> dict[str, Any]:
+        """
+        Convert ToolDefinition to Anthropic tool format.
+
+        Args:
+            tool: The tool definition to convert
+            strict: Enable Anthropic strict tool use — uses grammar-constrained
+                sampling so Claude's ``input`` always matches ``input_schema``
+                exactly.  When ``True`` this method automatically injects
+                ``additionalProperties: false`` into the ``input_schema`` copy
+                (required by the Anthropic API for strict mode to take effect).
+                The original schema on the ToolDefinition is never mutated.
+                Defaults to False.
+                Source: https://platform.claude.com/docs/en/agents-and-tools/tool-use/strict-tool-use
+            **options: Additional provider-specific options
+
+        Returns:
+            Anthropic-compatible tool schema
+        """
+        input_schema: dict[str, Any] = _emitted_schema(tool.parameters_schema)
+        use_strict = False
+        if strict:
+            # Same gate as the OpenAI adapters: strict mode requires
+            # ``additionalProperties: false``, so a schema that *needs*
+            # arbitrary keys cannot be strict. Setting the flag anyway would
+            # replace a typed mapping (``dict[str, int]``) or a ``**kwargs``
+            # handler's open object with one accepting no keys at all —
+            # silently discarding the parameter's data rather than merely
+            # leaving it unconstrained.
+            # Anthropic's transform never inlines a decorated ``$ref``, so the
+            # OpenAI depth-limit probe does not apply to it.
+            unsupported = unsupported_strict_paths(
+                tool.parameters_schema, inlines_refs=False
+            )
+            if unsupported:
+                _logger.warning(
+                    "Tool %r cannot use %s strict mode: %s describes an "
+                    "object with arbitrary keys, which strict mode cannot "
+                    "express. Emitting the tool without strict:true so the "
+                    "keys stay usable — declare the object's properties "
+                    "explicitly to make it strict-compatible.",
+                    tool.name,
+                    self.dialect_name,
+                    ", ".join(unsupported),
+                )
+            else:
+                use_strict = True
+                _close_objects_in_place(input_schema)
+
+        schema: dict[str, Any] = {
+            "name": tool.name,
+            "description": tool.description,
+            "input_schema": input_schema,
+        }
+        if use_strict:
+            schema["strict"] = True
+        return schema
+
+    def from_provider_payload(
+        self,
+        payload: dict[str, Any],
+    ) -> ToolCallPayload:
+        """
+        Parse an Anthropic tool_use block from the API response.
+
+        Expected format:
+        {
+            "type": "tool_use",
+            "id": "toolu_xxx",
+            "name": "tool_name",
+            "input": {"arg": "value"}
+        }
+        """
+        tool_name = payload.get("name", "")
+        return ToolCallPayload(
+            tool_name=tool_name,
+            tool_call_id=payload.get("id"),
+            arguments=_decode_arguments(payload.get("input", {}), tool_name, "AnthropicAdapter"),
+            raw_payload=payload,
+        )
+
+    def format_tool_result(
+        self,
+        tool_name: str,
+        result: Any,
+        tool_call_id: str | None = None,
+        *,
+        is_error: bool = False,
+    ) -> dict[str, Any]:
+        """Format result for Anthropic tool_result.
+
+        Pass ``is_error=True`` when the tool execution failed so the model can
+        distinguish error content from normal tool output.
+        Source: https://platform.claude.com/docs/en/api/messages (tool_result block)
+        """
+        response: dict[str, Any] = {
+            "type": "tool_result",
+            "content": _result_text(result),
+        }
+        if is_error:
+            response["is_error"] = True
+        if tool_call_id:
+            response["tool_use_id"] = tool_call_id
+        return response
+
+
+class GeminiAdapter(_ToolCallMixin):
+    """
+    Tool specification adapter for Google Gemini.
+
+    Converts to/from Gemini function declaration format:
+    {
+        "name": "...",
+        "description": "...",
+        "parameters": {...}
+    }
+    """
+
+    @property
+    def dialect_name(self) -> str:
+        return "gemini"
+
+    def to_provider_schema(
+        self,
+        tool: ToolDefinition,
+        **options: Any,
+    ) -> dict[str, Any]:
+        """
+        Convert ToolDefinition to Gemini function declaration format.
+
+        The parameter schema is sanitized first: Gemini and Vertex AI reject
+        unknown JSON-Schema keywords rather than ignoring them, so keywords
+        that are valid everywhere else (``additionalProperties``, ``default``,
+        ``title``, …) would turn into request errors. This matters for
+        dotfetch's own tools — introspecting a ``**kwargs`` handler emits
+        ``additionalProperties``, which alone breaks the Gemini path. Local
+        ``$ref``/``$defs`` pairs (what Pydantic emits for nested models) are
+        inlined, since the SDKs will not follow the pointers.
+
+        Args:
+            tool: The tool definition to convert
+            sanitize: Set ``False`` to emit ``parameters_schema`` verbatim,
+                for callers on an SDK version that accepts more keywords.
+                Defaults to True.
+            **options: Additional provider-specific options
+
+        Returns:
+            Gemini-compatible function declaration
+        """
+        sanitize = options.get("sanitize", True)
+        return {
+            "name": tool.name,
+            "description": tool.description,
+            "parameters": (
+                sanitize_gemini_schema(tool.parameters_schema)
+                if sanitize
+                else _emitted_schema(tool.parameters_schema)
+            ),
+        }
+
+    def from_provider_payload(
+        self,
+        payload: dict[str, Any],
+    ) -> ToolCallPayload:
+        """
+        Parse a Gemini function call from the API response.
+
+        Expected format (from functionCall):
+        {
+            "name": "tool_name",
+            "args": {"arg": "value"},
+            "id": "..."   # present in google-genai >= 1.x when parallel calls are made
+        }
+        """
+        tool_name = payload.get("name", "")
+        return ToolCallPayload(
+            tool_name=tool_name,
+            # google-genai >= 1.x includes an "id" on parallel function calls
+            tool_call_id=payload.get("id"),
+            arguments=_decode_arguments(payload.get("args", {}), tool_name, "GeminiAdapter"),
+            raw_payload=payload,
+        )
+
+    def format_tool_result(
+        self,
+        tool_name: str,
+        result: Any,
+        tool_call_id: str | None = None,
+        *,
+        is_error: bool = False,
+    ) -> dict[str, Any]:
+        """Format result for Gemini function response."""
+        # Made JSON-native first: the SDK serializes the response object
+        # itself, so a datetime or Pydantic model anywhere in it would fail
+        # there instead. A model result becomes a plain dict and is used as
+        # the response directly, as a dict result always was.
+        result = _json_native(result)
+        response_content = result if isinstance(result, dict) else {"result": result}
+        payload: dict[str, Any] = {
+            "functionResponse": {
+                "name": tool_name,
+                "response": response_content,
+            }
+        }
+        # The id field belongs inside functionResponse (it is a field on the
+        # FunctionResponse proto message, not on Part itself — Part has no id
+        # field). Echo back the call id so the model can correlate parallel
+        # function calls with their results.
+        # Source: google-genai types.py — FunctionResponse.id field description:
+        # "The id of the function call this response is for"
+        # https://ai.google.dev/gemini-api/docs/function-calling
+        if tool_call_id:
+            payload["functionResponse"]["id"] = tool_call_id
+        return payload
+
+
+class MistralAdapter(OpenAIAdapter):
+    """
+    Tool specification adapter for Mistral AI.
+
+    Mistral uses OpenAI-compatible function calling format,
+    so this inherits all behavior from OpenAIAdapter.
+    """
+
+    @property
+    def dialect_name(self) -> str:
+        return "mistral"
+
+
+class GroqAdapter(OpenAIAdapter):
+    """
+    Tool specification adapter for Groq.
+
+    Groq uses OpenAI-compatible function calling format,
+    so this inherits all behavior from OpenAIAdapter.
+    """
+
+    @property
+    def dialect_name(self) -> str:
+        return "groq"
+
+
+class AgentFrameworkAdapter(OpenAIAdapter):
+    """
+    Tool specification adapter for Microsoft Agent Framework (1.0 GA).
+
+    Microsoft Agent Framework uses OpenAI-compatible function calling format
+    for its tool schemas, so this inherits from ``OpenAIAdapter`` and adds:
+
+    - Optional ``include_metadata`` support for dotfetch provenance info
+    - Simplified AF internal payload format (``{"name": ..., "arguments": ...}``)
+
+    For direct tool wrapping (Python callables), use the higher-level
+    ``dotfetch.integrations.agent_framework_bridge`` module instead.
+    """
+
+    @property
+    def dialect_name(self) -> str:
+        return "agent_framework"
+
+    def to_provider_schema(
+        self,
+        tool: ToolDefinition,
+        **options: Any,
+    ) -> dict[str, Any]:
+        """
+        Convert ToolDefinition to Microsoft Agent Framework tool schema.
+
+        Delegates to OpenAIAdapter for the base schema and optionally appends
+        dotfetch-specific metadata for provenance tracking.
+        """
+        schema = super().to_provider_schema(tool, **options)
+        if options.get("include_metadata", False):
+            schema["function"]["metadata"] = {
+                "namespace": tool.namespace,
+                "version": tool.version,
+                "source": tool.source.value if hasattr(tool.source, "value") else str(tool.source),
+            }
+        return schema
+
+    def from_provider_payload(
+        self,
+        payload: dict[str, Any],
+    ) -> ToolCallPayload:
+        """
+        Parse a Microsoft Agent Framework tool call payload.
+
+        Handles both the standard OpenAI-style format (via super()) and the
+        simplified format used by AF's internal dispatch:
+        ``{"name": "tool_name", "arguments": {"arg": "value"}}``
+        """
+        # Standard OpenAI format — delegate to parent
+        if "function" in payload:
+            return super().from_provider_payload(payload)
+
+        # Simplified AF internal format
+        tool_name = payload.get("name", "")
+        return ToolCallPayload(
+            tool_name=tool_name,
+            tool_call_id=payload.get("id") or payload.get("call_id"),
+            arguments=_decode_arguments(
+                payload.get("arguments", {}), tool_name, "AgentFrameworkAdapter"
+            ),
+            raw_payload=payload,
+        )

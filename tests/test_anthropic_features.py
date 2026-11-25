@@ -4,7 +4,7 @@ Tests for Anthropic-specific features.
 Tests the Anthropic integration including:
 - Interleaved thinking
 - Extended thinking
-- Tool use with Agent-Gantry
+- Tool use with dotfetch
 """
 
 from __future__ import annotations
@@ -15,8 +15,8 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
-from agent_gantry import AgentGantry
-from agent_gantry.integrations.anthropic_features import AnthropicFeatures
+from dotfetch import DotFetch
+from dotfetch.integrations.anthropic_features import AnthropicFeatures
 
 # Create mock anthropic module
 mock_anthropic = Mock()
@@ -24,7 +24,7 @@ mock_anthropic.AsyncAnthropic = MagicMock
 sys.modules["anthropic"] = mock_anthropic
 
 # Now we can import regardless of whether anthropic is installed
-from agent_gantry.integrations.anthropic_features import (
+from dotfetch.integrations.anthropic_features import (
     AnthropicClient,
     create_anthropic_client,
 )
@@ -137,21 +137,21 @@ class TestAnthropicClient:
     @pytest.mark.asyncio
     async def test_execute_tool_calls(self, mock_anthropic_tool_response):
         """Test executing tool calls from response."""
-        # Create mock gantry
-        gantry = MagicMock(spec=AgentGantry)
+        # Create mock fetcher
+        fetcher = MagicMock(spec=DotFetch)
         mock_result = MagicMock()
         mock_result.status = "success"
         mock_result.result = "Tool executed successfully"
-        gantry.execute = AsyncMock(return_value=mock_result)
+        fetcher.execute = AsyncMock(return_value=mock_result)
         # The formatting/concurrency logic now lives in the facade; bind the
         # real method to the mock so this still exercises the whole path.
-        gantry.execute_tool_calls = partial(AgentGantry.execute_tool_calls, gantry)
+        fetcher.execute_tool_calls = partial(DotFetch.execute_tool_calls, fetcher)
 
-        client = AnthropicClient(api_key="test-key", gantry=gantry)
+        client = AnthropicClient(api_key="test-key", fetcher=fetcher)
         tool_results = await client.execute_tool_calls(mock_anthropic_tool_response)
 
         # Verify tool was executed
-        gantry.execute.assert_called_once()
+        fetcher.execute.assert_called_once()
         assert len(tool_results) == 1
         assert tool_results[0]["type"] == "tool_result"
         assert tool_results[0]["tool_use_id"] == "tool_123"
@@ -244,16 +244,16 @@ class TestAnthropicClient:
     @pytest.mark.asyncio
     async def test_execute_tool_calls_failure_sets_is_error(self, mock_anthropic_tool_response):
         """Test that a failed tool execution sets is_error=True on the result."""
-        gantry = MagicMock(spec=AgentGantry)
+        fetcher = MagicMock(spec=DotFetch)
         mock_result = MagicMock()
         mock_result.status = "failure"
         mock_result.error = "Tool crashed"
-        gantry.execute = AsyncMock(return_value=mock_result)
+        fetcher.execute = AsyncMock(return_value=mock_result)
         # The formatting/concurrency logic now lives in the facade; bind the
         # real method to the mock so this still exercises the whole path.
-        gantry.execute_tool_calls = partial(AgentGantry.execute_tool_calls, gantry)
+        fetcher.execute_tool_calls = partial(DotFetch.execute_tool_calls, fetcher)
 
-        client = AnthropicClient(api_key="test-key", gantry=gantry)
+        client = AnthropicClient(api_key="test-key", fetcher=fetcher)
         tool_results = await client.execute_tool_calls(mock_anthropic_tool_response)
 
         assert len(tool_results) == 1
@@ -263,16 +263,16 @@ class TestAnthropicClient:
     @pytest.mark.asyncio
     async def test_execute_tool_calls_success_omits_is_error(self, mock_anthropic_tool_response):
         """Test that a successful tool execution does NOT set is_error."""
-        gantry = MagicMock(spec=AgentGantry)
+        fetcher = MagicMock(spec=DotFetch)
         mock_result = MagicMock()
         mock_result.status = "success"
         mock_result.result = {"temperature": 25, "unit": "C"}
-        gantry.execute = AsyncMock(return_value=mock_result)
+        fetcher.execute = AsyncMock(return_value=mock_result)
         # The formatting/concurrency logic now lives in the facade; bind the
         # real method to the mock so this still exercises the whole path.
-        gantry.execute_tool_calls = partial(AgentGantry.execute_tool_calls, gantry)
+        fetcher.execute_tool_calls = partial(DotFetch.execute_tool_calls, fetcher)
 
-        client = AnthropicClient(api_key="test-key", gantry=gantry)
+        client = AnthropicClient(api_key="test-key", fetcher=fetcher)
         tool_results = await client.execute_tool_calls(mock_anthropic_tool_response)
 
         assert len(tool_results) == 1
@@ -377,14 +377,14 @@ class TestCreateAnthropicClient:
         assert client._features.thinking_budget_tokens == 10000
 
     @pytest.mark.asyncio
-    async def test_create_client_with_gantry(self):
-        """Test creating client with AgentGantry instance."""
-        gantry = MagicMock(spec=AgentGantry)
+    async def test_create_client_with_fetcher(self):
+        """Test creating client with DotFetch instance."""
+        fetcher = MagicMock(spec=DotFetch)
         client = await create_anthropic_client(
             api_key="test-key",
-            gantry=gantry,
+            fetcher=fetcher,
         )
-        assert client._gantry == gantry
+        assert client._fetcher == fetcher
 
 
 class TestClaudeOpus48ThinkingGuards:
@@ -438,7 +438,7 @@ class TestClaudeOpus48ThinkingGuards:
     def test_opus48_extended_thinking_not_recommended_guard(self):
         """AnthropicFeatures accepts extended config but Anthropic docs state it is
         unsupported on Opus 4.8; the API will reject it at runtime. This test
-        documents that Gantry does not silently discard the config."""
+        documents that dotfetch does not silently discard the config."""
         features = AnthropicFeatures(
             enable_extended_thinking=True,
             thinking_budget_tokens=5000,
@@ -512,12 +512,12 @@ class TestRetrievalThreshold:
 
     @pytest.mark.asyncio
     async def test_create_message_retrieves_with_zero_threshold(self):
-        gantry = MagicMock(spec=AgentGantry)
+        fetcher = MagicMock(spec=DotFetch)
         retrieval_result = MagicMock()
         retrieval_result.tools = []
-        gantry.retrieve = AsyncMock(return_value=retrieval_result)
+        fetcher.retrieve = AsyncMock(return_value=retrieval_result)
 
-        client = AnthropicClient(api_key="test-key", gantry=gantry)
+        client = AnthropicClient(api_key="test-key", fetcher=fetcher)
         mock_response = MagicMock()
         mock_response.content = []
         client._client.messages.create = AsyncMock(return_value=mock_response)
@@ -528,8 +528,8 @@ class TestRetrievalThreshold:
             auto_retrieve_tools=True,
         )
 
-        gantry.retrieve.assert_awaited_once()
-        query = gantry.retrieve.await_args.args[0]
+        fetcher.retrieve.assert_awaited_once()
+        query = fetcher.retrieve.await_args.args[0]
         assert query.score_threshold == 0.0, (
             "AnthropicClient must request tools with score_threshold=0.0; "
             f"got {query.score_threshold} (the silent-drop default)"

@@ -1,8 +1,8 @@
-# Agent-Gantry Modernisation Audit
+# dotfetch Modernisation Audit
 
 **Date:** 2026-08-03
 **Repository:** `CodeHalwell/Agent-Gantry` · version `0.9.0`
-**Branch:** `claude/agent-gantry-performance-mw8s6p` (based on `main` at `e4e7fd4`)
+**Branch:** `claude/dotfetch-performance-mw8s6p` (based on `main` at `e4e7fd4`)
 **Auditor:** Claude
 
 > **Audit history.**
@@ -32,9 +32,9 @@
 >   `>=1.5.0,<2.0.0` constraint — no version change required); updated google-adk comment
 >   to reflect 2.2.0 as latest stable (was 2.1.0; langgraph conflict still blocks upgrade).
 >   No code changes required.
-> - **2026-08-03** (`claude/agent-gantry-performance-mw8s6p`): Performance +
+> - **2026-08-03** (`claude/dotfetch-performance-mw8s6p`): Performance +
 >   dependency audit. **Urgent:** capped `mcp>=1.27.2,<2.0.0` — mcp 2.0.0
->   (2026-07-28) removes every v1 API Gantry uses (`Server`, `stdio_server`,
+>   (2026-07-28) removes every v1 API dotfetch uses (`Server`, `stdio_server`,
 >   `ClientSession`, `stdio_client`); uncapped standalone `[mcp]` installs broke
 >   at import. Bumped `crewai>=1.15.0` (its opentelemetry-api pin moved to
 >   ~=1.42.0 in 1.15.0, resolving the long-standing agent-framework conflict —
@@ -65,7 +65,7 @@
 >   LIFTED: pydantic-ai verified on 2.23.0 (zero changes — keyword-only
 >   construction spans both majors), dspy verified on 3.3.0 (backward
 >   compatible; ReActV2 is a separate experimental class), haystack-ai 3.0
->   supported via a version branch in `GantryLiveHaystackToolInvoker.build()`
+>   supported via a version branch in `DotFetchLiveHaystackToolInvoker.build()`
 >   (`ToolInvoker` on 2.x; per-call `Agent` with `chat_generator=...` or a
 >   clear error on 3.x — previously a misleading "install haystack-ai"
 >   ImportError; new real-package guards in
@@ -97,19 +97,19 @@
    `>=0.105.2` to `>=0.107.1`.  Three new releases since the 2026-06-05 audit:
    - **0.106.0** (2026-06-05): `claude-opus-4-1` formally marked as deprecated in the
      SDK (retiring 2026-08-05); Foundry client `copy()`/`with_options()` fixes; schema
-     `$ref`/`$defs` transform bug fix.  `claude-opus-4-1` is not referenced in Gantry
+     `$ref`/`$defs` transform bug fix.  `claude-opus-4-1` is not referenced in dotfetch
      source or examples — no code changes required beyond the floor bump.
    - **0.107.0** (2026-06-06): minor type updates for Managed Agents API; no changes to
-     Messages API or tool-use surfaces used by Gantry.
+     Messages API or tool-use surfaces used by dotfetch.
    - **0.107.1** (2026-06-07): Foundry x-api-key header authentication fix; no changes
-     to Messages API or tool-use surfaces used by Gantry.
+     to Messages API or tool-use surfaces used by dotfetch.
    No breaking changes across 0.105.2→0.107.1.  Floor bumped and `pyproject.toml`
    comment updated this run.  `uv.lock` regenerated.
    Source: https://pypi.org/pypi/anthropic/json (verified 2026-06-08)
            https://github.com/anthropics/anthropic-sdk-python/releases (verified 2026-06-08)
 2. **Claude model deprecations (imminent)** — `claude-sonnet-4` (`claude-sonnet-4-20250514`)
    and `claude-opus-4` (`claude-opus-4-20250514`) are retired on **2026-06-15** (7 days
-   from this audit). Neither model ID appears in Gantry source or examples (confirmed by
+   from this audit). Neither model ID appears in dotfetch source or examples (confirmed by
    grep across all `.py` and `.md` files). The vague phrase "earlier Claude 4 models" in
    three docstrings of `anthropic_features.py` has been replaced with an explicit model
    list excluding the retiring models, and a retirement notice added.
@@ -167,20 +167,20 @@ Sources verified against PyPI JSON API.
 ### 2.2 openai 2.39.0 / 2.40.0 / 2.41.0 API surface changes
 
 None of these releases change the Chat Completions or Responses API request/response
-shapes used by Gantry's `OpenAIAdapter` and `OpenAIResponsesAdapter`.
+shapes used by dotfetch's `OpenAIAdapter` and `OpenAIResponsesAdapter`.
 
 **2.41.0** (released 2026-06-03) adds:
 - `responses.moderation` and `chat_completions.moderation` endpoints — new moderation
-  surface. Gantry does not use moderation endpoints; no change needed.
+  surface. dotfetch does not use moderation endpoints; no change needed.
 
 **2.40.0** (released 2026-06-01) adds:
-- Amazon Bedrock Responses support — new Bedrock client path. Gantry does not currently
+- Amazon Bedrock Responses support — new Bedrock client path. dotfetch does not currently
   target Bedrock; this is a **needs-confirmation** item if Bedrock support is planned.
 
 **2.39.0** (released 2026-06-01) adds:
 - `additional_tools` field on the Responses API **response** object — server-side
-  metadata; Gantry does not parse response objects directly, so no change needed.
-- `ActionSearch.query` made optional — Action Search feature only, not used by Gantry.
+  metadata; dotfetch does not parse response objects directly, so no change needed.
+- `ActionSearch.query` made optional — Action Search feature only, not used by dotfetch.
 - Workload identity in audit logs — server-side.
 
 **Risk level:** Safe internal.
@@ -189,7 +189,7 @@ shapes used by Gantry's `OpenAIAdapter` and `OpenAIResponsesAdapter`.
 
 ### 2.3 langchain 1.3.4 / langgraph 1.2.4 API surface changes
 
-Both are patch releases with no breaking changes to any API surface used by Gantry.
+Both are patch releases with no breaking changes to any API surface used by dotfetch.
 
 - `langchain 1.3.4`: minor internal fixes; `ChatOpenAI`, `ChatAnthropic`, `BaseTool`
   interfaces unchanged.
@@ -197,7 +197,7 @@ Both are patch releases with no breaking changes to any API surface used by Gant
   `CompiledGraph`, and interrupt/resume APIs unchanged.
 
 `langgraph-sdk` resolved from `0.3.13 → 0.4.2` as a transitive consequence of the
-floor bump; SDK is not imported directly by Gantry.
+floor bump; SDK is not imported directly by dotfetch.
 
 **Risk level:** Safe internal.
 
@@ -207,12 +207,12 @@ floor bump; SDK is not imported directly by Gantry.
 
 cohere 7.0.0 is a major release. The breaking change is:
 
-- **Python minimum version raised from `^3.8` to `^3.10`** — compatible with Gantry's
+- **Python minimum version raised from `^3.8` to `^3.10`** — compatible with dotfetch's
   `requires-python = ">=3.10"`. No code change required.
 
 API surface:
 - `AsyncClientV2.rerank()` — still the correct async rerank call; signature and return
-  type unchanged. Gantry's `CohereReranker` (`from cohere import AsyncClientV2`) continues
+  type unchanged. dotfetch's `CohereReranker` (`from cohere import AsyncClientV2`) continues
   to work without modification.
 - `AsyncClientV2.embed()` — unchanged.
 
@@ -240,7 +240,7 @@ OpenAI has shipped the GPT-5.x model family:
 
 `gpt-4.1` is **not** deprecated.
 
-Gantry source code: `config.py` defaults to `gpt-4o-mini` (schema default, user-facing).
+dotfetch source code: `config.py` defaults to `gpt-4o-mini` (schema default, user-facing).
 Changing this default is a breaking API change requiring a major version bump. Tracked as
 a good next-step item (#4 below).
 
@@ -268,7 +268,7 @@ in a standalone environment without agent-framework.
 ### 3.1 OpenAI — no changes required ✅
 
 `OpenAIResponsesAdapter` and `OpenAIAdapter` unchanged. The `additional_tools` field
-added in openai 2.39.0 is a server-returned metadata field; Gantry does not need to
+added in openai 2.39.0 is a server-returned metadata field; dotfetch does not need to
 emit or parse it.
 
 **Source:** https://platform.openai.com/docs/api-reference/responses (verified 2026-06-02).
@@ -300,15 +300,15 @@ Both route correctly through `AsyncOpenAI` (Mistral) and `AsyncGroq` (Groq).
 All middleware, bridge, and provider surfaces verified current against AF 1.8.0 (released
 2026-06-04).  Key AF 1.8.0 notes:
 
-- `GantryToolBridge` is unaffected by the Skill API async refactor (Gantry uses its own
+- `DotFetchToolBridge` is unaffected by the Skill API async refactor (dotfetch uses its own
   `SkillRegistry`, not AF's `SkillsProvider`).
-- `GantryToolBridge` wraps all callables as async already; AF 1.8.0's "sync tools off
-  the event loop" optimisation is a no-op for Gantry-wrapped tools — no double-wrapping.
+- `DotFetchToolBridge` wraps all callables as async already; AF 1.8.0's "sync tools off
+  the event loop" optimisation is a no-op for dotfetch-wrapped tools — no double-wrapping.
 - AF 1.8.0's fix for unsafe serialisation of function arguments and for message-id
-  collisions in compaction both benefit `GantryToolBridge` / `GantryContextProvider`
+  collisions in compaction both benefit `DotFetchToolBridge` / `DotFetchContextProvider`
   without any code changes.
 - The new `FunctionInvocationContext` (progressive tool exposure) is a potential future
-  enhancement for `GantryContextProvider`; flagged as a good next-step item (#11 below).
+  enhancement for `DotFetchContextProvider`; flagged as a good next-step item (#11 below).
 
 ### 4.2 LangGraph, AutoGen, CrewAI, LlamaIndex, Semantic Kernel — no changes required ✅
 
@@ -344,7 +344,7 @@ Model capability tables updated to include `claude-opus-4-8`:
 +# docs — set explicitly to override. Not available on claude-haiku-4-5.
 ```
 
-**File:** `agent_gantry/integrations/anthropic_features.py`
+**File:** `dotfetch/integrations/anthropic_features.py`
 **Risk:** Safe internal (documentation only).
 **Source:** https://platform.claude.com/docs/en/docs/about-claude/models/overview
 
@@ -387,19 +387,19 @@ replaced with `gpt-5.5` and `gpt-5.4-mini` respectively (39 occurrences across 2
 |------|---------|
 | `README.md` | 3 occurrences `gpt-4o` → `gpt-5.5` |
 | `docs/reference/llm_sdk_compatibility.md` | 5 occurrences (`gpt-4o` → `gpt-5.5`, `openai>=2.37.0` → `>=2.40.0`) |
-| `agent_gantry/README.md` | 1 occurrence |
-| `agent_gantry/skills/agent-gantry/SKILL.md` | 3 occurrences |
-| `agent_gantry/integrations/README.md` | 3 occurrences |
-| `agent_gantry/core/README.md` | 1 occurrence |
+| `dotfetch/README.md` | 1 occurrence |
+| `dotfetch/skills/dotfetch/SKILL.md` | 3 occurrences |
+| `dotfetch/integrations/README.md` | 3 occurrences |
+| `dotfetch/core/README.md` | 1 occurrence |
 | `examples/tool_vector_db/README.md` | 1 occurrence (`gpt-4o-mini` → `gpt-5.4-mini`) |
 
 **Still pending (breaking change):**
 
 | File | Current value | Replacement | Blocker |
 |------|--------------|-------------|---------|
-| `agent_gantry/schema/config.py` | `gpt-4o-mini` (schema default) | `gpt-5.4-mini` | Breaking — requires major version bump |
+| `dotfetch/schema/config.py` | `gpt-4o-mini` (schema default) | `gpt-5.4-mini` | Breaking — requires major version bump |
 
-`agent_gantry/integrations/semantic_tools.py` uses `gpt-4.1` — **not deprecated**, no
+`dotfetch/integrations/semantic_tools.py` uses `gpt-4.1` — **not deprecated**, no
 action required.
 
 **Risk:** Safe internal for examples and docs; breaking for `config.py` default.
@@ -453,7 +453,7 @@ tests (22 tests) all pass with the PR #225 and PR #226 fixes applied.
   Key AF 1.8.0 changes documented: `McpSkillsSource`, `FunctionInvocationContext`,
   background-agent harness, `AgentFileStore`/`FileAccessProvider`; bug fixes for
   unsafe serialisation of function arguments and message-id collisions in compaction;
-  Skill API async refactor (experimental, not used by Gantry).
+  Skill API async refactor (experimental, not used by dotfetch).
   Source: https://pypi.org/pypi/agent-framework/json (verified 2026-06-05)
 - `pyproject.toml`: update `google-adk` comment to reflect 2.2.0 as latest stable
   (was 2.1.0; `langgraph<0.4.8` conflict with `langgraph>=1.2.4` persists; floor
@@ -461,18 +461,18 @@ tests (22 tests) all pass with the PR #225 and PR #226 fixes applied.
   Source: https://pypi.org/pypi/google-adk/json (verified 2026-06-05)
 
 ### Deprecation notice (action required by 2026-10-23)
-- `agent_gantry/schema/config.py` default `"gpt-4o-mini"` must be migrated to
+- `dotfetch/schema/config.py` default `"gpt-4o-mini"` must be migrated to
   `"gpt-5.4-mini"` before OpenAI's 2026-10-23 shutdown. This is a breaking change
   requiring a major version bump.
 
 ## [0.4.x] — 2026-06-04
 
 ### Fixed
-- `agent_gantry/core/executor.py`: map `PermissionDeniedError` to
+- `dotfetch/core/executor.py`: map `PermissionDeniedError` to
   `ExecutionStatus.PERMISSION_DENIED` (was incorrectly using `ExecutionStatus.FAILURE`),
   restoring correct downstream security logging and status-based routing.
   Source: PR #225.
-- `agent_gantry/utils/registry_linter.py`: add `if other not in full: continue`
+- `dotfetch/utils/registry_linter.py`: add `if other not in full: continue`
   pre-check in `_detect_cross_references` before invoking the compiled regex pattern,
   reducing CPU time for large registries where most tool pairs do not cross-reference.
   Source: PR #226.
@@ -480,7 +480,7 @@ tests (22 tests) all pass with the PR #225 and PR #226 fixes applied.
 ### Changed
 - `pyproject.toml`: bump `openai` floor `>=2.40.0 → >=2.41.0` (both `openai` and
   `mistral` extras). openai 2.41.0 adds `responses.moderation` and
-  `chat_completions.moderation` endpoints; no breaking changes to any Gantry API surface.
+  `chat_completions.moderation` endpoints; no breaking changes to any dotfetch API surface.
   Source: https://github.com/openai/openai-python/releases/tag/v2.41.0
 - `pyproject.toml`: update `google-genai` comment to reflect 2.8.0 as latest stable
   (no API changes; floor unchanged). Source: https://pypi.org/pypi/google-genai/json
@@ -489,7 +489,7 @@ tests (22 tests) all pass with the PR #225 and PR #226 fixes applied.
   Source: https://pypi.org/pypi/semantic-kernel/json
 
 ### Deprecation notice (action required by 2026-10-23)
-- `agent_gantry/schema/config.py` default `"gpt-4o-mini"` must be migrated to
+- `dotfetch/schema/config.py` default `"gpt-4o-mini"` must be migrated to
   `"gpt-5.4-mini"` before OpenAI's 2026-10-23 shutdown. This is a breaking change
   requiring a major version bump.
 
@@ -502,7 +502,7 @@ tests (22 tests) all pass with the PR #225 and PR #226 fixes applied.
   checkpoint and serialisation fixes; no API changes). `langgraph-sdk` resolved to
   `0.4.2` as a transitive consequence. Source: https://pypi.org/pypi/langgraph/json
 - `pyproject.toml`: bump `cohere` floor `>=6.0.0 → >=7.0.3`. cohere 7.0.0 is a major
-  release; the only breaking change is Python >=3.10 (already satisfied by Gantry's
+  release; the only breaking change is Python >=3.10 (already satisfied by dotfetch's
   `requires-python = ">=3.10"`). `AsyncClientV2.rerank()` API is unchanged.
   Source: https://github.com/cohere-ai/cohere-python/releases
 - `docs/reference/llm_sdk_compatibility.md`: replace `gpt-4o-realtime-preview` with
@@ -512,7 +512,7 @@ tests (22 tests) all pass with the PR #225 and PR #226 fixes applied.
   shutdown date of 2026-10-23 for both deprecated models.
 - `docs/reference/llm_sdk_compatibility.md`: update `openai` install pin from
   `>=2.37.0` to `>=2.40.0` (current floor).
-- `agent_gantry/schema/config.py`: add deprecation comment on `gpt-4o-mini` default;
+- `dotfetch/schema/config.py`: add deprecation comment on `gpt-4o-mini` default;
   the default is NOT changed (breaking change requiring a major version bump — tracked).
 
 ## [0.4.x] — 2026-06-02
@@ -521,8 +521,8 @@ tests (22 tests) all pass with the PR #225 and PR #226 fixes applied.
 - `pyproject.toml`: bump `openai` floor `>=2.38.0 → >=2.40.0` (both `openai` and
   `mistral` extras). openai 2.39.0 adds `additional_tools` in Responses API responses
   and workload identity in audit logs; 2.40.0 adds Amazon Bedrock Responses support.
-  No breaking changes to any Gantry API surface.
-- `agent_gantry/integrations/anthropic_features.py`: model capability tables updated
+  No breaking changes to any dotfetch API surface.
+- `dotfetch/integrations/anthropic_features.py`: model capability tables updated
   to include `claude-opus-4-8` (adaptive thinking only; effort defaults to "high";
   extended thinking not supported).
 
@@ -560,10 +560,10 @@ tests (22 tests) all pass with the PR #225 and PR #226 fixes applied.
 | 4 | ~~Registry linter substring pre-check~~ | `utils/registry_linter.py` | Safe internal | ✅ Done (2026-06-04 run) |
 | 5 | ~~Update AF comment for 1.8.0~~ | `pyproject.toml` | Safe internal | ✅ Done (2026-06-05 run) |
 | 6 | ~~Update google-adk comment to 2.2.0~~ | `pyproject.toml` | Safe internal | ✅ Done (2026-06-05 run) |
-| 7 | ~~Update `anthropic_features.py` docstrings — replace vague "earlier Claude 4 models" with explicit list; add claude-sonnet-4 / claude-opus-4 retirement notice~~ | `agent_gantry/integrations/anthropic_features.py` | Safe internal | ✅ **Done this run** (2026-06-08) |
+| 7 | ~~Update `anthropic_features.py` docstrings — replace vague "earlier Claude 4 models" with explicit list; add claude-sonnet-4 / claude-opus-4 retirement notice~~ | `dotfetch/integrations/anthropic_features.py` | Safe internal | ✅ **Done this run** (2026-06-08) |
 | 8 | ~~Update install-pin docs (anthropic `0.101.0→0.107.1`, openai `2.40.0→2.41.0`, groq `1.2.0→1.4.0`)~~ | `docs/reference/llm_sdk_compatibility.md` | Safe internal | ✅ **Done this run** (2026-06-08) |
-| 9 | Bump `config.py` default from `gpt-4o-mini` → `gpt-5.4-mini` | `agent_gantry/schema/config.py` | Breaking — major version bump | ⏳ Pending (deadline 2026-10-23) |
+| 9 | Bump `config.py` default from `gpt-4o-mini` → `gpt-5.4-mini` | `dotfetch/schema/config.py` | Breaking — major version bump | ⏳ Pending (deadline 2026-10-23) |
 | 10 | Validate `semantic-kernel>=1.43.0` in isolation with `agent-framework`; bump floor if OTel conflict resolved | `pyproject.toml` | Safe with shim | ⏳ Pending |
 | 11 | Validate `google-adk>=2.2.0` standalone env; add docs page showing Workflow Runtime pattern (v2 major) | `docs/`, `examples/` | Needs confirmation | ⏳ Pending |
 | 12 | Add MAF migration guide (`docs/migrating-from-autogen.md`) for AutoGen → AF 1.x teams | `docs/` | Documentation | ⏳ Pending |
-| 13 | Explore `FunctionInvocationContext` (AF 1.8.0) for progressive tool exposure in `GantryContextProvider` | `agent_gantry/integrations/agent_framework_provider.py` | Safe with shim | ⏳ Pending |
+| 13 | Explore `FunctionInvocationContext` (AF 1.8.0) for progressive tool exposure in `DotFetchContextProvider` | `dotfetch/integrations/agent_framework_provider.py` | Safe with shim | ⏳ Pending |

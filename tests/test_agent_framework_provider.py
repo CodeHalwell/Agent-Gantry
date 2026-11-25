@@ -1,7 +1,7 @@
 """
-Tests for :class:`agent_gantry.integrations.GantryContextProvider`.
+Tests for :class:`dotfetch.integrations.DotFetchContextProvider`.
 
-The provider is the AF-native way to attach Gantry to an
+The provider is the AF-native way to attach dotfetch to an
 ``agent_framework.Agent`` and must:
 
 * Inject the top-k semantically relevant tools into ``SessionContext`` for
@@ -28,9 +28,9 @@ import pytest
 # module when the optional dependency is missing.
 af = pytest.importorskip("agent_framework")
 
-from agent_gantry import AgentGantry, GantryContextProvider  # noqa: E402
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder  # noqa: E402
-from agent_gantry.integrations.anthropic_skills import SkillRegistry  # noqa: E402
+from dotfetch import DotFetch, DotFetchContextProvider  # noqa: E402
+from dotfetch.adapters.embedders.simple import SimpleEmbedder  # noqa: E402
+from dotfetch.integrations.anthropic_skills import SkillRegistry  # noqa: E402
 
 
 def _user_msg(text: str) -> af.Message:
@@ -45,8 +45,8 @@ def _tool_names(tools: list) -> list[str]:
 
 
 @pytest.fixture
-async def gantry_with_tools() -> AgentGantry:
-    g = AgentGantry(embedder=SimpleEmbedder())
+async def fetcher_with_tools() -> DotFetch:
+    g = DotFetch(embedder=SimpleEmbedder())
 
     @g.register
     def get_weather(city: str) -> str:
@@ -72,12 +72,12 @@ async def gantry_with_tools() -> AgentGantry:
     return g
 
 
-class TestGantryContextProvider:
+class TestDotFetchContextProvider:
     @pytest.mark.asyncio
-    async def test_injects_top_k_tools(self, gantry_with_tools: AgentGantry) -> None:
+    async def test_injects_top_k_tools(self, fetcher_with_tools: DotFetch) -> None:
         """before_run extracts the latest user message and injects top-k tools."""
-        provider = GantryContextProvider(
-            gantry_with_tools, top_k=2, score_threshold=0.0
+        provider = DotFetchContextProvider(
+            fetcher_with_tools, top_k=2, score_threshold=0.0
         )
         ctx = af.SessionContext(input_messages=[_user_msg("weather in Paris")])
 
@@ -87,23 +87,23 @@ class TestGantryContextProvider:
         assert "get_weather" in _tool_names(ctx.tools)
 
     @pytest.mark.asyncio
-    async def test_default_source_id(self, gantry_with_tools: AgentGantry) -> None:
+    async def test_default_source_id(self, fetcher_with_tools: DotFetch) -> None:
         """Provider defaults to a stable source_id for AF attribution."""
-        provider = GantryContextProvider(gantry_with_tools)
-        assert provider.source_id == "agent_gantry"
+        provider = DotFetchContextProvider(fetcher_with_tools)
+        assert provider.source_id == "dotfetch"
 
     @pytest.mark.asyncio
-    async def test_custom_source_id(self, gantry_with_tools: AgentGantry) -> None:
+    async def test_custom_source_id(self, fetcher_with_tools: DotFetch) -> None:
         """source_id is overridable so multiple gantries can run side-by-side."""
-        provider = GantryContextProvider(gantry_with_tools, source_id="gantry_a")
-        assert provider.source_id == "gantry_a"
+        provider = DotFetchContextProvider(fetcher_with_tools, source_id="fetcher_a")
+        assert provider.source_id == "fetcher_a"
 
     @pytest.mark.asyncio
     async def test_empty_input_messages_does_not_crash(
-        self, gantry_with_tools: AgentGantry
+        self, fetcher_with_tools: DotFetch
     ) -> None:
         """A run with no input messages must not raise — provider stays passive."""
-        provider = GantryContextProvider(gantry_with_tools, score_threshold=0.0)
+        provider = DotFetchContextProvider(fetcher_with_tools, score_threshold=0.0)
         ctx = af.SessionContext(input_messages=[])
 
         await provider.before_run(agent=None, session=None, context=ctx, state={})
@@ -112,11 +112,11 @@ class TestGantryContextProvider:
 
     @pytest.mark.asyncio
     async def test_picks_latest_user_message(
-        self, gantry_with_tools: AgentGantry
+        self, fetcher_with_tools: DotFetch
     ) -> None:
         """When several messages are present, the latest user turn drives retrieval."""
-        provider = GantryContextProvider(
-            gantry_with_tools, top_k=1, score_threshold=0.0
+        provider = DotFetchContextProvider(
+            fetcher_with_tools, top_k=1, score_threshold=0.0
         )
         ctx = af.SessionContext(
             input_messages=[
@@ -131,11 +131,11 @@ class TestGantryContextProvider:
 
     @pytest.mark.asyncio
     async def test_always_include_pins_tools(
-        self, gantry_with_tools: AgentGantry
+        self, fetcher_with_tools: DotFetch
     ) -> None:
         """always_include adds pinned tools regardless of semantic match."""
-        provider = GantryContextProvider(
-            gantry_with_tools,
+        provider = DotFetchContextProvider(
+            fetcher_with_tools,
             top_k=1,
             score_threshold=0.0,
             always_include=["issue_refund"],
@@ -149,7 +149,7 @@ class TestGantryContextProvider:
 
     @pytest.mark.asyncio
     async def test_skills_flag_injects_registered_skill_tools(
-        self, gantry_with_tools: AgentGantry
+        self, fetcher_with_tools: DotFetch
     ) -> None:
         """skills=True always injects the union of skill-bound tool names."""
         skills = SkillRegistry()
@@ -159,8 +159,8 @@ class TestGantryContextProvider:
             instructions="Use when handling customer issues.",
             tools=["lookup_user", "issue_refund"],
         )
-        provider = GantryContextProvider(
-            gantry_with_tools,
+        provider = DotFetchContextProvider(
+            fetcher_with_tools,
             top_k=1,
             score_threshold=0.0,
             skills=True,
@@ -176,11 +176,11 @@ class TestGantryContextProvider:
 
     @pytest.mark.asyncio
     async def test_skills_flag_without_registry_is_safe(
-        self, gantry_with_tools: AgentGantry, caplog: pytest.LogCaptureFixture
+        self, fetcher_with_tools: DotFetch, caplog: pytest.LogCaptureFixture
     ) -> None:
         """skills=True without a registry logs a debug note and keeps going."""
-        provider = GantryContextProvider(
-            gantry_with_tools, top_k=1, score_threshold=0.0, skills=True
+        provider = DotFetchContextProvider(
+            fetcher_with_tools, top_k=1, score_threshold=0.0, skills=True
         )
         ctx = af.SessionContext(input_messages=[_user_msg("weather")])
 
@@ -191,13 +191,13 @@ class TestGantryContextProvider:
 
     @pytest.mark.asyncio
     async def test_unknown_pinned_tool_logs_warning(
-        self, gantry_with_tools: AgentGantry, caplog: pytest.LogCaptureFixture
+        self, fetcher_with_tools: DotFetch, caplog: pytest.LogCaptureFixture
     ) -> None:
         """Unknown names in always_include warn but don't break the run."""
         import logging
 
-        provider = GantryContextProvider(
-            gantry_with_tools,
+        provider = DotFetchContextProvider(
+            fetcher_with_tools,
             top_k=1,
             score_threshold=0.0,
             always_include=["does_not_exist"],
@@ -212,15 +212,15 @@ class TestGantryContextProvider:
 
     @pytest.mark.asyncio
     async def test_does_not_overwrite_other_provider_tools(
-        self, gantry_with_tools: AgentGantry
+        self, fetcher_with_tools: DotFetch
     ) -> None:
         """The provider must only *append* to context.tools, never replace.
 
         This is what guarantees coexistence with ``SkillsProvider`` and any
         other ``ContextProvider`` upstream in the pipeline.
         """
-        provider = GantryContextProvider(
-            gantry_with_tools, top_k=1, score_threshold=0.0
+        provider = DotFetchContextProvider(
+            fetcher_with_tools, top_k=1, score_threshold=0.0
         )
         sentinel = object()
         ctx = af.SessionContext(
@@ -235,27 +235,27 @@ class TestGantryContextProvider:
 
     @pytest.mark.asyncio
     async def test_per_turn_refresh_preserves_foreign_skill_tools(
-        self, gantry_with_tools: AgentGantry
+        self, fetcher_with_tools: DotFetch
     ) -> None:
         """The per-turn refresh must keep tools from other providers.
 
         This is the load-bearing guarantee for coexisting with AF
         ``SkillsProvider``: every chat round the middleware rebuilds the tool
-        list, dropping *gantry-known* stale tools and re-adding the fresh
+        list, dropping *fetcher-known* stale tools and re-adding the fresh
         top-k — but anything foreign (skill tools, another provider's tools)
         must survive untouched so skills keep working.
         """
-        provider = GantryContextProvider(
-            gantry_with_tools, top_k=2, query_strategy="per_turn"
+        provider = DotFetchContextProvider(
+            fetcher_with_tools, top_k=2, query_strategy="per_turn"
         )
 
         class _SkillTool:
-            # Foreign: a name that is NOT in the gantry registry, standing in
+            # Foreign: a name that is NOT in the fetcher registry, standing in
             # for a tool injected by AF SkillsProvider.
             name = "summarise_skill"
 
-        class _StaleGantryTool:
-            # Gantry-known: simulates a previous round's injected tool that
+        class _StaleDotFetchTool:
+            # dotfetch-known: simulates a previous round's injected tool that
             # should be refreshed (not duplicated), never the skill.
             name = "get_weather"
 
@@ -263,7 +263,7 @@ class TestGantryContextProvider:
 
         class _ChatCtx:
             def __init__(self) -> None:
-                self.options = {"tools": [skill_tool, _StaleGantryTool()]}
+                self.options = {"tools": [skill_tool, _StaleDotFetchTool()]}
                 self.messages = [_user_msg("weather in Paris")]
 
         ctx = _ChatCtx()
@@ -275,19 +275,19 @@ class TestGantryContextProvider:
         ]
         # The skill tool survived the per-round rebuild — skills still work.
         assert "summarise_skill" in names
-        # The stale gantry tool was not duplicated (dropped or refreshed to one).
+        # The stale fetcher tool was not duplicated (dropped or refreshed to one).
         assert names.count("get_weather") <= 1
-        # A fresh gantry selection was injected alongside the skill.
-        gantry_tool_names = {"get_weather", "book_flight", "lookup_user", "issue_refund"}
-        assert any(n in gantry_tool_names for n in names)
+        # A fresh fetcher selection was injected alongside the skill.
+        fetcher_tool_names = {"get_weather", "book_flight", "lookup_user", "issue_refund"}
+        assert any(n in fetcher_tool_names for n in names)
 
     @pytest.mark.asyncio
     async def test_retrieval_failure_is_swallowed(
-        self, gantry_with_tools: AgentGantry, monkeypatch: pytest.MonkeyPatch
+        self, fetcher_with_tools: DotFetch, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A retrieval exception must not break ``agent.run``."""
-        provider = GantryContextProvider(
-            gantry_with_tools, top_k=1, score_threshold=0.0
+        provider = DotFetchContextProvider(
+            fetcher_with_tools, top_k=1, score_threshold=0.0
         )
 
         async def _boom(*_a: object, **_k: object) -> list:
@@ -311,11 +311,11 @@ class TestGantryContextProvider:
 
     @pytest.mark.asyncio
     async def test_last_selection_exposes_decision_after_before_run(
-        self, gantry_with_tools: AgentGantry
+        self, fetcher_with_tools: DotFetch
     ) -> None:
         """After each retrieval the provider exposes the structured decision."""
-        provider = GantryContextProvider(
-            gantry_with_tools, top_k=2, score_threshold=0.0
+        provider = DotFetchContextProvider(
+            fetcher_with_tools, top_k=2, score_threshold=0.0
         )
         ctx = af.SessionContext(input_messages=[_user_msg("weather")])
         await provider.before_run(agent=None, session=None, context=ctx, state={})
@@ -331,12 +331,12 @@ class TestGantryContextProvider:
 
     @pytest.mark.asyncio
     async def test_dry_run_retrieve_uses_same_code_path(
-        self, gantry_with_tools: AgentGantry
+        self, fetcher_with_tools: DotFetch
     ) -> None:
         """dry_run_retrieve must mirror the live retrieval (same threshold,
         same kwargs) so users can validate "would the LLM see X?" offline."""
-        provider = GantryContextProvider(
-            gantry_with_tools, top_k=2, score_threshold=0.0
+        provider = DotFetchContextProvider(
+            fetcher_with_tools, top_k=2, score_threshold=0.0
         )
         decision = await provider.dry_run_retrieve("book me a flight")
         names = {c.name for c in decision.candidates}
@@ -347,18 +347,18 @@ class TestGantryContextProvider:
 
     @pytest.mark.asyncio
     async def test_static_tools_injected_on_every_run(
-        self, gantry_with_tools: AgentGantry
+        self, fetcher_with_tools: DotFetch
     ) -> None:
-        """Tools that live outside the gantry registry must still be
+        """Tools that live outside the fetcher registry must still be
         injected when supplied via static_tools."""
 
         async def af_native_tool(x: str) -> str:
-            """A tool not registered with gantry."""
+            """A tool not registered with fetcher."""
             return x
 
         af_native_tool.__name__ = "af_native_tool"
-        provider = GantryContextProvider(
-            gantry_with_tools,
+        provider = DotFetchContextProvider(
+            fetcher_with_tools,
             top_k=1,
             score_threshold=0.0,
             static_tools=[af_native_tool],
@@ -370,15 +370,15 @@ class TestGantryContextProvider:
 
     @pytest.mark.asyncio
     async def test_per_turn_default_generator_is_latest_activity(
-        self, gantry_with_tools: AgentGantry
+        self, fetcher_with_tools: DotFetch
     ) -> None:
         """per_turn mode must pick a generator that actually adapts each
         round; the per_run default (last_user_text) would silently
         disable the very thing per_turn enables."""
-        from agent_gantry.query import last_user_text, latest_activity
+        from dotfetch.query import last_user_text, latest_activity
 
-        provider = GantryContextProvider(
-            gantry_with_tools, top_k=1, query_strategy="per_turn"
+        provider = DotFetchContextProvider(
+            fetcher_with_tools, top_k=1, query_strategy="per_turn"
         )
         # The selected generator is *not* the bare last_user_text default.
         assert provider._query_generator is not last_user_text  # type: ignore[attr-defined]
@@ -386,7 +386,7 @@ class TestGantryContextProvider:
 
     @pytest.mark.asyncio
     async def test_per_turn_new_user_message_outranks_stale_tool_result(
-        self, gantry_with_tools: AgentGantry
+        self, fetcher_with_tools: DotFetch
     ) -> None:
         """A session carrying an earlier tool result still follows a new request.
 
@@ -395,8 +395,8 @@ class TestGantryContextProvider:
         held one the user's next message never drove selection and the
         surface stayed on the previous task.
         """
-        provider = GantryContextProvider(
-            gantry_with_tools, top_k=1, query_strategy="per_turn"
+        provider = DotFetchContextProvider(
+            fetcher_with_tools, top_k=1, query_strategy="per_turn"
         )
 
         class _ChatCtx:
@@ -432,7 +432,7 @@ class TestGantryContextProvider:
 
     @pytest.mark.asyncio
     async def test_per_turn_keeps_the_request_beside_a_bare_tool_result(
-        self, gantry_with_tools: AgentGantry
+        self, fetcher_with_tools: DotFetch
     ) -> None:
         """A two-step task's second round must not query on the first result alone.
 
@@ -440,8 +440,8 @@ class TestGantryContextProvider:
         about the task: on its own it surfaced an unrelated tool and dropped
         the one the rest of the request still needed.
         """
-        provider = GantryContextProvider(
-            gantry_with_tools, top_k=2, query_strategy="per_turn"
+        provider = DotFetchContextProvider(
+            fetcher_with_tools, top_k=2, query_strategy="per_turn"
         )
 
         class _ChatCtx:
@@ -464,7 +464,7 @@ class TestGantryContextProvider:
         assert provider.last_selection.query == f"{task}\ndesserts"
 
     @pytest.mark.asyncio
-    async def test_per_call_is_accepted_as_per_turn(self, gantry_with_tools: AgentGantry) -> None:
+    async def test_per_call_is_accepted_as_per_turn(self, fetcher_with_tools: DotFetch) -> None:
         """``query_strategy="per_call"`` was renamed ``"per_turn"`` in 0.24.0.
 
         It named the finest granularity here while ``live_tier="per-call"``
@@ -473,16 +473,16 @@ class TestGantryContextProvider:
         """
         import warnings
 
-        from agent_gantry.query import latest_activity
+        from dotfetch.query import latest_activity
 
         with pytest.warns(DeprecationWarning, match='query_strategy="per_turn"'):
-            old = GantryContextProvider(gantry_with_tools, top_k=1, query_strategy="per_call")
+            old = DotFetchContextProvider(fetcher_with_tools, top_k=1, query_strategy="per_call")
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            new = GantryContextProvider(gantry_with_tools, top_k=1, query_strategy="per_turn")
+            new = DotFetchContextProvider(fetcher_with_tools, top_k=1, query_strategy="per_turn")
             assert new.query_strategy == "per_turn"
             assert old.query_strategy == "per_turn"
-            per_run = GantryContextProvider(gantry_with_tools, top_k=1)
+            per_run = DotFetchContextProvider(fetcher_with_tools, top_k=1)
             assert per_run.query_strategy == "per_run"
             assert per_run.query_strategy != "per_call"  # a plain str: no warning
         assert old._query_generator is latest_activity  # type: ignore[attr-defined]
@@ -490,32 +490,32 @@ class TestGantryContextProvider:
             assert new.query_strategy == "per_call"
 
         with pytest.raises(ValueError, match="'per_run' or 'per_turn'"):
-            GantryContextProvider(gantry_with_tools, query_strategy="per_step")
+            DotFetchContextProvider(fetcher_with_tools, query_strategy="per_step")
 
         # Handing one provider's reported strategy to another is not a use of
         # the old spelling, although that value also equals it.
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            copy = GantryContextProvider(
-                gantry_with_tools, top_k=1, query_strategy=new.query_strategy
+            copy = DotFetchContextProvider(
+                fetcher_with_tools, top_k=1, query_strategy=new.query_strategy
             )
             assert copy.query_strategy == "per_turn"
 
     @pytest.mark.asyncio
     async def test_per_turn_with_last_user_text_warns(
         self,
-        gantry_with_tools: AgentGantry,
+        fetcher_with_tools: DotFetch,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Explicitly pairing per_turn with last_user_text — the
         misconfiguration the issue calls out — must warn."""
         import logging
 
-        from agent_gantry.query import last_user_text
+        from dotfetch.query import last_user_text
 
         with caplog.at_level(logging.WARNING):
-            GantryContextProvider(
-                gantry_with_tools,
+            DotFetchContextProvider(
+                fetcher_with_tools,
                 query_strategy="per_turn",
                 query_generator=last_user_text,
             )
@@ -524,7 +524,7 @@ class TestGantryContextProvider:
     @pytest.mark.asyncio
     async def test_per_turn_warns_when_chat_middleware_not_attached(
         self,
-        gantry_with_tools: AgentGantry,
+        fetcher_with_tools: DotFetch,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         """per_turn mode without the chat middleware on the agent must
@@ -534,8 +534,8 @@ class TestGantryContextProvider:
         class FakeAgent:
             middleware: list = []
 
-        provider = GantryContextProvider(
-            gantry_with_tools, top_k=1, query_strategy="per_turn"
+        provider = DotFetchContextProvider(
+            fetcher_with_tools, top_k=1, query_strategy="per_turn"
         )
         ctx = af.SessionContext(input_messages=[_user_msg("weather")])
         with caplog.at_level(logging.WARNING):
@@ -546,7 +546,7 @@ class TestGantryContextProvider:
 
     @pytest.mark.asyncio
     async def test_attach_to_appends_provider_and_middleware(
-        self, gantry_with_tools: AgentGantry
+        self, fetcher_with_tools: DotFetch
     ) -> None:
         """attach_to is the one-call setup helper for the per_turn flow."""
 
@@ -555,8 +555,8 @@ class TestGantryContextProvider:
             middleware: list = []
 
         agent = FakeAgent()
-        provider = GantryContextProvider(
-            gantry_with_tools, query_strategy="per_turn"
+        provider = DotFetchContextProvider(
+            fetcher_with_tools, query_strategy="per_turn"
         )
         provider.attach_to(agent)
         assert provider in agent.context_providers
@@ -564,7 +564,7 @@ class TestGantryContextProvider:
 
     @pytest.mark.asyncio
     async def test_the_deprecated_per_call_spelling_wires_up_like_per_turn(
-        self, gantry_with_tools: AgentGantry, caplog: pytest.LogCaptureFixture
+        self, fetcher_with_tools: DotFetch, caplog: pytest.LogCaptureFixture
     ) -> None:
         """``query_strategy="per_call"`` must still install the per-turn
         middleware, be recognised as attached, and warn when it is not."""
@@ -575,7 +575,7 @@ class TestGantryContextProvider:
                 self.middleware: list = []
 
         with pytest.warns(DeprecationWarning):
-            provider = GantryContextProvider(gantry_with_tools, query_strategy="per_call")
+            provider = DotFetchContextProvider(fetcher_with_tools, query_strategy="per_call")
 
         agent = FakeAgent()
         provider.attach_to(agent)
@@ -596,11 +596,11 @@ class TestGantryContextProvider:
         assert "as_chat_middleware" in caplog.text
 
     def test_relative_threshold_accepted_at_construction(
-        self, gantry_with_tools: AgentGantry
+        self, fetcher_with_tools: DotFetch
     ) -> None:
         """A 'relative:<frac>' string is accepted and not rejected as a float."""
-        provider = GantryContextProvider(
-            gantry_with_tools, score_threshold="relative:0.8"
+        provider = DotFetchContextProvider(
+            fetcher_with_tools, score_threshold="relative:0.8"
         )
         assert provider.score_threshold == "relative:0.8"
 
@@ -610,11 +610,11 @@ class TestSelectionsAndTrace:
 
     @pytest.mark.asyncio
     async def test_selections_accumulate_across_rounds_within_a_run(
-        self, gantry_with_tools: AgentGantry
+        self, fetcher_with_tools: DotFetch
     ) -> None:
         """Within one run, each chat round appends to the selection history."""
-        provider = GantryContextProvider(
-            gantry_with_tools, top_k=2, query_strategy="per_turn"
+        provider = DotFetchContextProvider(
+            fetcher_with_tools, top_k=2, query_strategy="per_turn"
         )
 
         # Run start: before_run resets; per_turn doesn't retrieve here.
@@ -637,10 +637,10 @@ class TestSelectionsAndTrace:
 
     @pytest.mark.asyncio
     async def test_selections_reset_each_run(
-        self, gantry_with_tools: AgentGantry
+        self, fetcher_with_tools: DotFetch
     ) -> None:
         """A new run (before_run) starts the history fresh — no cross-run bleed."""
-        provider = GantryContextProvider(gantry_with_tools, top_k=2)
+        provider = DotFetchContextProvider(fetcher_with_tools, top_k=2)
 
         ctx_a = af.SessionContext(input_messages=[_user_msg("weather in Paris")])
         await provider.before_run(agent=None, session=None, context=ctx_a, state={})
@@ -655,20 +655,20 @@ class TestSelectionsAndTrace:
 
     @pytest.mark.asyncio
     async def test_selections_is_immutable_snapshot(
-        self, gantry_with_tools: AgentGantry
+        self, fetcher_with_tools: DotFetch
     ) -> None:
         """The property returns a tuple copy, not the internal deque."""
-        provider = GantryContextProvider(gantry_with_tools, top_k=2)
+        provider = DotFetchContextProvider(fetcher_with_tools, top_k=2)
         ctx = af.SessionContext(input_messages=[_user_msg("weather in Paris")])
         await provider.before_run(agent=None, session=None, context=ctx, state={})
         assert isinstance(provider.selections, tuple)
 
     @pytest.mark.asyncio
     async def test_trace_middleware_prints_call_and_result(
-        self, gantry_with_tools: AgentGantry
+        self, fetcher_with_tools: DotFetch
     ) -> None:
         """trace() prints a before/after line and the router's surfaced set."""
-        provider = GantryContextProvider(gantry_with_tools, top_k=2)
+        provider = DotFetchContextProvider(fetcher_with_tools, top_k=2)
         # Seed a selection so the surfaced list is populated.
         ctx = af.SessionContext(input_messages=[_user_msg("weather in Paris")])
         await provider.before_run(agent=None, session=None, context=ctx, state={})
@@ -700,10 +700,10 @@ class TestSelectionsAndTrace:
 
     @pytest.mark.asyncio
     async def test_trace_round_advances_across_fresh_contexts(
-        self, gantry_with_tools: AgentGantry
+        self, fetcher_with_tools: DotFetch
     ) -> None:
         """AF invokes each tool in a fresh context, but rounds must still advance."""
-        provider = GantryContextProvider(gantry_with_tools, top_k=2)
+        provider = DotFetchContextProvider(fetcher_with_tools, top_k=2)
         lines: list[str] = []
         middleware = provider.trace(render=False, printer=lines.append)
 
@@ -731,9 +731,9 @@ class TestSelectionsAndTrace:
 
     @pytest.mark.asyncio
     async def test_trace_render_false_skips_result_line(
-        self, gantry_with_tools: AgentGantry
+        self, fetcher_with_tools: DotFetch
     ) -> None:
-        provider = GantryContextProvider(gantry_with_tools, top_k=2)
+        provider = DotFetchContextProvider(fetcher_with_tools, top_k=2)
         lines: list[str] = []
         middleware = provider.trace(render=False, printer=lines.append)
 
@@ -755,7 +755,7 @@ class TestSelectionsAndTrace:
 
     @pytest.mark.asyncio
     async def test_attach_to_trace_adds_trace_middleware(
-        self, gantry_with_tools: AgentGantry
+        self, fetcher_with_tools: DotFetch
     ) -> None:
         """attach_to(trace=True) wires the trace middleware alongside the rest."""
 
@@ -764,12 +764,12 @@ class TestSelectionsAndTrace:
             middleware: list = []
 
         # per_run: no chat middleware, so trace is the only one attached.
-        per_run = GantryContextProvider(gantry_with_tools)
+        per_run = DotFetchContextProvider(fetcher_with_tools)
         per_run.attach_to(FakeAgent(), trace=True)
 
         agent = FakeAgent()
-        per_turn = GantryContextProvider(
-            gantry_with_tools, query_strategy="per_turn"
+        per_turn = DotFetchContextProvider(
+            fetcher_with_tools, query_strategy="per_turn"
         )
         per_turn.attach_to(agent, trace=True)
         # per_turn attaches both the chat refresher and the trace middleware.
@@ -777,7 +777,7 @@ class TestSelectionsAndTrace:
 
     @pytest.mark.asyncio
     async def test_selections_isolated_across_concurrent_tasks(
-        self, gantry_with_tools: AgentGantry
+        self, fetcher_with_tools: DotFetch
     ) -> None:
         """A provider shared across concurrent runs must not interleave history.
 
@@ -787,7 +787,7 @@ class TestSelectionsAndTrace:
         """
         import asyncio
 
-        provider = GantryContextProvider(gantry_with_tools, top_k=2)
+        provider = DotFetchContextProvider(fetcher_with_tools, top_k=2)
 
         async def run_once(query: str) -> tuple:
             ctx = af.SessionContext(input_messages=[_user_msg(query)])
@@ -806,7 +806,7 @@ class TestSelectionsAndTrace:
 
     @pytest.mark.asyncio
     async def test_selections_visible_after_write_in_child_task(
-        self, gantry_with_tools: AgentGantry
+        self, fetcher_with_tools: DotFetch
     ) -> None:
         """Post-run introspection must survive a write in a copied context.
 
@@ -819,7 +819,7 @@ class TestSelectionsAndTrace:
         """
         import asyncio
 
-        provider = GantryContextProvider(gantry_with_tools, top_k=2)
+        provider = DotFetchContextProvider(fetcher_with_tools, top_k=2)
 
         async def child() -> None:
             ctx = af.SessionContext(input_messages=[_user_msg("weather in Paris")])
@@ -836,15 +836,15 @@ class TestSelectionsAndTrace:
 
     @pytest.mark.asyncio
     async def test_trace_surfaced_shows_only_kept_capped(
-        self, gantry_with_tools: AgentGantry
+        self, fetcher_with_tools: DotFetch
     ) -> None:
         """The trace line lists kept candidates only, capped, not the full list."""
-        from agent_gantry.integrations.agent_framework_bridge import (
+        from dotfetch.integrations.agent_framework_bridge import (
             RetrievalCandidate,
             RetrievalDecision,
         )
 
-        provider = GantryContextProvider(gantry_with_tools, top_k=2)
+        provider = DotFetchContextProvider(fetcher_with_tools, top_k=2)
         # Hand-build a decision: 7 kept + 1 dropped.
         kept = [
             RetrievalCandidate(
@@ -895,24 +895,24 @@ async def test_required_qualified_name_resolves_per_request(monkeypatch):
     warned-and-skipped on every round — inverting the whole point of
     ``required``.
     """
-    from agent_gantry import AgentGantry, GantryContextProvider
-    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+    from dotfetch import DotFetch, DotFetchContextProvider
+    from dotfetch.adapters.embedders.simple import SimpleEmbedder
 
-    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+    fetcher = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
-    @gantry.register(namespace="billing", tags=["billing"])
+    @fetcher.register(namespace="billing", tags=["billing"])
     def refund(order_id: str) -> str:
         "Refund an order."
         return f"refunded:{order_id}"
 
-    @gantry.register(tags=["weather"])
+    @fetcher.register(tags=["weather"])
     def get_weather(city: str) -> str:
         "Get the weather for a city."
         return f"sunny:{city}"
 
-    await gantry.sync()
+    await fetcher.sync()
 
-    provider = GantryContextProvider(gantry, required=["billing.refund"])
+    provider = DotFetchContextProvider(fetcher, required=["billing.refund"])
     tools = provider._pin_tools(["billing.refund"], set(), set())
     assert len(tools) == 1, "qualified required pin must resolve to the tool"
 
@@ -929,24 +929,24 @@ async def test_per_turn_refresh_removes_stale_native_aliases(
     name, as_function_tool, monkeypatch
 ):
     """Switch namespaces without accumulating tools or dropping foreign tools."""
-    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-    from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+    from dotfetch.adapters.embedders.simple import SimpleEmbedder
+    from dotfetch.integrations.agent_framework_bridge import DotFetchToolBridge
 
-    async with AgentGantry(embedder=SimpleEmbedder()) as gantry:
+    async with DotFetch(embedder=SimpleEmbedder()) as fetcher:
         for namespace in ("billing", "inventory"):
 
             def lookup(item: str) -> str:
                 """Look up an item."""
                 return item
 
-            gantry.register(lookup, name=name, namespace=namespace)
+            fetcher.register(lookup, name=name, namespace=namespace)
 
-        bridge = GantryToolBridge(gantry, as_function_tool=as_function_tool)
-        wrappers = bridge.wrap_tools(gantry.list_tools_sync())
+        bridge = DotFetchToolBridge(fetcher, as_function_tool=as_function_tool)
+        wrappers = bridge.wrap_tools(fetcher.list_tools_sync())
         aliases = _tool_names(wrappers)
         assert len(set(aliases)) == 2
         assert all(alias != name and len(alias) <= 64 for alias in aliases)
-        provider = GantryContextProvider(gantry, top_k=1, query_strategy="per_turn")
+        provider = DotFetchContextProvider(fetcher, top_k=1, query_strategy="per_turn")
         monkeypatch.setattr(
             provider._bridge,
             "get_tools_with_decision",
@@ -966,18 +966,18 @@ async def test_per_turn_refresh_removes_stale_native_aliases(
 @pytest.mark.parametrize("static_name_kind", ["authored", "native"])
 async def test_static_tools_deduplicate_against_emitted_names(strategy, static_name_kind):
     """Authored names used for pins must not hide a distinct AF-native tool."""
-    from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+    from dotfetch.integrations.agent_framework_bridge import DotFetchToolBridge
 
-    async with AgentGantry(embedder=SimpleEmbedder()) as gantry:
+    async with DotFetch(embedder=SimpleEmbedder()) as fetcher:
         for namespace in ("billing", "inventory"):
 
             def lookup(item: str) -> str:
                 """Look up an item."""
                 return item
 
-            gantry.register(lookup, namespace=namespace)
+            fetcher.register(lookup, namespace=namespace)
 
-        aliases = set(_tool_names(GantryToolBridge(gantry).wrap_tools(gantry.list_tools_sync())))
+        aliases = set(_tool_names(DotFetchToolBridge(fetcher).wrap_tools(fetcher.list_tools_sync())))
         static_name = "lookup" if static_name_kind == "authored" else sorted(aliases)[0]
 
         def foreign() -> str:
@@ -985,8 +985,8 @@ async def test_static_tools_deduplicate_against_emitted_names(strategy, static_n
             return "foreign"
 
         static = af.tool(foreign, name=static_name)
-        provider = GantryContextProvider(
-            gantry, top_k=2, score_threshold=0.0, query_strategy=strategy,
+        provider = DotFetchContextProvider(
+            fetcher, top_k=2, score_threshold=0.0, query_strategy=strategy,
             always_include=["billing.lookup"], static_tools=[static],
         )
         if strategy == "per_run":

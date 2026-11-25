@@ -15,8 +15,8 @@ import types
 
 import pytest
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
 
 
 class _FakeTool:
@@ -45,8 +45,8 @@ def fake_haystack(monkeypatch):
 
 
 @pytest.fixture
-async def gantry():
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+async def fetcher():
+    g = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
     @g.register(tags=["email"])
     def send_email(to: str, body: str = "") -> str:
@@ -62,11 +62,11 @@ async def gantry():
     return g
 
 
-async def test_spec_to_haystack_builds_native_tool(fake_haystack, gantry):
-    from agent_gantry.haystack import HaystackAdapter
-    from agent_gantry.integrations.frameworks.base import GantryToolset
+async def test_spec_to_haystack_builds_native_tool(fake_haystack, fetcher):
+    from dotfetch.haystack import HaystackAdapter
+    from dotfetch.integrations.frameworks.base import DotFetchToolset
 
-    specs = await GantryToolset(gantry).select("send an email", limit=1)
+    specs = await DotFetchToolset(fetcher).select("send an email", limit=1)
     spec = specs[0]
     tool = HaystackAdapter.convert(spec)
 
@@ -85,10 +85,10 @@ async def test_spec_to_haystack_builds_native_tool(fake_haystack, gantry):
     assert result == "sent:boss@x.com"
 
 
-async def test_for_haystack_returns_tool_list(fake_haystack, gantry):
-    from agent_gantry.haystack import HaystackAdapter
+async def test_for_haystack_returns_tool_list(fake_haystack, fetcher):
+    from dotfetch.haystack import HaystackAdapter
 
-    tools = await HaystackAdapter(gantry).select("send an email", limit=2)
+    tools = await HaystackAdapter(fetcher).select("send an email", limit=2)
 
     assert isinstance(tools, list)
     assert len(tools) >= 1
@@ -96,14 +96,14 @@ async def test_for_haystack_returns_tool_list(fake_haystack, gantry):
     assert "send_email" in names
 
 
-async def test_missing_haystack_raises_helpful_error(monkeypatch, gantry):
+async def test_missing_haystack_raises_helpful_error(monkeypatch, fetcher):
     # Ensure the lazy import fails even if a real package is somehow present.
     monkeypatch.setitem(sys.modules, "haystack", None)
     monkeypatch.setitem(sys.modules, "haystack.tools", None)
 
-    from agent_gantry.haystack import HaystackAdapter
-    from agent_gantry.integrations.frameworks.base import GantryToolset
+    from dotfetch.haystack import HaystackAdapter
+    from dotfetch.integrations.frameworks.base import DotFetchToolset
 
-    specs = await GantryToolset(gantry).select("send an email", limit=1)
-    with pytest.raises(ImportError, match=r"agent-gantry\[haystack\]"):
+    specs = await DotFetchToolset(fetcher).select("send an email", limit=1)
+    with pytest.raises(ImportError, match=r"dotfetch\[haystack\]"):
         HaystackAdapter.convert(specs[0])

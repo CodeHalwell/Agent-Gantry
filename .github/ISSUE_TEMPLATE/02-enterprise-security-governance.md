@@ -51,7 +51,7 @@ assignees: []
 
 ## Context: Current Security Features
 
-Agent-Gantry currently provides:
+dotfetch currently provides:
 - ✅ Zero-Trust architecture with capability-based permissions
 - ✅ Circuit breakers for automatic failure detection
 - ✅ Tool-level health tracking and observability
@@ -89,4 +89,4 @@ This feature request aims to enhance compliance and governance capabilities.
 <!-- Link to related issues or PRs -->
 
 ---
-**Note**: This feature aligns with the strategic goal of making Agent-Gantry production-ready for enterprise deployments with strict compliance requirements.
+**Note**: This feature aligns with the strategic goal of making dotfetch production-ready for enterprise deployments with strict compliance requirements.

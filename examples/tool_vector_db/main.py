@@ -1,8 +1,8 @@
 """
-Simplest Agent-Gantry Example: 50 Tools with OpenAI Responses API
+Simplest dotfetch Example: 50 Tools with OpenAI Responses API
 
 This example demonstrates:
-1. Registering 50 tools with Agent-Gantry
+1. Registering 50 tools with dotfetch
 2. Semantic retrieval of relevant tools using @with_semantic_tools decorator
 3. Tool execution via OpenAI Responses API
 
@@ -12,7 +12,7 @@ Key Feature: ZERO-CONFIG AUTO-SYNC
     - No manual sync() calls needed!
 
 Requirements:
-    pip install "agent-gantry[lancedb,openai]" python-dotenv
+    pip install "dotfetch[lancedb,openai]" python-dotenv
 
 Usage:
     python -m examples.tool_vector_db.main                      # retrieval runs with no key at all
@@ -31,7 +31,7 @@ from openai import AsyncOpenAI
 load_dotenv()
 
 # Import our 50 tools - they're registered at import time
-from agent_gantry.integrations.semantic_tools import with_semantic_tools
+from dotfetch.integrations.semantic_tools import with_semantic_tools
 from examples.tool_vector_db.tools import tools
 
 

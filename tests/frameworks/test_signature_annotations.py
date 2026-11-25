@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from agent_gantry.integrations.frameworks.base import _annotation_for_prop
+from dotfetch.integrations.frameworks.base import _annotation_for_prop
 
 
 def test_enum_becomes_a_literal():
@@ -106,24 +106,24 @@ async def test_ainvoke_keeps_a_null_the_schema_declares():
     advertises ``["integer", "null"]``, so an explicit null is a distinct
     choice. Dropping it handed the handler ``5`` where the caller asked for
     ``None`` (PR #381 review)."""
-    from agent_gantry import AgentGantry
-    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-    from agent_gantry.integrations.frameworks.base import GantryToolset
+    from dotfetch import DotFetch
+    from dotfetch.adapters.embedders.simple import SimpleEmbedder
+    from dotfetch.integrations.frameworks.base import DotFetchToolset
 
-    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+    fetcher = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
-    @gantry.register(tags=["demo"])
+    @fetcher.register(tags=["demo"])
     def set_value(x: int | None = 5) -> str:
         """Set a configured value to the given number."""
         return "none" if x is None else f"got {x}"
 
-    @gantry.register(tags=["demo"])
+    @fetcher.register(tags=["demo"])
     def label_it(note: str = "hi") -> str:
         """Attach a textual label to the current item."""
         return f"label:{note}"
 
-    await gantry.sync()
-    specs = await GantryToolset(gantry).select("set a configured value", limit=2)
+    await fetcher.sync()
+    specs = await DotFetchToolset(fetcher).select("set a configured value", limit=2)
     by_name = {s.name: s for s in specs}
     assert "set_value" in by_name, list(by_name)
 
@@ -172,7 +172,7 @@ def test_reconstructed_string_formats_survive_into_the_signature():
     assert _annotation_for_prop({"type": "string", "format": "date"}) is datetime.date
     assert _annotation_for_prop({"type": "string", "format": "time"}) is datetime.time
     assert _annotation_for_prop({"type": "string", "format": "uuid"}) is uuid.UUID
-    # Formats Gantry neither emits nor reconstructs stay plain strings.
+    # Formats dotfetch neither emits nor reconstructs stay plain strings.
     assert _annotation_for_prop({"type": "string", "format": "email"}) is str
     assert _annotation_for_prop({"type": "string"}) is str
 
@@ -183,7 +183,7 @@ def test_a_required_nullable_keeps_null_in_its_annotation():
     in ``required``, and annotating it a bare ``int`` told a signature-reading
     framework to advertise a non-nullable parameter — so the model could not produce
     the null the executor accepts (PR #381 review)."""
-    from agent_gantry.integrations.frameworks.base import ToolSpec
+    from dotfetch.integrations.frameworks.base import ToolSpec
 
     schema = {
         "type": "object",
@@ -234,7 +234,7 @@ def test_adk_placeholders_match_the_annotation_they_accompany():
     import datetime
     import typing
 
-    from agent_gantry.integrations.frameworks.base import ToolSpec
+    from dotfetch.integrations.frameworks.base import ToolSpec
 
     schema = {
         "type": "object",
@@ -303,7 +303,7 @@ def test_a_materialized_tuple_is_normalized_back_to_a_json_array():
     framework that materialized ``tuple[int, str]`` would have had its
     correctly-shaped value refused. (The framework *bridge* declines the same
     conversion for exactly this reason, having no such boundary.)"""
-    from agent_gantry.integrations.frameworks.base import _json_native
+    from dotfetch.integrations.frameworks.base import _json_native
 
     positional = {
         "type": "array",
@@ -324,7 +324,7 @@ def test_an_optional_nullable_keeps_null_in_its_annotation():
     framework that validates the model's input against a model built from
     the signature (Strands) rejected the null a ``["integer", "null"]``
     schema permits when the parameter was annotated a bare ``int``."""
-    from agent_gantry.integrations.frameworks.base import ToolSpec
+    from dotfetch.integrations.frameworks.base import ToolSpec
 
     schema = {
         "type": "object",
@@ -351,7 +351,7 @@ def test_aliased_parameters_renames_properties_and_required():
     """ADK filters and Strands validates the model's arguments against the
     signature's parameter names, so the schema they advertise must carry the
     same aliases as :meth:`ToolSpec.parameter_aliases`."""
-    from agent_gantry.integrations.frameworks.base import ToolSpec
+    from dotfetch.integrations.frameworks.base import ToolSpec
 
     schema = {
         "type": "object",

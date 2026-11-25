@@ -1,4 +1,4 @@
-"""Google ADK + Agent-Gantry, through ADK's own mechanisms.
+"""Google ADK + dotfetch, through ADK's own mechanisms.
 
 1. **Per-turn selection** -- ``adapter.agent(...)`` builds an ADK ``Agent`` whose
    ``before_model_callback`` picks each model request's tools. After the CRM
@@ -8,7 +8,7 @@
    telling the model a call failed, instead of ending the run.
 3. **Approval** -- a ``requires_confirmation`` tool emits ADK's
    ``adk_request_confirmation`` call; confirming it runs the tool exactly once.
-4. **Run context** -- a Gantry tool reads the ADK session state through
+4. **Run context** -- a dotfetch tool reads the ADK session state through
    ``current_tool_context()``.
 
 Everything runs **offline**: a scripted ``BaseLlm`` stands in for Gemini, so no
@@ -17,7 +17,7 @@ set) to use it for real.
 
 Install and run::
 
-    pip install 'agent-gantry[google-adk]'
+    pip install 'dotfetch[google-adk]'
     python examples/agent_frameworks/google_adk_example.py
 """
 
@@ -26,37 +26,37 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
 
 
-def build_gantry() -> AgentGantry:
-    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
+def build_fetcher() -> DotFetch:
+    fetcher = DotFetch(embedder=SimpleEmbedder(dimension=256))
 
-    @gantry.register(tags=["crm"], examples=["find the customer record for Jo"])
+    @fetcher.register(tags=["crm"], examples=["find the customer record for Jo"])
     def lookup_customer(name: str) -> str:
         """Look up a customer record by name."""
         return f"Customer {name} found. Next step: send an email message to jo@example.com"
 
-    @gantry.register(tags=["email"], examples=["email the team"], requires_confirmation=True)
+    @fetcher.register(tags=["email"], examples=["email the team"], requires_confirmation=True)
     def send_email(to: str) -> str:
         """Send an email message to a recipient."""
         return f"Email sent to {to}."
 
-    @gantry.register(tags=["math"], examples=["divide 10 by 2"])
+    @fetcher.register(tags=["math"], examples=["divide 10 by 2"])
     def divide(a: int, b: int) -> float:
         """Divide integer a by integer b."""
         return a / b
 
-    @gantry.register(tags=["identity"], examples=["who am I signed in as"])
+    @fetcher.register(tags=["identity"], examples=["who am I signed in as"])
     def whoami() -> str:
         """Return the name of the signed-in user."""
-        from agent_gantry.google_adk import current_tool_context
+        from dotfetch.google_adk import current_tool_context
 
         ctx = current_tool_context()
         return f"You are signed in as {ctx.state['user']}." if ctx else "Unknown user."
 
-    return gantry
+    return fetcher
 
 
 def scripted(*steps: list[tuple[str, dict[str, Any]]]) -> Any:
@@ -117,22 +117,22 @@ async def run(agent: Any, text: str, state: dict[str, Any] | None = None) -> dic
 
 
 async def main() -> None:
-    gantry = build_gantry()
+    fetcher = build_fetcher()
     try:
-        await gantry.sync()
+        await fetcher.sync()
         try:
             from google.adk.agents import LlmAgent
             from google.genai import types
         except ImportError as exc:
             print(
                 f"The Google ADK demo needs google-adk ({exc}).\n"
-                "Install it with `pip install 'agent-gantry[google-adk]'`."
+                "Install it with `pip install 'dotfetch[google-adk]'`."
             )
             return
 
-        from agent_gantry.google_adk import GoogleADKAdapter
+        from dotfetch.google_adk import GoogleADKAdapter
 
-        adapter = GoogleADKAdapter(gantry)
+        adapter = GoogleADKAdapter(fetcher)
 
         # 1. Per-turn selection ------------------------------------------- #
         model = scripted([("lookup_customer", {"name": "Jo"})])
@@ -170,11 +170,11 @@ async def main() -> None:
         print(f"[context] {result['responses'][0]}")
 
         print(
-            "\nEvery tool call above went through gantry.execute, so the security "
+            "\nEvery tool call above went through fetcher.execute, so the security "
             "policy, retries, timeouts and circuit breakers all applied."
         )
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 if __name__ == "__main__":

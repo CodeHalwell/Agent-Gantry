@@ -2,28 +2,28 @@
 import DocsLayout from '../../../../layouts/DocsLayout.astro';
 import CodeBlock from '../../../../components/CodeBlock.astro';
 ---
-<DocsLayout title="Advanced LlamaIndex guide | Agent-Gantry" description="Human-in-the-loop approval, context injection, per-step selection and error modes for the Agent-Gantry LlamaIndex integration.">
+<DocsLayout title="Advanced LlamaIndex guide | dotfetch" description="Human-in-the-loop approval, context injection, per-step selection and error modes for the dotfetch LlamaIndex integration.">
   <p class="eyebrow">Advanced framework guide</p>
   <h1>Advanced LlamaIndex</h1>
   <p class="lead">Approval, context injection and how per-step selection behaves.</p>
   <p><a class="pill" href="/Agent-Gantry/docs/frameworks/llamaindex/">← Basic LlamaIndex usage</a></p>
 
   <h2>Human-in-the-loop approval</h2>
-  <p>In a workflow agent, a confirmation-gated call (<code>requires_confirmation=True</code> or a <code>SecurityPolicy(require_confirmation=[...])</code> pattern) waits with <code>ctx.wait_for_event(HumanResponseEvent, waiter_event=InputRequiredEvent(...))</code>. The waiting event carries <code>gantry_tool</code> and <code>gantry_arguments</code>.</p>
+  <p>In a workflow agent, a confirmation-gated call (<code>requires_confirmation=True</code> or a <code>SecurityPolicy(require_confirmation=[...])</code> pattern) waits with <code>ctx.wait_for_event(HumanResponseEvent, waiter_event=InputRequiredEvent(...))</code>. The waiting event carries <code>fetcher_tool</code> and <code>fetcher_arguments</code>.</p>
   <CodeBlock lang="python" code={`from llama_index.core.workflow import HumanResponseEvent, InputRequiredEvent
 
 handler = agent.run(user_msg="Refund order 4471")
 async for event in handler.stream_events():
     if isinstance(event, InputRequiredEvent):
-        answer = "yes" if ask_a_human(event.gantry_tool, event.gantry_arguments) else "no"
+        answer = "yes" if ask_a_human(event.fetcher_tool, event.fetcher_arguments) else "no"
         handler.ctx.send_event(
-            HumanResponseEvent(response=answer, gantry_approval_id=event.gantry_approval_id)
+            HumanResponseEvent(response=answer, fetcher_approval_id=event.fetcher_approval_id)
         )
 result = await handler`} />
-  <p>Echo the request's <code>gantry_approval_id</code>: each call waits only for a response naming it, so with several gated calls pending an answer never decides the wrong one. <code>"yes"</code>, <code>"y"</code>, <code>"approve"</code> or <code>"approved"</code> runs the call once through <code>gantry.execute</code> with only the confirmation gate cleared; anything else rejects it and the model is told. A tool called directly, outside a workflow, reports that it needs approval.</p>
+  <p>Echo the request's <code>fetcher_approval_id</code>: each call waits only for a response naming it, so with several gated calls pending an answer never decides the wrong one. <code>"yes"</code>, <code>"y"</code>, <code>"approve"</code> or <code>"approved"</code> runs the call once through <code>fetcher.execute</code> with only the confirmation gate cleared; anything else rejects it and the model is told. A tool called directly, outside a workflow, reports that it needs approval.</p>
 
   <h2>Context injection</h2>
-  <p>Each Gantry tool has a hidden <code>ctx</code> parameter annotated with the workflow <code>Context</code>, so <code>FunctionAgent</code> injects the run's context. It is kept out of the tool's schema, and a direct <code>tool.call(...)</code> gets <code>None</code>. <code>current_workflow_context()</code> and <code>current_tool_invocation()</code> expose it, with <code>deps</code> set to <code>ctx.store</code>.</p>
+  <p>Each dotfetch tool has a hidden <code>ctx</code> parameter annotated with the workflow <code>Context</code>, so <code>FunctionAgent</code> injects the run's context. It is kept out of the tool's schema, and a direct <code>tool.call(...)</code> gets <code>None</code>. <code>current_workflow_context()</code> and <code>current_tool_invocation()</code> expose it, with <code>deps</code> set to <code>ctx.store</code>.</p>
 
   <h2>Per-step selection</h2>
   <ul>
@@ -33,5 +33,5 @@ result = await handler`} />
   </ul>
 
   <h2>Tracing</h2>
-  <p>An active OpenTelemetry span becomes the Gantry <code>ToolCall</code>'s <code>trace_id</code> and <code>parent_span_id</code>.</p>
+  <p>An active OpenTelemetry span becomes the dotfetch <code>ToolCall</code>'s <code>trace_id</code> and <code>parent_span_id</code>.</p>
 </DocsLayout>

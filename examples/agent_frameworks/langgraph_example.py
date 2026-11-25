@@ -1,14 +1,14 @@
-"""LangGraph + Agent-Gantry, through LangGraph's own mechanisms.
+"""LangGraph + dotfetch, through LangGraph's own mechanisms.
 
 1. **Per-turn selection** -- ``adapter.middleware()`` is a ``create_agent``
-   middleware that re-selects the Gantry tools offered on every model turn.
+   middleware that re-selects the dotfetch tools offered on every model turn.
    After the CRM lookup returns, the email tool appears because the next
    selection reads the lookup's output.
 2. **Readable errors** -- a failing tool comes back as an error ``ToolMessage``
    the model can react to, instead of ending the run.
 3. **Approval** -- a ``requires_confirmation`` tool pauses the graph with
    ``interrupt()``; ``Command(resume=True)`` runs it exactly once.
-4. **Run context** -- a Gantry tool reads the graph's ``context=`` through
+4. **Run context** -- a dotfetch tool reads the graph's ``context=`` through
    ``current_tool_runtime()``.
 
 Everything runs **offline**: a scripted chat model stands in for a real one, so
@@ -17,7 +17,7 @@ LangChain chat model) to use it for real.
 
 Install and run::
 
-    pip install 'agent-gantry[langgraph]'
+    pip install 'dotfetch[langgraph]'
     python examples/agent_frameworks/langgraph_example.py
 """
 
@@ -26,37 +26,37 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
 
 
-def build_gantry() -> AgentGantry:
-    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
+def build_fetcher() -> DotFetch:
+    fetcher = DotFetch(embedder=SimpleEmbedder(dimension=256))
 
-    @gantry.register(tags=["crm"], examples=["find the customer record for Jo"])
+    @fetcher.register(tags=["crm"], examples=["find the customer record for Jo"])
     def lookup_customer(name: str) -> str:
         """Look up a customer record by name."""
         return f"Customer {name} found. Next step: send an email message to jo@example.com"
 
-    @gantry.register(tags=["email"], examples=["email the team"], requires_confirmation=True)
+    @fetcher.register(tags=["email"], examples=["email the team"], requires_confirmation=True)
     def send_email(to: str) -> str:
         """Send an email message to a recipient."""
         return f"Email sent to {to}."
 
-    @gantry.register(tags=["math"], examples=["divide 10 by 2"])
+    @fetcher.register(tags=["math"], examples=["divide 10 by 2"])
     def divide(a: int, b: int) -> float:
         """Divide integer a by integer b."""
         return a / b
 
-    @gantry.register(tags=["identity"], examples=["who am I signed in as"])
+    @fetcher.register(tags=["identity"], examples=["who am I signed in as"])
     def whoami() -> str:
         """Return the name of the signed-in user."""
-        from agent_gantry.langgraph import current_tool_runtime
+        from dotfetch.langgraph import current_tool_runtime
 
         runtime = current_tool_runtime()
         return f"You are signed in as {runtime.context['user']}." if runtime else "Unknown user."
 
-    return gantry
+    return fetcher
 
 
 def scripted(*steps: list[tuple[str, dict[str, Any]]]) -> Any:
@@ -90,9 +90,9 @@ def tool_outputs(result: dict[str, Any]) -> list[str]:
 
 
 async def main() -> None:
-    gantry = build_gantry()
+    fetcher = build_fetcher()
     try:
-        await gantry.sync()
+        await fetcher.sync()
         try:
             from langchain.agents import create_agent
             from langgraph.checkpoint.memory import InMemorySaver
@@ -100,13 +100,13 @@ async def main() -> None:
         except ImportError as exc:
             print(
                 f"The LangGraph demo needs langchain and langgraph ({exc}).\n"
-                "Install them with `pip install 'agent-gantry[langgraph]'`."
+                "Install them with `pip install 'dotfetch[langgraph]'`."
             )
             return
 
-        from agent_gantry.langgraph import LangGraphAdapter
+        from dotfetch.langgraph import LangGraphAdapter
 
-        adapter = LangGraphAdapter(gantry)
+        adapter = LangGraphAdapter(fetcher)
 
         # 1. Per-turn selection ------------------------------------------- #
         model = scripted([("lookup_customer", {"name": "Jo"})])
@@ -146,11 +146,11 @@ async def main() -> None:
         print(f"[context] {tool_outputs(result)[0]}")
 
         print(
-            "\nEvery tool call above went through gantry.execute, so the security "
+            "\nEvery tool call above went through fetcher.execute, so the security "
             "policy, retries, timeouts and circuit breakers all applied."
         )
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 if __name__ == "__main__":

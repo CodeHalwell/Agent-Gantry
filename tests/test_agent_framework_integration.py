@@ -1,7 +1,7 @@
 """
 Tests for Microsoft Agent Framework integration.
 
-Covers the AgentFrameworkAdapter (tool spec), the GantryToolBridge,
+Covers the AgentFrameworkAdapter (tool spec), the DotFetchToolBridge,
 the framework_adapters entry, and the updated example.
 """
 
@@ -13,23 +13,23 @@ from typing import Any
 
 import pytest
 
-from agent_gantry.adapters.tool_spec import DialectRegistry, ToolCallPayload, get_adapter
-from agent_gantry.adapters.tool_spec.providers import AgentFrameworkAdapter
-from agent_gantry.schema.tool import SchemaDialect, ToolDefinition
+from dotfetch.adapters.tool_spec import DialectRegistry, ToolCallPayload, get_adapter
+from dotfetch.adapters.tool_spec.providers import AgentFrameworkAdapter
+from dotfetch.schema.tool import SchemaDialect, ToolDefinition
 
 
 @pytest.fixture(autouse=True)
 def _offline_embedder(monkeypatch):
-    """Make bare ``AgentGantry()`` use the offline ``SimpleEmbedder`` so these
+    """Make bare ``DotFetch()`` use the offline ``SimpleEmbedder`` so these
     tests never download an embedder model from the HF Hub (which rate-limits /
     flakes in CI). Retrieval here is trivial — few tools, ``score_threshold=0.0``,
     ``limit`` above the tool count — so the toy embedder changes no assertion.
     Tests that pass ``embedder=`` explicitly are unaffected.
     """
-    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+    from dotfetch.adapters.embedders.simple import SimpleEmbedder
 
     monkeypatch.setattr(
-        "agent_gantry.core.gantry.build_embedder", lambda config: SimpleEmbedder()
+        "dotfetch.core.fetcher.build_embedder", lambda config: SimpleEmbedder()
     )
 
 # ---------------------------------------------------------------------------
@@ -250,31 +250,31 @@ class TestSchemaDialectEnum:
 
 
 # ---------------------------------------------------------------------------
-# GantryToolBridge
+# DotFetchToolBridge
 # ---------------------------------------------------------------------------
 
 
-class TestGantryToolBridge:
-    """Tests for the GantryToolBridge."""
+class TestDotFetchToolBridge:
+    """Tests for the DotFetchToolBridge."""
 
     @pytest.mark.asyncio
     async def test_bridge_get_tools_returns_callables(self) -> None:
-        from agent_gantry import AgentGantry
-        from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+        from dotfetch import DotFetch
+        from dotfetch.integrations.agent_framework_bridge import DotFetchToolBridge
 
-        gantry = AgentGantry()
+        fetcher = DotFetch()
 
-        @gantry.register
+        @fetcher.register
         def get_user_profile(user_id: str) -> dict[str, str]:
             """Fetch a user's profile from the CRM system."""
             return {"user_id": user_id, "plan": "pro"}
 
-        await gantry.sync()
+        await fetcher.sync()
 
         # as_function_tool=False preserves the bare-callable shape that these
         # tests exercise. The new default (FunctionTool wrapping) is covered
         # by tests/test_agent_framework_orchestration.py.
-        bridge = GantryToolBridge(gantry, score_threshold=0.0, as_function_tool=False)
+        bridge = DotFetchToolBridge(fetcher, score_threshold=0.0, as_function_tool=False)
         tools = await bridge.get_tools("user profile", limit=5, score_threshold=0.0)
 
         assert len(tools) >= 1
@@ -285,22 +285,22 @@ class TestGantryToolBridge:
 
     @pytest.mark.asyncio
     async def test_bridge_tool_execution(self) -> None:
-        from agent_gantry import AgentGantry
-        from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+        from dotfetch import DotFetch
+        from dotfetch.integrations.agent_framework_bridge import DotFetchToolBridge
 
-        gantry = AgentGantry()
+        fetcher = DotFetch()
 
-        @gantry.register
+        @fetcher.register
         def get_user_profile(user_id: str) -> dict[str, str]:
             """Fetch a user's profile from the CRM system."""
             return {"user_id": user_id, "plan": "pro"}
 
-        await gantry.sync()
+        await fetcher.sync()
 
         # as_function_tool=False preserves the bare-callable shape that these
         # tests exercise. The new default (FunctionTool wrapping) is covered
         # by tests/test_agent_framework_orchestration.py.
-        bridge = GantryToolBridge(gantry, score_threshold=0.0, as_function_tool=False)
+        bridge = DotFetchToolBridge(fetcher, score_threshold=0.0, as_function_tool=False)
         tools = await bridge.get_tools("user profile", limit=5, score_threshold=0.0)
 
         # Execute the wrapped tool
@@ -311,22 +311,22 @@ class TestGantryToolBridge:
 
     @pytest.mark.asyncio
     async def test_bridge_multi_param_tool(self) -> None:
-        from agent_gantry import AgentGantry
-        from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+        from dotfetch import DotFetch
+        from dotfetch.integrations.agent_framework_bridge import DotFetchToolBridge
 
-        gantry = AgentGantry()
+        fetcher = DotFetch()
 
-        @gantry.register
+        @fetcher.register
         def search_products(query: str, category: str) -> str:
             """Search for products by query and category in the catalog."""
             return f"Found 5 products matching '{query}' in '{category}'"
 
-        await gantry.sync()
+        await fetcher.sync()
 
         # as_function_tool=False preserves the bare-callable shape that these
         # tests exercise. The new default (FunctionTool wrapping) is covered
         # by tests/test_agent_framework_orchestration.py.
-        bridge = GantryToolBridge(gantry, score_threshold=0.0, as_function_tool=False)
+        bridge = DotFetchToolBridge(fetcher, score_threshold=0.0, as_function_tool=False)
         tools = await bridge.get_tools("search products", limit=5, score_threshold=0.0)
 
         assert len(tools) >= 1
@@ -341,22 +341,22 @@ class TestGantryToolBridge:
 
     @pytest.mark.asyncio
     async def test_bridge_no_param_tool(self) -> None:
-        from agent_gantry import AgentGantry
-        from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+        from dotfetch import DotFetch
+        from dotfetch.integrations.agent_framework_bridge import DotFetchToolBridge
 
-        gantry = AgentGantry()
+        fetcher = DotFetch()
 
-        @gantry.register
+        @fetcher.register
         def get_system_status() -> str:
             """Retrieve the current system health status information."""
             return "all systems operational"
 
-        await gantry.sync()
+        await fetcher.sync()
 
         # as_function_tool=False preserves the bare-callable shape that these
         # tests exercise. The new default (FunctionTool wrapping) is covered
         # by tests/test_agent_framework_orchestration.py.
-        bridge = GantryToolBridge(gantry, score_threshold=0.0, as_function_tool=False)
+        bridge = DotFetchToolBridge(fetcher, score_threshold=0.0, as_function_tool=False)
         tools = await bridge.get_tools("system status", limit=5, score_threshold=0.0)
 
         assert len(tools) >= 1
@@ -365,22 +365,22 @@ class TestGantryToolBridge:
 
     @pytest.mark.asyncio
     async def test_bridge_caching(self) -> None:
-        from agent_gantry import AgentGantry
-        from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+        from dotfetch import DotFetch
+        from dotfetch.integrations.agent_framework_bridge import DotFetchToolBridge
 
-        gantry = AgentGantry()
+        fetcher = DotFetch()
 
-        @gantry.register
+        @fetcher.register
         def get_user_profile(user_id: str) -> dict[str, str]:
             """Fetch a user's profile from the CRM system."""
             return {"user_id": user_id, "plan": "pro"}
 
-        await gantry.sync()
+        await fetcher.sync()
 
         # as_function_tool=False preserves the bare-callable shape that these
         # tests exercise. The new default (FunctionTool wrapping) is covered
         # by tests/test_agent_framework_orchestration.py.
-        bridge = GantryToolBridge(gantry, score_threshold=0.0, as_function_tool=False)
+        bridge = DotFetchToolBridge(fetcher, score_threshold=0.0, as_function_tool=False)
         tools1 = await bridge.get_tools("user profile", limit=5, score_threshold=0.0)
         tools2 = await bridge.get_tools("user profile", limit=5, score_threshold=0.0)
 
@@ -389,22 +389,22 @@ class TestGantryToolBridge:
 
     @pytest.mark.asyncio
     async def test_bridge_clear_cache(self) -> None:
-        from agent_gantry import AgentGantry
-        from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+        from dotfetch import DotFetch
+        from dotfetch.integrations.agent_framework_bridge import DotFetchToolBridge
 
-        gantry = AgentGantry()
+        fetcher = DotFetch()
 
-        @gantry.register
+        @fetcher.register
         def get_user_profile(user_id: str) -> dict[str, str]:
             """Fetch a user's profile from the CRM system."""
             return {"user_id": user_id, "plan": "pro"}
 
-        await gantry.sync()
+        await fetcher.sync()
 
         # as_function_tool=False preserves the bare-callable shape that these
         # tests exercise. The new default (FunctionTool wrapping) is covered
         # by tests/test_agent_framework_orchestration.py.
-        bridge = GantryToolBridge(gantry, score_threshold=0.0, as_function_tool=False)
+        bridge = DotFetchToolBridge(fetcher, score_threshold=0.0, as_function_tool=False)
         tools1 = await bridge.get_tools("user profile", limit=5, score_threshold=0.0)
         bridge.clear_cache()
         tools2 = await bridge.get_tools("user profile", limit=5, score_threshold=0.0)
@@ -414,20 +414,20 @@ class TestGantryToolBridge:
 
     @pytest.mark.asyncio
     async def test_bridge_wrap_tools_directly(self) -> None:
-        from agent_gantry import AgentGantry
-        from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+        from dotfetch import DotFetch
+        from dotfetch.integrations.agent_framework_bridge import DotFetchToolBridge
 
-        gantry = AgentGantry()
+        fetcher = DotFetch()
 
-        @gantry.register
+        @fetcher.register
         def get_user_profile(user_id: str) -> dict[str, str]:
             """Fetch a user's profile from the CRM system."""
             return {"user_id": user_id, "plan": "pro"}
 
-        await gantry.sync()
+        await fetcher.sync()
 
-        bridge = GantryToolBridge(gantry, as_function_tool=False)
-        tool_defs = gantry.export_tools()
+        bridge = DotFetchToolBridge(fetcher, as_function_tool=False)
+        tool_defs = fetcher.export_tools()
         wrapped = bridge.wrap_tools(tool_defs)
 
         assert len(wrapped) == 1
@@ -435,20 +435,20 @@ class TestGantryToolBridge:
 
     @pytest.mark.asyncio
     async def test_bridge_wrap_single(self) -> None:
-        from agent_gantry import AgentGantry
-        from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+        from dotfetch import DotFetch
+        from dotfetch.integrations.agent_framework_bridge import DotFetchToolBridge
 
-        gantry = AgentGantry()
+        fetcher = DotFetch()
 
-        @gantry.register
+        @fetcher.register
         def get_user_profile(user_id: str) -> dict[str, str]:
             """Fetch a user's profile from the CRM system."""
             return {"user_id": user_id, "plan": "pro"}
 
-        await gantry.sync()
+        await fetcher.sync()
 
-        bridge = GantryToolBridge(gantry, as_function_tool=False)
-        tool_def = gantry.export_tools()[0]
+        bridge = DotFetchToolBridge(fetcher, as_function_tool=False)
+        tool_def = fetcher.export_tools()[0]
         wrapped = bridge.wrap_single(tool_def)
 
         assert callable(wrapped)
@@ -456,22 +456,22 @@ class TestGantryToolBridge:
 
     @pytest.mark.asyncio
     async def test_bridge_get_tools_with_scores(self) -> None:
-        from agent_gantry import AgentGantry
-        from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+        from dotfetch import DotFetch
+        from dotfetch.integrations.agent_framework_bridge import DotFetchToolBridge
 
-        gantry = AgentGantry()
+        fetcher = DotFetch()
 
-        @gantry.register
+        @fetcher.register
         def get_user_profile(user_id: str) -> dict[str, str]:
             """Fetch a user's profile from the CRM system."""
             return {"user_id": user_id, "plan": "pro"}
 
-        await gantry.sync()
+        await fetcher.sync()
 
         # as_function_tool=False preserves the bare-callable shape that these
         # tests exercise. The new default (FunctionTool wrapping) is covered
         # by tests/test_agent_framework_orchestration.py.
-        bridge = GantryToolBridge(gantry, score_threshold=0.0, as_function_tool=False)
+        bridge = DotFetchToolBridge(fetcher, score_threshold=0.0, as_function_tool=False)
         results = await bridge.get_tools_with_scores(
             "user profile", limit=5, score_threshold=0.0
         )
@@ -493,20 +493,20 @@ class TestFrameworkAdaptersEntry:
 
     @pytest.mark.asyncio
     async def test_fetch_framework_tools_agent_framework(self) -> None:
-        from agent_gantry import AgentGantry
-        from agent_gantry.integrations.framework_adapters import fetch_framework_tools
+        from dotfetch import DotFetch
+        from dotfetch.integrations.framework_adapters import fetch_framework_tools
 
-        gantry = AgentGantry()
+        fetcher = DotFetch()
 
-        @gantry.register
+        @fetcher.register
         def get_user_profile(user_id: str) -> dict[str, str]:
             """Fetch a user's profile from the CRM system."""
             return {"user_id": user_id, "plan": "pro"}
 
-        await gantry.sync()
+        await fetcher.sync()
 
         tools = await fetch_framework_tools(
-            gantry,
+            fetcher,
             "user profile",
             framework="agent_framework",
             limit=5,
@@ -519,13 +519,13 @@ class TestFrameworkAdaptersEntry:
 
     @pytest.mark.asyncio
     async def test_unsupported_framework_raises(self) -> None:
-        from agent_gantry import AgentGantry
-        from agent_gantry.integrations.framework_adapters import fetch_framework_tools
+        from dotfetch import DotFetch
+        from dotfetch.integrations.framework_adapters import fetch_framework_tools
 
-        gantry = AgentGantry()
+        fetcher = DotFetch()
         with pytest.raises(ValueError, match="Unsupported framework"):
             await fetch_framework_tools(
-                gantry, "test", framework="nonexistent"  # type: ignore[arg-type]
+                fetcher, "test", framework="nonexistent"  # type: ignore[arg-type]
             )
 
 
@@ -534,28 +534,28 @@ class TestFrameworkAdaptersEntry:
 # ---------------------------------------------------------------------------
 
 
-class TestGantryToolBridgeEdgeCases:
-    """Edge-case and regression tests for the GantryToolBridge."""
+class TestDotFetchToolBridgeEdgeCases:
+    """Edge-case and regression tests for the DotFetchToolBridge."""
 
     @pytest.mark.asyncio
     async def test_positional_args_single_param(self) -> None:
         """Calling a single-param wrapper positionally should work."""
-        from agent_gantry import AgentGantry
-        from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+        from dotfetch import DotFetch
+        from dotfetch.integrations.agent_framework_bridge import DotFetchToolBridge
 
-        gantry = AgentGantry()
+        fetcher = DotFetch()
 
-        @gantry.register
+        @fetcher.register
         def get_user_profile(user_id: str) -> dict[str, str]:
             """Fetch a user's profile from the CRM system."""
             return {"user_id": user_id, "plan": "pro"}
 
-        await gantry.sync()
+        await fetcher.sync()
 
         # as_function_tool=False preserves the bare-callable shape that these
         # tests exercise. The new default (FunctionTool wrapping) is covered
         # by tests/test_agent_framework_orchestration.py.
-        bridge = GantryToolBridge(gantry, score_threshold=0.0, as_function_tool=False)
+        bridge = DotFetchToolBridge(fetcher, score_threshold=0.0, as_function_tool=False)
         tools = await bridge.get_tools("user profile", limit=5, score_threshold=0.0)
 
         # Positional call
@@ -566,22 +566,22 @@ class TestGantryToolBridgeEdgeCases:
     @pytest.mark.asyncio
     async def test_positional_args_multi_param(self) -> None:
         """Calling a multi-param wrapper positionally should map by order."""
-        from agent_gantry import AgentGantry
-        from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+        from dotfetch import DotFetch
+        from dotfetch.integrations.agent_framework_bridge import DotFetchToolBridge
 
-        gantry = AgentGantry()
+        fetcher = DotFetch()
 
-        @gantry.register
+        @fetcher.register
         def search_products(query: str, category: str) -> str:
             """Search for products by query and category in the catalog."""
             return f"Found 5 products matching '{query}' in '{category}'"
 
-        await gantry.sync()
+        await fetcher.sync()
 
         # as_function_tool=False preserves the bare-callable shape that these
         # tests exercise. The new default (FunctionTool wrapping) is covered
         # by tests/test_agent_framework_orchestration.py.
-        bridge = GantryToolBridge(gantry, score_threshold=0.0, as_function_tool=False)
+        bridge = DotFetchToolBridge(fetcher, score_threshold=0.0, as_function_tool=False)
         tools = await bridge.get_tools("search products", limit=5, score_threshold=0.0)
 
         result = await tools[0]("shoes", "footwear")
@@ -591,22 +591,22 @@ class TestGantryToolBridgeEdgeCases:
     @pytest.mark.asyncio
     async def test_positional_args_too_many_raises(self) -> None:
         """Passing more positional args than parameters should raise TypeError."""
-        from agent_gantry import AgentGantry
-        from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+        from dotfetch import DotFetch
+        from dotfetch.integrations.agent_framework_bridge import DotFetchToolBridge
 
-        gantry = AgentGantry()
+        fetcher = DotFetch()
 
-        @gantry.register
+        @fetcher.register
         def get_user_profile(user_id: str) -> dict[str, str]:
             """Fetch a user's profile from the CRM system."""
             return {"user_id": user_id, "plan": "pro"}
 
-        await gantry.sync()
+        await fetcher.sync()
 
         # as_function_tool=False preserves the bare-callable shape that these
         # tests exercise. The new default (FunctionTool wrapping) is covered
         # by tests/test_agent_framework_orchestration.py.
-        bridge = GantryToolBridge(gantry, score_threshold=0.0, as_function_tool=False)
+        bridge = DotFetchToolBridge(fetcher, score_threshold=0.0, as_function_tool=False)
         tools = await bridge.get_tools("user profile", limit=5, score_threshold=0.0)
 
         with pytest.raises(TypeError, match="takes at most 1"):
@@ -615,22 +615,22 @@ class TestGantryToolBridgeEdgeCases:
     @pytest.mark.asyncio
     async def test_no_var_keyword_in_signature(self) -> None:
         """Wrapper signatures should not expose **kwargs to AF introspection."""
-        from agent_gantry import AgentGantry
-        from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+        from dotfetch import DotFetch
+        from dotfetch.integrations.agent_framework_bridge import DotFetchToolBridge
 
-        gantry = AgentGantry()
+        fetcher = DotFetch()
 
-        @gantry.register
+        @fetcher.register
         def get_user_profile(user_id: str) -> dict[str, str]:
             """Fetch a user's profile from the CRM system."""
             return {"user_id": user_id, "plan": "pro"}
 
-        await gantry.sync()
+        await fetcher.sync()
 
         # as_function_tool=False preserves the bare-callable shape that these
         # tests exercise. The new default (FunctionTool wrapping) is covered
         # by tests/test_agent_framework_orchestration.py.
-        bridge = GantryToolBridge(gantry, score_threshold=0.0, as_function_tool=False)
+        bridge = DotFetchToolBridge(fetcher, score_threshold=0.0, as_function_tool=False)
         tools = await bridge.get_tools("user profile", limit=5, score_threshold=0.0)
 
         sig = inspect.signature(tools[0])
@@ -645,20 +645,20 @@ class TestGantryToolBridgeEdgeCases:
     @pytest.mark.asyncio
     async def test_wrap_tools_cache_bypass(self) -> None:
         """wrap_tools with cache=False should create fresh wrappers."""
-        from agent_gantry import AgentGantry
-        from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+        from dotfetch import DotFetch
+        from dotfetch.integrations.agent_framework_bridge import DotFetchToolBridge
 
-        gantry = AgentGantry()
+        fetcher = DotFetch()
 
-        @gantry.register
+        @fetcher.register
         def get_user_profile(user_id: str) -> dict[str, str]:
             """Fetch a user's profile from the CRM system."""
             return {"user_id": user_id, "plan": "pro"}
 
-        await gantry.sync()
+        await fetcher.sync()
 
-        bridge = GantryToolBridge(gantry, as_function_tool=False)
-        tool_defs = gantry.export_tools()
+        bridge = DotFetchToolBridge(fetcher, as_function_tool=False)
+        tool_defs = fetcher.export_tools()
         wrapped1 = bridge.wrap_tools(tool_defs, cache=True)
         wrapped2 = bridge.wrap_tools(tool_defs, cache=False)
 
@@ -692,7 +692,7 @@ class TestDisableAFInstrumentation:
         pytest.importorskip("agent_framework", reason="agent-framework not installed")
         from agent_framework import observability
 
-        from agent_gantry import disable_af_instrumentation
+        from dotfetch import disable_af_instrumentation
 
         has_switch = callable(
             getattr(observability, "disable_instrumentation", None)
@@ -712,23 +712,23 @@ class TestDisableAFInstrumentation:
             return real_import(name, *args, **kwargs)
 
         monkeypatch.setattr(builtins, "__import__", _no_af)
-        import agent_gantry.integrations.agent_framework_bridge as bridge_mod
+        import dotfetch.integrations.agent_framework_bridge as bridge_mod
 
         assert bridge_mod.disable_af_instrumentation() is False
 
 
 @pytest.mark.asyncio
 async def test_bridge_wraps_nullable_and_boolean_property_schemas() -> None:
-    """A list-typed ``type`` (what Gantry emits for ``int | None = 5``) and a
+    """A list-typed ``type`` (what dotfetch emits for ``int | None = 5``) and a
     bare boolean property schema both wrap; each used to crash the whole
     selection round with ``TypeError``/``AttributeError``."""
-    from agent_gantry import AgentGantry
-    from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
-    from agent_gantry.schema.tool import ToolDefinition
+    from dotfetch import DotFetch
+    from dotfetch.integrations.agent_framework_bridge import DotFetchToolBridge
+    from dotfetch.schema.tool import ToolDefinition
 
-    gantry = AgentGantry()
+    fetcher = DotFetch()
 
-    @gantry.register
+    @fetcher.register
     def lookup_user(user_id: str, retries: int | None = 5) -> str:
         """Look up a user record by id with an optional retry budget."""
         return f"{user_id}:{retries}"
@@ -738,11 +738,11 @@ async def test_bridge_wraps_nullable_and_boolean_property_schemas() -> None:
         description="An imported tool with a boolean property schema.",
         parameters_schema={"type": "object", "properties": {"q": True}, "required": []},
     )
-    await gantry.add_tool(imported, handler=lambda **kwargs: "ok")
-    await gantry.sync()
+    await fetcher.add_tool(imported, handler=lambda **kwargs: "ok")
+    await fetcher.sync()
 
-    bridge = GantryToolBridge(gantry, as_function_tool=False)
-    wrapped = {t.__name__: t for t in bridge.wrap_tools(gantry.export_tools())}
+    bridge = DotFetchToolBridge(fetcher, as_function_tool=False)
+    wrapped = {t.__name__: t for t in bridge.wrap_tools(fetcher.export_tools())}
     assert set(wrapped) == {"lookup_user", "imported_tool"}
 
     params = inspect.signature(wrapped["lookup_user"]).parameters
@@ -757,22 +757,22 @@ async def test_bridge_wraps_nullable_and_boolean_property_schemas() -> None:
 async def test_native_af_invocation_delegates_confirmation_and_retains_policy(allowed):
     """Host-level native invocation clears confirmation, while denials still apply."""
     pytest.importorskip("agent_framework")
-    from agent_gantry import AgentGantry
-    from agent_gantry.core.security import SecurityPolicy
-    from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+    from dotfetch import DotFetch
+    from dotfetch.core.security import SecurityPolicy
+    from dotfetch.integrations.agent_framework_bridge import DotFetchToolBridge
 
     calls = []
     policy = SecurityPolicy(require_confirmation=["submit_*"], allowed_domains=["allowed.test"])
-    async with AgentGantry(security_policy=policy) as gantry:
+    async with DotFetch(security_policy=policy) as fetcher:
 
-        @gantry.register(requires_confirmation=True)
+        @fetcher.register(requires_confirmation=True)
         async def submit_request(url: str, require_confirmation: bool) -> str:
             """Submit to a permitted URL after approval."""
             calls.append((url, require_confirmation))
             return "submitted"
 
-        native = GantryToolBridge(gantry, as_function_tool=True).wrap_tools(
-            gantry.list_tools_sync()
+        native = DotFetchToolBridge(fetcher, as_function_tool=True).wrap_tools(
+            fetcher.list_tools_sync()
         )[0]
         assert native.approval_mode == "always_require"
         assert set(native.parameters()["properties"]) == {"url", "require_confirmation"}
@@ -789,21 +789,21 @@ async def test_native_af_invocation_delegates_confirmation_and_retains_policy(al
             assert "PermissionDenied" in text
 
 
-async def test_bare_af_wrapper_keeps_gantry_confirmation_gate():
-    from agent_gantry import AgentGantry
-    from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+async def test_bare_af_wrapper_keeps_fetcher_confirmation_gate():
+    from dotfetch import DotFetch
+    from dotfetch.integrations.agent_framework_bridge import DotFetchToolBridge
 
     calls = []
-    async with AgentGantry() as gantry:
+    async with DotFetch() as fetcher:
 
-        @gantry.register(requires_confirmation=True)
+        @fetcher.register(requires_confirmation=True)
         def submit_request() -> str:
             """Submit after confirmation."""
             calls.append(1)
             return "submitted"
 
-        wrapper = GantryToolBridge(gantry, as_function_tool=False).wrap_tools(
-            gantry.list_tools_sync()
+        wrapper = DotFetchToolBridge(fetcher, as_function_tool=False).wrap_tools(
+            fetcher.list_tools_sync()
         )[0]
         assert "error" in await wrapper()
         assert calls == []

@@ -21,15 +21,15 @@ from langchain_core.tools import tool as lc_tool  # noqa: E402
 from langgraph.checkpoint.memory import InMemorySaver  # noqa: E402
 from langgraph.types import Command  # noqa: E402
 
-from agent_gantry import AgentGantry, current_tool_invocation  # noqa: E402
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder  # noqa: E402
-from agent_gantry.core.security import SecurityPolicy  # noqa: E402
-from agent_gantry.integrations.frameworks.base import (  # noqa: E402
+from dotfetch import DotFetch, current_tool_invocation  # noqa: E402
+from dotfetch.adapters.embedders.simple import SimpleEmbedder  # noqa: E402
+from dotfetch.core.security import SecurityPolicy  # noqa: E402
+from dotfetch.integrations.frameworks.base import (  # noqa: E402
     ToolConfirmationRequiredError,
     ToolExecutionError,
 )
-from agent_gantry.langchain import LangChainAdapter, current_tool_runtime  # noqa: E402
-from agent_gantry.langgraph import LangGraphAdapter  # noqa: E402
+from dotfetch.langchain import LangChainAdapter, current_tool_runtime  # noqa: E402
+from dotfetch.langgraph import LangGraphAdapter  # noqa: E402
 
 
 class ScriptedModel(GenericFakeChatModel):
@@ -62,8 +62,8 @@ def _tool_messages(result: dict[str, Any]) -> list[ToolMessage]:
     return [m for m in result["messages"] if isinstance(m, ToolMessage)]
 
 
-async def _build(**kwargs: Any) -> AgentGantry:
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=256), **kwargs)
+async def _build(**kwargs: Any) -> DotFetch:
+    g = DotFetch(embedder=SimpleEmbedder(dimension=256), **kwargs)
     g.sent = []  # type: ignore[attr-defined]
 
     @g.register(examples=["what's the weather in London", "weather forecast for Paris"])
@@ -108,7 +108,7 @@ async def _build(**kwargs: Any) -> AgentGantry:
 
 
 @pytest.fixture
-async def gantry():
+async def fetcher():
     g = await _build()
     try:
         yield g
@@ -116,8 +116,8 @@ async def gantry():
         await g.close()
 
 
-async def _static_agent(gantry, query, *steps, checkpointer=None, **adapter_kwargs):
-    tools = await LangChainAdapter(gantry, **adapter_kwargs).select(query, limit=6)
+async def _static_agent(fetcher, query, *steps, checkpointer=None, **adapter_kwargs):
+    tools = await LangChainAdapter(fetcher, **adapter_kwargs).select(query, limit=6)
     model = _model(*steps)
     return create_agent(model=model, tools=tools, checkpointer=checkpointer), model
 
@@ -130,8 +130,8 @@ THREAD = {"configurable": {"thread_id": "t1"}}
 # --------------------------------------------------------------------------- #
 
 
-async def test_tool_failure_reaches_the_model_as_an_error_tool_message(gantry):
-    agent, _ = await _static_agent(gantry, "divide", [("divide", {"a": 1, "b": 0})])
+async def test_tool_failure_reaches_the_model_as_an_error_tool_message(fetcher):
+    agent, _ = await _static_agent(fetcher, "divide", [("divide", {"a": 1, "b": 0})])
     result = await agent.ainvoke({"messages": [("user", "divide 1 by 0")]})
     [message] = _tool_messages(result)
     assert message.status == "error"
@@ -139,16 +139,16 @@ async def test_tool_failure_reaches_the_model_as_an_error_tool_message(gantry):
     assert result["messages"][-1].content == "done"  # the run carried on
 
 
-async def test_bad_arguments_are_shown_so_the_model_can_correct_them(gantry):
-    agent, _ = await _static_agent(gantry, "divide", [("divide", {"a": "x", "b": 1})])
+async def test_bad_arguments_are_shown_so_the_model_can_correct_them(fetcher):
+    agent, _ = await _static_agent(fetcher, "divide", [("divide", {"a": "x", "b": 1})])
     result = await agent.ainvoke({"messages": [("user", "divide")]})
     [message] = _tool_messages(result)
     assert message.status == "error" and message.content
 
 
-async def test_error_formatter_rewrites_the_text(gantry):
+async def test_error_formatter_rewrites_the_text(fetcher):
     agent, _ = await _static_agent(
-        gantry,
+        fetcher,
         "divide",
         [("divide", {"a": 1, "b": 0})],
         error_formatter=lambda exc: f"{exc.error_type}: [redacted]",
@@ -164,9 +164,9 @@ def _chain(exc: BaseException) -> list[BaseException]:
     return chain
 
 
-async def test_error_mode_raise_propagates(gantry):
+async def test_error_mode_raise_propagates(fetcher):
     agent, _ = await _static_agent(
-        gantry, "divide", [("divide", {"a": 1, "b": 0})], error_mode="raise"
+        fetcher, "divide", [("divide", {"a": 1, "b": 0})], error_mode="raise"
     )
     with pytest.raises(Exception) as info:
         await agent.ainvoke({"messages": [("user", "divide")]})
@@ -179,9 +179,9 @@ async def test_error_mode_raise_propagates(gantry):
 
 
 @pytest.mark.parametrize("decision", [True, {"approved": True}, False, "reject", "yes"])
-async def test_confirmation_gate_interrupts_and_resumes(gantry, decision):
+async def test_confirmation_gate_interrupts_and_resumes(fetcher, decision):
     agent, _ = await _static_agent(
-        gantry,
+        fetcher,
         "send an email message",
         [("send_email", {"to": "bob@x"})],
         checkpointer=InMemorySaver(),
@@ -191,11 +191,11 @@ async def test_confirmation_gate_interrupts_and_resumes(gantry, decision):
     assert pending.value["tool"] == "send_email"
     assert pending.value["arguments"] == {"to": "bob@x"}
     assert pending.value["tool_call_id"] == "call_0_0"
-    assert gantry.sent == []
+    assert fetcher.sent == []
 
     second = await agent.ainvoke(Command(resume=decision), THREAD)
     approved = decision in (True, {"approved": True})
-    assert gantry.sent == (["bob@x"] if approved else [])  # exactly once when approved
+    assert fetcher.sent == (["bob@x"] if approved else [])  # exactly once when approved
     [message] = _tool_messages(second)
     assert (message.content == "sent:bob@x") is approved
     if not approved:
@@ -219,19 +219,19 @@ async def test_security_policy_pattern_also_interrupts():
         await g.close()
 
 
-async def test_without_a_checkpointer_the_gated_call_is_reported_not_run(gantry):
+async def test_without_a_checkpointer_the_gated_call_is_reported_not_run(fetcher):
     agent, _ = await _static_agent(
-        gantry, "send an email message", [("send_email", {"to": "bob@x"})]
+        fetcher, "send an email message", [("send_email", {"to": "bob@x"})]
     )
     result = await agent.ainvoke({"messages": [("user", "email bob")]})
     [message] = _tool_messages(result)
     assert message.status == "error" and "approval" in message.content
-    assert gantry.sent == []
+    assert fetcher.sent == []
 
 
-async def test_error_mode_raise_with_a_gated_tool_raises_and_never_runs(gantry):
+async def test_error_mode_raise_with_a_gated_tool_raises_and_never_runs(fetcher):
     agent, _ = await _static_agent(
-        gantry,
+        fetcher,
         "send an email message",
         [("send_email", {"to": "bob@x"})],
         checkpointer=InMemorySaver(),
@@ -240,7 +240,7 @@ async def test_error_mode_raise_with_a_gated_tool_raises_and_never_runs(gantry):
     with pytest.raises(Exception) as info:
         await agent.ainvoke({"messages": [("user", "email bob")]}, THREAD)
     assert any(isinstance(e, ToolConfirmationRequiredError) for e in _chain(info.value))
-    assert gantry.sent == []
+    assert fetcher.sent == []
 
 
 # --------------------------------------------------------------------------- #
@@ -248,8 +248,8 @@ async def test_error_mode_raise_with_a_gated_tool_raises_and_never_runs(gantry):
 # --------------------------------------------------------------------------- #
 
 
-async def test_runtime_context_reaches_gantry_handlers(gantry):
-    tools = await LangGraphAdapter(gantry).select("who am I signed in as", limit=6)
+async def test_runtime_context_reaches_fetcher_handlers(fetcher):
+    tools = await LangGraphAdapter(fetcher).select("who am I signed in as", limit=6)
     agent = create_agent(
         model=_model([("whoami", {})]),
         tools=tools,
@@ -262,9 +262,9 @@ async def test_runtime_context_reaches_gantry_handlers(gantry):
     assert _tool_messages(result)[0].content == ("user=dan;call=call_0_0;thread=t1;fw=langgraph")
 
 
-def test_sync_invoke_path_uses_the_same_behaviour(gantry):
+def test_sync_invoke_path_uses_the_same_behaviour(fetcher):
     async def tools():
-        return await LangChainAdapter(gantry).select("divide", limit=6)
+        return await LangChainAdapter(fetcher).select("divide", limit=6)
 
     agent = create_agent(model=_model([("divide", {"a": 1, "b": 0})]), tools=asyncio.run(tools()))
     result = agent.invoke({"messages": [("user", "divide")]})
@@ -276,17 +276,17 @@ def test_sync_invoke_path_uses_the_same_behaviour(gantry):
 # --------------------------------------------------------------------------- #
 
 
-async def _dynamic(gantry, *steps, prompt, middleware_kwargs=None, tools=(), **run):
-    middleware = await LangGraphAdapter(gantry).middleware(**(middleware_kwargs or {}))
+async def _dynamic(fetcher, *steps, prompt, middleware_kwargs=None, tools=(), **run):
+    middleware = await LangGraphAdapter(fetcher).middleware(**(middleware_kwargs or {}))
     model = _model(*steps)
     agent = create_agent(model=model, tools=list(tools), middleware=[middleware], **run)
     result = await agent.ainvoke({"messages": [("user", prompt)]}, THREAD if run else None)
     return result, model
 
 
-async def test_middleware_reselects_mid_run_from_tool_output(gantry):
+async def test_middleware_reselects_mid_run_from_tool_output(fetcher):
     _, model = await _dynamic(
-        gantry,
+        fetcher,
         [("lookup_customer", {"name": "Jo"})],
         prompt="look up the customer record for Jo",
         middleware_kwargs={"limit": 1, "sticky": False},
@@ -295,9 +295,9 @@ async def test_middleware_reselects_mid_run_from_tool_output(gantry):
     assert model.offered[1] == ["send_email"]  # chosen from the lookup's output
 
 
-async def test_middleware_sticky_keeps_earlier_tools(gantry):
+async def test_middleware_sticky_keeps_earlier_tools(fetcher):
     _, model = await _dynamic(
-        gantry,
+        fetcher,
         [("lookup_customer", {"name": "Jo"})],
         prompt="look up the customer record for Jo",
         middleware_kwargs={"limit": 1},
@@ -305,9 +305,9 @@ async def test_middleware_sticky_keeps_earlier_tools(gantry):
     assert model.offered[1] == ["lookup_customer", "send_email"]
 
 
-async def test_middleware_sticky_cap(gantry):
+async def test_middleware_sticky_cap(fetcher):
     _, model = await _dynamic(
-        gantry,
+        fetcher,
         [("lookup_customer", {"name": "Jo"})],
         prompt="look up the customer record for Jo",
         middleware_kwargs={"limit": 1, "max_offered": 1},
@@ -315,17 +315,17 @@ async def test_middleware_sticky_cap(gantry):
     assert model.offered[1] == ["send_email"]
 
 
-async def test_middleware_failed_output_never_feeds_retrieval(gantry):
+async def test_middleware_failed_output_never_feeds_retrieval(fetcher):
     queries = []
-    original = gantry.retrieve
+    original = fetcher.retrieve
 
     async def spy(query):
         queries.append(query.context.query)
         return await original(query)
 
-    gantry.retrieve = spy
+    fetcher.retrieve = spy
     await _dynamic(
-        gantry,
+        fetcher,
         [("divide", {"a": 1, "b": 0})],
         prompt="divide 1 by 0",
         middleware_kwargs={"limit": 1},
@@ -334,7 +334,7 @@ async def test_middleware_failed_output_never_feeds_retrieval(gantry):
 
 
 def test_failed_dict_tool_messages_never_drive_the_query():
-    from agent_gantry.integrations.frameworks.langgraph_live import _query_from_state
+    from dotfetch.integrations.frameworks.langgraph_live import _query_from_state
 
     state = {
         "messages": [
@@ -345,9 +345,9 @@ def test_failed_dict_tool_messages_never_drive_the_query():
     assert _query_from_state(state) == "look up the customer record"
 
 
-async def test_middleware_query_from_results_false(gantry):
+async def test_middleware_query_from_results_false(fetcher):
     _, model = await _dynamic(
-        gantry,
+        fetcher,
         [("lookup_customer", {"name": "Jo"})],
         prompt="look up the customer record for Jo",
         middleware_kwargs={"limit": 1, "sticky": False, "query_from_results": False},
@@ -355,8 +355,8 @@ async def test_middleware_query_from_results_false(gantry):
     assert model.offered[1] == ["lookup_customer"]
 
 
-async def test_middleware_retrieval_failure_keeps_earlier_tools_and_pins(gantry, caplog):
-    original = gantry.retrieve
+async def test_middleware_retrieval_failure_keeps_earlier_tools_and_pins(fetcher, caplog):
+    original = fetcher.retrieve
     calls = {"n": 0}
 
     async def flaky(query):
@@ -365,10 +365,10 @@ async def test_middleware_retrieval_failure_keeps_earlier_tools_and_pins(gantry,
             raise RuntimeError("vector store down")
         return await original(query)
 
-    gantry.retrieve = flaky
+    fetcher.retrieve = flaky
     with caplog.at_level("WARNING"):
         _, model = await _dynamic(
-            gantry,
+            fetcher,
             [("lookup_customer", {"name": "Jo"})],
             prompt="look up the customer record for Jo",
             middleware_kwargs={"limit": 1, "sticky": False, "always_include": ["get_weather"]},
@@ -377,12 +377,12 @@ async def test_middleware_retrieval_failure_keeps_earlier_tools_and_pins(gantry,
     assert "semantic retrieval failed" in caplog.text
 
 
-async def test_middleware_first_turn_failure_still_offers_pins(gantry):
+async def test_middleware_first_turn_failure_still_offers_pins(fetcher):
     async def down(query):
         raise RuntimeError("vector store down")
 
-    middleware = await LangGraphAdapter(gantry).middleware(limit=1, always_include=["get_weather"])
-    gantry.retrieve = down
+    middleware = await LangGraphAdapter(fetcher).middleware(limit=1, always_include=["get_weather"])
+    fetcher.retrieve = down
     model = _model([("get_weather", {"city": "Leeds"})])
     agent = create_agent(model=model, middleware=[middleware])
     result = await agent.ainvoke({"messages": [("user", "weather in Leeds")]})
@@ -390,21 +390,21 @@ async def test_middleware_first_turn_failure_still_offers_pins(gantry):
     assert _tool_messages(result)[0].content == "sunny in Leeds"
 
 
-async def test_middleware_pins_outside_the_namespace_filter(gantry):
-    middleware = await LangGraphAdapter(gantry).middleware(
+async def test_middleware_pins_outside_the_namespace_filter(fetcher):
+    middleware = await LangGraphAdapter(fetcher).middleware(
         limit=1, namespaces=["elsewhere"], required=["get_weather"]
     )
     assert [t.name for t in middleware.tools] == ["get_weather"]
 
 
-async def test_middleware_keeps_the_callers_own_tools(gantry):
+async def test_middleware_keeps_the_callers_own_tools(fetcher):
     @lc_tool
     def ping() -> str:
         """Reply with pong."""
         return "pong"
 
     _, model = await _dynamic(
-        gantry,
+        fetcher,
         [("ping", {})],
         prompt="what's the weather in London",
         middleware_kwargs={"limit": 1, "sticky": False},
@@ -414,8 +414,8 @@ async def test_middleware_keeps_the_callers_own_tools(gantry):
     assert model.offered[0] == ["get_weather", "ping"]
 
 
-async def test_middleware_runs_are_isolated(gantry):
-    middleware = await LangGraphAdapter(gantry).middleware(limit=1)
+async def test_middleware_runs_are_isolated(fetcher):
+    middleware = await LangGraphAdapter(fetcher).middleware(limit=1)
 
     async def run(prompt, thread):
         model = _model()
@@ -432,11 +432,11 @@ async def test_middleware_runs_are_isolated(gantry):
     assert crm == [["lookup_customer"]]
 
 
-async def test_middleware_runs_without_user_messages_or_threads_stay_isolated(gantry):
-    from agent_gantry.integrations.frameworks.langgraph_live import _Selector
+async def test_middleware_runs_without_user_messages_or_threads_stay_isolated(fetcher):
+    from dotfetch.integrations.frameworks.langgraph_live import _Selector
 
     selector = _Selector(
-        gantry,
+        fetcher,
         limit=1,
         score_threshold=0.0,
         namespaces=None,
@@ -466,16 +466,16 @@ async def test_middleware_runs_without_user_messages_or_threads_stay_isolated(ga
         assert crm == {"lookup_customer"}  # nothing carried over from the other run
 
 
-async def test_areact_agent_builds_a_per_turn_agent(gantry):
+async def test_areact_agent_builds_a_per_turn_agent(fetcher):
     model = _model([("get_weather", {"city": "Paris"})])
-    agent = await LangGraphAdapter(gantry).areact_agent(model, limit=1)
+    agent = await LangGraphAdapter(fetcher).areact_agent(model, limit=1)
     result = await agent.ainvoke({"messages": [("user", "what's the weather in Paris")]})
     assert model.offered[0] == ["get_weather"]
     assert _tool_messages(result)[0].content == "sunny in Paris"
 
 
-async def test_middleware_validates_arguments(gantry):
+async def test_middleware_validates_arguments(fetcher):
     with pytest.raises(ValueError, match="max_offered"):
-        await LangGraphAdapter(gantry).middleware(limit=3, max_offered=1)
+        await LangGraphAdapter(fetcher).middleware(limit=3, max_offered=1)
     with pytest.raises(ValueError, match="error_mode"):
-        LangGraphAdapter(gantry, error_mode="explode")  # type: ignore[arg-type]
+        LangGraphAdapter(fetcher, error_mode="explode")  # type: ignore[arg-type]

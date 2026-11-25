@@ -1,23 +1,23 @@
-"""Agno (formerly Phidata) + Agent-Gantry integration example.
+"""Agno (formerly Phidata) + dotfetch integration example.
 
 Runs offline: a small scripted Agno ``Model`` stands in for an LLM and issues
 the tool calls, so Agno's real run loop does the rest. It shows:
 
 1. ``AgnoAdapter.agent()`` — one Agno ``Agent`` whose tools are a callable
-   factory, so Agno asks Gantry for each run's tools (two runs, two different
+   factory, so Agno asks dotfetch for each run's tools (two runs, two different
    tool slices).
 2. A failing tool — Agno records the failed result (``"<type>: <message>"``)
    and the model gets another turn.
 3. A confirmation-gated tool — the run pauses (``run.is_paused``); confirming
    the requirement and calling ``continue_run`` runs it exactly once.
-4. Run context — a Gantry tool reads Agno's ``RunContext`` (``user_id``,
+4. Run context — a dotfetch tool reads Agno's ``RunContext`` (``user_id``,
    ``dependencies``) through ``current_run_context()``.
 
 Set ``OPENAI_API_KEY`` to also run one turn on a real model.
 
 Install:
 
-    pip install 'agent-gantry[agno]'
+    pip install 'dotfetch[agno]'
 
 Run:
 
@@ -32,28 +32,28 @@ import os
 from dataclasses import dataclass, field
 from typing import Any
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
 
 
-def build_gantry() -> AgentGantry:
-    from agent_gantry.agno import current_run_context
+def build_fetcher() -> DotFetch:
+    from dotfetch.agno import current_run_context
 
-    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
+    fetcher = DotFetch(embedder=SimpleEmbedder(dimension=256))
 
-    @gantry.register(examples=["what's the weather in London", "is it raining in Leeds"])
+    @fetcher.register(examples=["what's the weather in London", "is it raining in Leeds"])
     def get_weather(city: str) -> str:
         """Get the current weather for a city."""
         return f"It is 21C and sunny in {city}."
 
-    @gantry.register(examples=["how much is 50 euros in pounds", "convert 100 dollars to yen"])
+    @fetcher.register(examples=["how much is 50 euros in pounds", "convert 100 dollars to yen"])
     def convert_currency(amount: float, frm: str, to: str) -> str:
         """Convert an amount of money from one currency to another."""
         if frm == to:
             raise ValueError("pick two different currencies")
         return f"{amount} {frm} = {amount * 1.1:.2f} {to}"
 
-    @gantry.register(
+    @fetcher.register(
         requires_confirmation=True,
         examples=["email the team about the delay", "send a message to Sam"],
     )
@@ -61,13 +61,13 @@ def build_gantry() -> AgentGantry:
         """Compose and send an email message to a recipient."""
         return f"Email sent to {to}."
 
-    @gantry.register(examples=["who am I", "which account is this"])
+    @fetcher.register(examples=["who am I", "which account is this"])
     def whoami() -> str:
         """Say which user this run belongs to."""
         ctx = current_run_context()
         return f"user {ctx.user_id} on the {ctx.dependencies['plan']} plan"
 
-    return gantry
+    return fetcher
 
 
 def scripted_model(*steps: list[tuple[str, dict[str, Any]]]) -> Any:
@@ -124,16 +124,16 @@ async def main() -> None:
         import agno  # noqa: F401
     except ImportError as exc:
         print(
-            f"Agno is not installed ({exc}).\nInstall it with `pip install 'agent-gantry[agno]'`."
+            f"Agno is not installed ({exc}).\nInstall it with `pip install 'dotfetch[agno]'`."
         )
         return
 
-    from agent_gantry.agno import AgnoAdapter
+    from dotfetch.agno import AgnoAdapter
 
-    gantry = build_gantry()
+    fetcher = build_fetcher()
     try:
-        await gantry.sync()
-        adapter = AgnoAdapter(gantry)
+        await fetcher.sync()
+        adapter = AgnoAdapter(fetcher)
 
         # --- 1. One agent, tools re-selected for every run ------------------ #
         model = scripted_model([("get_weather", {"city": "Paris"})])
@@ -161,7 +161,7 @@ async def main() -> None:
         run = await agent.acontinue_run(run_response=run)
         print(f"[approve] after confirming: {run.tools[0].result!r}")
 
-        # --- 4. Run context reaches the Gantry tool ------------------------- #
+        # --- 4. Run context reaches the dotfetch tool ------------------------- #
         model = scripted_model([("whoami", {})])
         run = await adapter.agent(model=model, limit=1).arun(
             "who am I", user_id="dan", dependencies={"plan": "team"}
@@ -178,7 +178,7 @@ async def main() -> None:
         else:
             print("(Set OPENAI_API_KEY to also run a turn on a real model.)")
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 if __name__ == "__main__":

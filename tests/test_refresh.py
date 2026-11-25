@@ -1,6 +1,6 @@
 """Tests for the framework-agnostic multi-turn :class:`ToolRefresher`.
 
-These use a *real* gantry with the hash-based :class:`SimpleEmbedder` and five
+These use a *real* fetcher with the hash-based :class:`SimpleEmbedder` and five
 tools across clearly distinct domains, then simulate a single agent run as a
 growing list of message dicts whose user intent pivots across turns
 (weather -> email -> currency). The refresher should track those pivots and
@@ -15,15 +15,15 @@ from __future__ import annotations
 
 import pytest
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-from agent_gantry.integrations.frameworks.base import ToolSpec
-from agent_gantry.integrations.refresh import ToolRefresher
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
+from dotfetch.integrations.frameworks.base import ToolSpec
+from dotfetch.integrations.refresh import ToolRefresher
 
 
 @pytest.fixture
-async def gantry():
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=128))
+async def fetcher():
+    g = DotFetch(embedder=SimpleEmbedder(dimension=128))
 
     @g.register(tags=["weather"])
     def get_weather(city: str) -> str:
@@ -65,9 +65,9 @@ def _names(schemas: list[dict]) -> set[str]:
     return out
 
 
-async def test_refresh_pivots_with_changing_intent(gantry):
+async def test_refresh_pivots_with_changing_intent(fetcher):
     """As the conversation pivots, refresh() surfaces the matching tool."""
-    refresher = ToolRefresher(gantry, limit=3, dialect="openai")
+    refresher = ToolRefresher(fetcher, limit=3, dialect="openai")
 
     # Turn 1: weather.
     messages = [
@@ -100,9 +100,9 @@ async def test_refresh_pivots_with_changing_intent(gantry):
     assert _names(turn2) != _names(turn3)
 
 
-async def test_tools_used_accumulates_across_turns(gantry):
+async def test_tools_used_accumulates_across_turns(fetcher):
     """tools_used accumulates as tool-role messages are appended."""
-    refresher = ToolRefresher(gantry, limit=3, track_used=True)
+    refresher = ToolRefresher(fetcher, limit=3, track_used=True)
 
     messages = [{"role": "user", "content": "What is the weather in Paris?"}]
     await refresher.refresh(messages)
@@ -125,9 +125,9 @@ async def test_tools_used_accumulates_across_turns(gantry):
     assert refresher.tools_used == ["get_weather", "send_email"]
 
 
-async def test_track_used_disabled_keeps_empty(gantry):
+async def test_track_used_disabled_keeps_empty(fetcher):
     """With track_used=False, tools_used stays empty despite tool messages."""
-    refresher = ToolRefresher(gantry, limit=3, track_used=False)
+    refresher = ToolRefresher(fetcher, limit=3, track_used=False)
     messages = [
         {"role": "user", "content": "What is the weather in Paris?"},
         {"role": "tool", "name": "get_weather", "content": "sunny"},
@@ -136,9 +136,9 @@ async def test_track_used_disabled_keeps_empty(gantry):
     assert refresher.tools_used == []
 
 
-async def test_refresh_returns_dialect_schemas(gantry):
+async def test_refresh_returns_dialect_schemas(fetcher):
     """refresh() returns a list of dialect schema dicts."""
-    refresher = ToolRefresher(gantry, limit=3, dialect="openai")
+    refresher = ToolRefresher(fetcher, limit=3, dialect="openai")
     messages = [{"role": "user", "content": "Run a SQL database query for rows."}]
     schemas = await refresher.refresh(messages)
 
@@ -148,9 +148,9 @@ async def test_refresh_returns_dialect_schemas(gantry):
     assert "run_sql_query" in _names(schemas)
 
 
-async def test_refresh_specs_returns_toolspecs(gantry):
+async def test_refresh_specs_returns_toolspecs(fetcher):
     """refresh_specs() returns ToolSpec objects and sets last_selection."""
-    refresher = ToolRefresher(gantry, limit=3)
+    refresher = ToolRefresher(fetcher, limit=3)
     messages = [{"role": "user", "content": "Add a task to my todo list reminder."}]
     specs = await refresher.refresh_specs(messages)
 
@@ -163,13 +163,13 @@ async def test_refresh_specs_returns_toolspecs(gantry):
     assert {s.name for s in refresher.last_selection} == {s.name for s in specs}
 
 
-async def test_tools_used_reads_openai_tool_calls(gantry):
+async def test_tools_used_reads_openai_tool_calls(fetcher):
     """OpenAI tool messages carry only ``tool_call_id``; the name is on the assistant call.
 
     Reading tool-role messages alone left ``tools_used`` empty for every
     Chat Completions history, so the already-used penalty never applied.
     """
-    refresher = ToolRefresher(gantry, limit=3, dialect="openai")
+    refresher = ToolRefresher(fetcher, limit=3, dialect="openai")
     messages = [
         {"role": "user", "content": "What is the weather in Paris?"},
         {
@@ -191,9 +191,9 @@ async def test_tools_used_reads_openai_tool_calls(gantry):
     assert "send_email" in _names(turn)
 
 
-async def test_tools_used_reads_anthropic_tool_use_blocks(gantry):
+async def test_tools_used_reads_anthropic_tool_use_blocks(fetcher):
     """Anthropic keeps the name in a ``tool_use`` block; the result is a user turn."""
-    refresher = ToolRefresher(gantry, limit=3, dialect="anthropic")
+    refresher = ToolRefresher(fetcher, limit=3, dialect="anthropic")
     messages = [
         {"role": "user", "content": "What is the weather in Paris?"},
         {

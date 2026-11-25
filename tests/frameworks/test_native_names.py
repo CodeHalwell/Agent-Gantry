@@ -8,14 +8,14 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from agent_gantry import AgentGantry
-from agent_gantry.integrations.frameworks.base import GantryToolset, _native_tool_names
-from agent_gantry.schema.tool import ToolDefinition
+from dotfetch import DotFetch
+from dotfetch.integrations.frameworks.base import DotFetchToolset, _native_tool_names
+from dotfetch.schema.tool import ToolDefinition
 
 
 @pytest.fixture
-def duplicate_gantry(request):
-    gantry = AgentGantry()
+def duplicate_fetcher(request):
+    fetcher = DotFetch()
     for namespace in ("billing", "inventory"):
 
         def make_lookup(label):
@@ -25,23 +25,23 @@ def duplicate_gantry(request):
 
             return lookup
 
-        gantry.register(
+        fetcher.register(
             make_lookup(namespace), name=getattr(request, "param", "lookup"), namespace=namespace
         )
-    return gantry
+    return fetcher
 
 
-async def test_duplicate_names_keep_both_execution_targets(duplicate_gantry):
-    specs = await GantryToolset(duplicate_gantry).select("look up an item", limit=2)
+async def test_duplicate_names_keep_both_execution_targets(duplicate_fetcher):
+    specs = await DotFetchToolset(duplicate_fetcher).select("look up an item", limit=2)
     assert {s.name for s in specs} == {"lookup"}
     assert len({s.native_name for s in specs}) == 2
     assert {await s.ainvoke(item="123") for s in specs} == {"billing:123", "inventory:123"}
-    assert {t.name for t in duplicate_gantry.list_tools_sync()} == {"lookup"}
+    assert {t.name for t in duplicate_fetcher.list_tools_sync()} == {"lookup"}
 
 
-@pytest.mark.parametrize("duplicate_gantry", ["lookup", "x" * 64, "x" * 128], indirect=True)
-async def test_aliases_stay_stable_across_selection_subsets_and_pins(duplicate_gantry):
-    toolset = GantryToolset(duplicate_gantry)
+@pytest.mark.parametrize("duplicate_fetcher", ["lookup", "x" * 64, "x" * 128], indirect=True)
+async def test_aliases_stay_stable_across_selection_subsets_and_pins(duplicate_fetcher):
+    toolset = DotFetchToolset(duplicate_fetcher)
     all_specs = await toolset.select("look up an item", limit=2)
     expected = {s._namespace: s.native_name for s in all_specs}
     bare_name = all_specs[0].name
@@ -56,11 +56,11 @@ async def test_aliases_stay_stable_across_selection_subsets_and_pins(duplicate_g
     assert {s._namespace: s.native_name for s in pinned} == expected
 
 
-async def test_usage_tracking_resolves_native_aliases(duplicate_gantry, monkeypatch):
-    toolset = GantryToolset(duplicate_gantry)
+async def test_usage_tracking_resolves_native_aliases(duplicate_fetcher, monkeypatch):
+    toolset = DotFetchToolset(duplicate_fetcher)
     specs = await toolset.select("look up an item", limit=2)
     retrieve = AsyncMock(return_value=SimpleNamespace(tools=[]))
-    monkeypatch.setattr(duplicate_gantry, "retrieve", retrieve)
+    monkeypatch.setattr(duplicate_fetcher, "retrieve", retrieve)
     await toolset.select("look up an item", tools_already_used=[specs[0].native_name])
     assert retrieve.call_args.args[0].context.tools_already_used == [
         f"{specs[0]._namespace}.lookup"
@@ -68,14 +68,14 @@ async def test_usage_tracking_resolves_native_aliases(duplicate_gantry, monkeypa
 
 
 @pytest.mark.parametrize("name", ["lookup", "billing.lookup"])
-def test_used_and_failed_signals_respect_qualified_names(duplicate_gantry, name):
-    from agent_gantry.core.router import TaskIntent, _QueryContextCache
+def test_used_and_failed_signals_respect_qualified_names(duplicate_fetcher, name):
+    from dotfetch.core.router import TaskIntent, _QueryContextCache
 
     context = _QueryContextCache(
         summary_lower="", messages_lower=[], tools_used={name}, tools_failed={name}
     )
-    for tool in duplicate_gantry.list_tools_sync():
-        signals = duplicate_gantry._router._compute_signals(
+    for tool in duplicate_fetcher.list_tools_sync():
+        signals = duplicate_fetcher._router._compute_signals(
             tool, semantic_score=0.5, intent=TaskIntent.UNKNOWN, ctx=context
         )
         affected = name == "lookup" or tool.namespace == "billing"
@@ -113,12 +113,12 @@ def test_generated_names_do_not_shadow_authored_names():
     assert len(set(names.values())) == len(definitions)
 
 
-async def test_langgraph_superset_matches_per_turn_selection(duplicate_gantry):
+async def test_langgraph_superset_matches_per_turn_selection(duplicate_fetcher):
     pytest.importorskip("langchain_core")
-    from agent_gantry.integrations.frameworks.langgraph_live import _all_tools
+    from dotfetch.integrations.frameworks.langgraph_live import _all_tools
 
-    superset = await _all_tools(duplicate_gantry)
-    selected = await duplicate_gantry.framework("langgraph").select(
+    superset = await _all_tools(duplicate_fetcher)
+    selected = await duplicate_fetcher.framework("langgraph").select(
         "look up an item", namespaces=["billing"], limit=1
     )
     by_name = {tool.name: tool for tool in superset}
@@ -127,11 +127,11 @@ async def test_langgraph_superset_matches_per_turn_selection(duplicate_gantry):
     assert await by_name[selected[0].name].ainvoke({"item": "123"}) == "billing:123"
 
 
-async def test_pydantic_live_toolset_keeps_duplicate_names(duplicate_gantry):
+async def test_pydantic_live_toolset_keeps_duplicate_names(duplicate_fetcher):
     pytest.importorskip("pydantic_ai")
     from types import SimpleNamespace
 
-    toolset = duplicate_gantry.framework("pydantic_ai").live(limit=2).set_query("look up an item")
+    toolset = duplicate_fetcher.framework("pydantic_ai").live(limit=2).set_query("look up an item")
     tools = await toolset.get_tools(SimpleNamespace(max_retries=1))
     assert len(tools) == 2
     results = {
@@ -141,20 +141,20 @@ async def test_pydantic_live_toolset_keeps_duplicate_names(duplicate_gantry):
 
 
 async def test_bridge_cache_updates_names_after_namespace_collision():
-    from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+    from dotfetch.integrations.agent_framework_bridge import DotFetchToolBridge
 
-    gantry = AgentGantry()
+    fetcher = DotFetch()
 
-    @gantry.register(namespace="billing", name="lookup")
+    @fetcher.register(namespace="billing", name="lookup")
     def billing(item: str) -> str:
         """Look up an item in the requested service."""
         return f"billing:{item}"
 
-    bridge = GantryToolBridge(gantry, as_function_tool=False)
+    bridge = DotFetchToolBridge(fetcher, as_function_tool=False)
     original = (await bridge.get_tools("look up an item", limit=1))[0]
     assert original.__name__ == "lookup"
 
-    @gantry.register(namespace="inventory", name="lookup")
+    @fetcher.register(namespace="inventory", name="lookup")
     def inventory(item: str) -> str:
         """Look up an item in the requested service."""
         return f"inventory:{item}"
@@ -163,28 +163,28 @@ async def test_bridge_cache_updates_names_after_namespace_collision():
     assert len({t.__name__ for t in tools}) == 2
     assert all(t is not original for t in tools)
     assert {await t(item="123") for t in tools} == {"billing:123", "inventory:123"}
-    assert {t.__name__: t for t in bridge.wrap_tools(gantry.list_tools_sync())} == {
+    assert {t.__name__: t for t in bridge.wrap_tools(fetcher.list_tools_sync())} == {
         t.__name__: t for t in tools
     }
 
 
-async def test_aliases_keep_confirmation_gates_on_original_target(duplicate_gantry):
-    from agent_gantry.integrations.frameworks.base import ToolConfirmationRequiredError
+async def test_aliases_keep_confirmation_gates_on_original_target(duplicate_fetcher):
+    from dotfetch.integrations.frameworks.base import ToolConfirmationRequiredError
 
-    @duplicate_gantry.register(namespace="billing", name="lookup", requires_confirmation=True)
+    @duplicate_fetcher.register(namespace="billing", name="lookup", requires_confirmation=True)
     def sensitive(item: str) -> str:
         """Look up a sensitive item after confirmation."""
         pytest.fail("confirmation-gated handler must not run")
 
-    specs = await GantryToolset(duplicate_gantry).select_or_empty("", required=["billing.lookup"])
+    specs = await DotFetchToolset(duplicate_fetcher).select_or_empty("", required=["billing.lookup"])
     assert specs[0].native_name != "lookup"
     with pytest.raises(ToolConfirmationRequiredError):
         await specs[0].ainvoke(item="123")
 
 
-async def test_agent_framework_live_pins_deduplicate_against_native_aliases(duplicate_gantry):
+async def test_agent_framework_live_pins_deduplicate_against_native_aliases(duplicate_fetcher):
     pytest.importorskip("agent_framework")
-    provider = duplicate_gantry.framework("agent_framework").live(
+    provider = duplicate_fetcher.framework("agent_framework").live(
         limit=1,
         required=["billing.lookup", "inventory.lookup"],
         always_include=["lookup"],

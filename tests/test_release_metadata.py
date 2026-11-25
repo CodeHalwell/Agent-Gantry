@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def release_tree(tmp_path: Path) -> Path:
     for name in (
         "pyproject.toml",
-        "agent_gantry/__init__.py",
+        "dotfetch/__init__.py",
         "package.json",
         "package-lock.json",
         "uv.lock",
@@ -39,7 +39,7 @@ def test_release_metadata_is_consistent() -> None:
 @pytest.mark.parametrize(
     "name",
     [
-        "agent_gantry/__init__.py",
+        "dotfetch/__init__.py",
         "package.json",
         "package-lock.json",
         "uv.lock",

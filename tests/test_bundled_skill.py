@@ -1,5 +1,5 @@
 """
-Guard tests for the bundled Agent-Gantry Claude Skill.
+Guard tests for the bundled dotfetch Claude Skill.
 
 These keep the skill release-safe: it must ship inside the package, expose a
 resolvable path, install via the CLI, and carry valid Anthropic Agent Skills
@@ -14,8 +14,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from agent_gantry.cli.main import main
-from agent_gantry.skills import install_to, skill_path
+from dotfetch.cli.main import main
+from dotfetch.skills import install_to, skill_path
 
 # Anthropic Agent Skills frontmatter limits.
 _NAME_MAX = 64
@@ -48,7 +48,7 @@ def test_skill_frontmatter_is_anthropic_compliant() -> None:
     """name/description exist, are non-empty, and stay within Anthropic limits."""
     fm = _read_frontmatter(skill_path() / "SKILL.md")
 
-    assert fm["name"] == "agent-gantry"
+    assert fm["name"] == "dotfetch"
     assert re.fullmatch(r"[a-z0-9-]+", fm["name"]), "name must be lowercase/hyphenated"
     assert 0 < len(fm["name"]) <= _NAME_MAX
 
@@ -59,7 +59,7 @@ def test_skill_frontmatter_is_anthropic_compliant() -> None:
 def test_install_to_copies_the_skill(tmp_path: Path) -> None:
     """install_to() vendors the skill (incl. references/) into a target dir."""
     dst = install_to(tmp_path / "skills")
-    assert dst == (tmp_path / "skills" / "agent-gantry").resolve()
+    assert dst == (tmp_path / "skills" / "dotfetch").resolve()
     assert (dst / "SKILL.md").is_file()
     assert (dst / "references" / "cookbook.md").is_file()
 
@@ -73,12 +73,12 @@ def test_install_to_copies_the_skill(tmp_path: Path) -> None:
 
 
 def test_cli_install_skill_command(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """`agent-gantry install-skill --target ...` copies the skill and reports it."""
+    """`dotfetch install-skill --target ...` copies the skill and reports it."""
     target = tmp_path / "vendored"
     exit_code = main(["install-skill", "--target", str(target)])
     assert exit_code == 0
-    assert (target / "agent-gantry" / "SKILL.md").is_file()
-    assert "Installed Agent-Gantry skill" in capsys.readouterr().out
+    assert (target / "dotfetch" / "SKILL.md").is_file()
+    assert "Installed dotfetch skill" in capsys.readouterr().out
 
 
 def test_cli_install_skill_default_target(
@@ -87,7 +87,7 @@ def test_cli_install_skill_default_target(
     """With neither --target nor --claude, the default ./skills target is used."""
     monkeypatch.chdir(tmp_path)
     assert main(["install-skill"]) == 0
-    assert (tmp_path / "skills" / "agent-gantry" / "SKILL.md").is_file()
+    assert (tmp_path / "skills" / "dotfetch" / "SKILL.md").is_file()
 
 
 def test_cli_install_skill_claude_flag(
@@ -102,10 +102,10 @@ def test_cli_install_skill_claude_flag(
 
     exit_code = main(["install-skill", "--claude"])
     assert exit_code == 0
-    assert (fake_home / ".claude" / "skills" / "agent-gantry" / "SKILL.md").is_file()
+    assert (fake_home / ".claude" / "skills" / "dotfetch" / "SKILL.md").is_file()
     # No literal "~" directory leaked into the cwd.
     assert not Path("~").exists()
-    assert "Installed Agent-Gantry skill" in capsys.readouterr().out
+    assert "Installed dotfetch skill" in capsys.readouterr().out
 
 
 def test_cli_install_skill_claude_overwrite(
@@ -122,7 +122,7 @@ def test_cli_install_skill_claude_overwrite(
     assert main(["install-skill", "--claude"]) == 2
     # With --overwrite it succeeds and the skill is still present.
     assert main(["install-skill", "--claude", "--overwrite"]) == 0
-    assert (fake_home / ".claude" / "skills" / "agent-gantry" / "SKILL.md").is_file()
+    assert (fake_home / ".claude" / "skills" / "dotfetch" / "SKILL.md").is_file()
 
 
 def test_cli_install_skill_rejects_target_and_claude_together(
@@ -174,15 +174,15 @@ def _anchors(markdown: str) -> set[str]:
 def test_bundled_skill_fits_the_loader_body_limit(caplog: pytest.LogCaptureFixture) -> None:
     import logging
 
-    from agent_gantry.skills import load_skill
-    from agent_gantry.skills.loader import _CONTENT_MAX, parse_skill_markdown
+    from dotfetch.skills import load_skill
+    from dotfetch.skills.loader import _CONTENT_MAX, parse_skill_markdown
 
     text = (skill_path() / "SKILL.md").read_text(encoding="utf-8")
     _, body = parse_skill_markdown(text)
     assert len(body.strip()) <= _CONTENT_MAX, (
         "SKILL.md body is over the loader's cap; move detail into references/"
     )
-    with caplog.at_level(logging.WARNING, logger="agent_gantry.skills.loader"):
+    with caplog.at_level(logging.WARNING, logger="dotfetch.skills.loader"):
         skill = load_skill(skill_path())
     assert "truncated" not in caplog.text
     assert skill.content.rstrip().endswith(body.strip()[-200:])  # stored whole

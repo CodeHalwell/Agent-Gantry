@@ -22,4 +22,4 @@ python examples/basics/plug_and_play_semantic_filter.py
 python examples/basics/skills_example.py
 ```
 
-Every script runs offline with no credentials. `AgentGantry()` uses the in-memory vector store and picks its embedder from what is installed: the local sentence-transformers model with `agent-gantry[embeddings]`, otherwise the hash-based `SimpleEmbedder`. Use these as starting points when wiring Agent-Gantry into your own agents.
+Every script runs offline with no credentials. `DotFetch()` uses the in-memory vector store and picks its embedder from what is installed: the local sentence-transformers model with `dotfetch[embeddings]`, otherwise the hash-based `SimpleEmbedder`. Use these as starting points when wiring dotfetch into your own agents.

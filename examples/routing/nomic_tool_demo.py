@@ -8,48 +8,48 @@ each of ten queries lands on the right tool. No API key, but it needs the
 
 Run with::
 
-    pip install agent-gantry[nomic]
+    pip install dotfetch[nomic]
     python examples/routing/nomic_tool_demo.py
 """
 
 import asyncio
 import sys
 
-from agent_gantry import AgentGantry
+from dotfetch import DotFetch
 
 
 async def main():
-    print("Initializing AgentGantry with Nomic Embeddings...")
+    print("Initializing DotFetch with Nomic Embeddings...")
 
     # NomicEmbedder imports sentence-transformers lazily, on first use, so
     # probe for it here to fail before any tools are registered.
     try:
         import sentence_transformers  # noqa: F401
 
-        from agent_gantry.adapters.embedders.nomic import NomicEmbedder
+        from dotfetch.adapters.embedders.nomic import NomicEmbedder
     except ImportError:
         print("\nError: 'nomic' extra dependencies not found.")
         print("Please install them using:")
-        print("  pip install agent-gantry[nomic]")
+        print("  pip install dotfetch[nomic]")
         print("  # or")
         print("  pip install sentence-transformers numpy")
         sys.exit(1)
 
     # Matryoshka truncation: 256 dims for speed; Nomic supports up to 768.
     embedder = NomicEmbedder(dimension=256)
-    gantry = AgentGantry(embedder=embedder)
+    fetcher = DotFetch(embedder=embedder)
 
     try:
         # --- Register 10 Different Tools ---
 
-        @gantry.register(
+        @fetcher.register(
             tags=["math", "calculation"], examples=["add 50 and 20", "what is 7 plus 12"]
         )
         def add_numbers(a: float, b: float) -> float:
             """Add two numbers together."""
             return a + b
 
-        @gantry.register(
+        @fetcher.register(
             tags=["string", "text"],
             examples=["join 'Hello' and 'World'", "stick these two words together"],
         )
@@ -57,14 +57,14 @@ async def main():
             """Concatenate or join two strings together."""
             return s1 + s2
 
-        @gantry.register(
+        @fetcher.register(
             tags=["time", "date"], examples=["what time is it in Tokyo", "current time in UTC"]
         )
         def get_current_time(timezone: str = "UTC") -> str:
             """Get the current time in a specific timezone."""
             return f"The time in {timezone} is 12:00 PM"
 
-        @gantry.register(
+        @fetcher.register(
             tags=["weather", "forecast"],
             examples=["what's the weather like in London", "will it rain in Paris tomorrow"],
         )
@@ -72,7 +72,7 @@ async def main():
             """Get the weather forecast for a specific city."""
             return f"The weather in {city} is sunny."
 
-        @gantry.register(
+        @fetcher.register(
             tags=["communication", "email"],
             examples=["send an email to my boss", "email Priya the quarterly report"],
         )
@@ -80,7 +80,7 @@ async def main():
             """Send an email to a recipient."""
             return f"Email sent to {recipient} with subject '{subject}'"
 
-        @gantry.register(
+        @fetcher.register(
             tags=["data", "search"],
             examples=["search for customer data", "look up orders in the database"],
         )
@@ -88,7 +88,7 @@ async def main():
             """Search the internal database for a query string."""
             return [f"Result for {query}"]
 
-        @gantry.register(
+        @fetcher.register(
             tags=["file", "io"],
             examples=["create a file named notes.txt", "save this text to a new file"],
         )
@@ -96,7 +96,7 @@ async def main():
             """Create a new file with the specified content."""
             return f"File '{filename}' created."
 
-        @gantry.register(
+        @fetcher.register(
             tags=["finance", "money"],
             examples=["convert 100 USD to EUR", "how much is 50 pounds in dollars"],
         )
@@ -104,7 +104,7 @@ async def main():
             """Convert an amount from one currency to another."""
             return f"{amount} {from_curr} is equivalent to {amount * 1.2} {to_curr}"
 
-        @gantry.register(
+        @fetcher.register(
             tags=["translation", "language"],
             examples=["translate 'Hello' to Spanish", "how do you say thank you in French"],
         )
@@ -112,7 +112,7 @@ async def main():
             """Translate text to a target language."""
             return f"Translated '{text}' to {target_language}"
 
-        @gantry.register(
+        @fetcher.register(
             tags=["productivity", "calendar"],
             examples=["schedule a meeting with Alice and Bob", "book a call for 3pm tomorrow"],
         )
@@ -122,8 +122,8 @@ async def main():
 
         # --- Sync Tools ---
         print("Syncing tools to vector store (this may take a moment to download the model)...")
-        await gantry.sync()
-        print(f"Registered {gantry.tool_count} tools.\n")
+        await fetcher.sync()
+        print(f"Registered {fetcher.tool_count} tools.\n")
 
         # --- Test Queries ---
         test_queries = [
@@ -141,7 +141,7 @@ async def main():
 
         print("--- Semantic Retrieval Demo (Nomic) ---")
         for query in test_queries:
-            relevant_tools = await gantry.retrieve_tools(query, limit=1)
+            relevant_tools = await fetcher.retrieve_tools(query, limit=1)
 
             print(f"Query: '{query}'")
             if relevant_tools:
@@ -152,7 +152,7 @@ async def main():
                 print("  -> No relevant tool found.")
             print("-" * 40)
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 if __name__ == "__main__":

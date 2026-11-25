@@ -33,9 +33,9 @@ import time
 import uuid
 from typing import Any
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
-from agent_gantry.schema.config import AgentGantryConfig, EmbedderConfig, VectorStoreConfig
+from dotfetch import DotFetch
+from dotfetch.adapters.vector_stores.lancedb import LanceDBVectorStore
+from dotfetch.schema.config import DotFetchConfig, EmbedderConfig, VectorStoreConfig
 
 # =============================================================================
 # LAZY IMPORT HELPERS - Heavy dependencies loaded only when needed
@@ -128,16 +128,16 @@ def _get_psutil():
 
 
 # =============================================================================
-# PERSISTENT GANTRY CONFIGURATION
+# PERSISTENT DOTFETCH CONFIGURATION
 # =============================================================================
 
 # Database path for persistent storage
 DB_PATH = pathlib.Path(__file__).parent / ".tool_cache" / "lancedb"
 
 
-def create_persistent_gantry(dimension: int = 256) -> AgentGantry:
+def create_persistent_fetcher(dimension: int = 256) -> DotFetch:
     """
-    Create an AgentGantry with persistent LanceDB storage.
+    Create an DotFetch with persistent LanceDB storage.
 
     Embeddings are stored on disk, so tools only need to be embedded once.
     Subsequent runs load from disk instantly.
@@ -146,7 +146,7 @@ def create_persistent_gantry(dimension: int = 256) -> AgentGantry:
         dimension: Embedding dimension (256 for Nomic with Matryoshka)
 
     Returns:
-        AgentGantry configured with persistent storage
+        DotFetch configured with persistent storage
     """
     import warnings
 
@@ -154,18 +154,18 @@ def create_persistent_gantry(dimension: int = 256) -> AgentGantry:
     try:
         import sentence_transformers  # noqa: F401
 
-        from agent_gantry.adapters.embedders.nomic import NomicEmbedder
+        from dotfetch.adapters.embedders.nomic import NomicEmbedder
 
         embedder = NomicEmbedder(dimension=dimension)
         embedder_config = EmbedderConfig(type="nomic", dimension=dimension)
     except ImportError:
         warnings.warn(
             "Nomic embedder not available. Using SimpleEmbedder. "
-            "For better semantic search: pip install agent-gantry[nomic]",
+            "For better semantic search: pip install dotfetch[nomic]",
             UserWarning,
             stacklevel=2,
         )
-        from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+        from dotfetch.adapters.embedders.simple import SimpleEmbedder
 
         embedder = SimpleEmbedder(dimension=dimension)
         embedder_config = EmbedderConfig(type="sentence_transformers", dimension=dimension)
@@ -179,7 +179,7 @@ def create_persistent_gantry(dimension: int = 256) -> AgentGantry:
     )
 
     # Create config with auto_sync disabled for explicit control
-    config = AgentGantryConfig(
+    config = DotFetchConfig(
         vector_store=vector_store_config,
         embedder=embedder_config,
         auto_sync=False,  # We control when to sync
@@ -192,7 +192,7 @@ def create_persistent_gantry(dimension: int = 256) -> AgentGantry:
         dimension=dimension,
     )
 
-    return AgentGantry(
+    return DotFetch(
         config=config,
         vector_store=vector_store,
         embedder=embedder,
@@ -200,7 +200,7 @@ def create_persistent_gantry(dimension: int = 256) -> AgentGantry:
 
 
 # Create the global instance
-tools = create_persistent_gantry()
+tools = create_persistent_fetcher()
 
 
 # =============================================================================
@@ -936,7 +936,7 @@ def fetch_web_content(url: str) -> str:
         with requests.get(
             url,
             timeout=30,
-            headers={"User-Agent": "Agent-Gantry/0.1.0"},
+            headers={"User-Agent": "dotfetch/0.1.0"},
             stream=True,
         ) as response:
             response.raise_for_status()
@@ -1301,7 +1301,7 @@ async def check_sync_status() -> dict[str, Any]:
     """
     Report what is in the persistent store, building it on first use.
 
-    ``AgentGantry.list_tools()`` calls ``ensure_synced()`` first, so on a
+    ``DotFetch.list_tools()`` calls ``ensure_synced()`` first, so on a
     machine with no cache this call is what embeds the tools and writes the
     LanceDB tables; ``built_now`` says whether that happened. Afterwards
     ``needs_sync`` is therefore always False unless the sync itself failed.
@@ -1339,7 +1339,7 @@ def main():
     """CLI entry point for syncing tools."""
     import argparse
 
-    parser = argparse.ArgumentParser(description="Manage persistent tool storage for Agent-Gantry")
+    parser = argparse.ArgumentParser(description="Manage persistent tool storage for dotfetch")
     parser.add_argument(
         "--sync",
         action="store_true",
@@ -1358,7 +1358,7 @@ def main():
 
     args = parser.parse_args()
 
-    # Both branches below drive the module-global gantry, so release it on the
+    # Both branches below drive the module-global fetcher, so release it on the
     # way out whichever one ran.
     try:
         if args.sync:

@@ -95,6 +95,6 @@ jobs:
 
       - name: Run tests
         env:
-          GANTRY_REQUIRED_FRAMEWORKS: ${{ matrix.required }}
+          DOTFETCH_REQUIRED_FRAMEWORKS: ${{ matrix.required }}
         run: |
           .venv-latest/bin/python -m pytest ${{ matrix.tests }} -v

@@ -10,12 +10,12 @@ from __future__ import annotations
 
 import pytest
 
-from agent_gantry.adapters.tool_spec import (
+from dotfetch.adapters.tool_spec import (
     DialectRegistry,
     ToolCallPayload,
     get_adapter,
 )
-from agent_gantry.adapters.tool_spec.providers import (
+from dotfetch.adapters.tool_spec.providers import (
     AnthropicAdapter,
     GeminiAdapter,
     GroqAdapter,
@@ -23,7 +23,7 @@ from agent_gantry.adapters.tool_spec.providers import (
     OpenAIAdapter,
     OpenAIResponsesAdapter,
 )
-from agent_gantry.schema.tool import SchemaDialect, ToolDefinition
+from dotfetch.schema.tool import SchemaDialect, ToolDefinition
 
 
 @pytest.fixture
@@ -700,18 +700,18 @@ class TestRetrievalResultToDialect:
     @pytest.mark.asyncio
     async def test_retrieval_result_to_dialect(self) -> None:
         """Test converting retrieval results to different dialects."""
-        from agent_gantry import AgentGantry
+        from dotfetch import DotFetch
 
-        gantry = AgentGantry()
+        fetcher = DotFetch()
 
-        @gantry.register
+        @fetcher.register
         def test_tool(x: int) -> str:
             """A test tool for validation."""
             return str(x)
 
-        await gantry.sync()
+        await fetcher.sync()
 
-        result = await gantry.retrieve_tools("test", limit=1, dialect="anthropic", score_threshold=0.0)
+        result = await fetcher.retrieve_tools("test", limit=1, dialect="anthropic", score_threshold=0.0)
 
         assert len(result) >= 1
         # Anthropic format has 'name' and 'input_schema'
@@ -721,19 +721,19 @@ class TestRetrievalResultToDialect:
     @pytest.mark.asyncio
     async def test_retrieve_tools_openai_dialect(self) -> None:
         """Test retrieve_tools with OpenAI dialect (default)."""
-        from agent_gantry import AgentGantry
+        from dotfetch import DotFetch
 
-        gantry = AgentGantry()
+        fetcher = DotFetch()
 
-        @gantry.register
+        @fetcher.register
         def calc(a: int, b: int) -> int:
             """Calculate something with two numbers."""
             return a + b
 
-        await gantry.sync()
+        await fetcher.sync()
 
         # Use low score threshold to ensure match with simple embedder
-        result = await gantry.retrieve_tools(
+        result = await fetcher.retrieve_tools(
             "calculate", limit=1, dialect="openai", score_threshold=0.0
         )
 
@@ -744,18 +744,18 @@ class TestRetrievalResultToDialect:
     @pytest.mark.asyncio
     async def test_retrieve_tools_gemini_dialect(self) -> None:
         """Test retrieve_tools with Gemini dialect."""
-        from agent_gantry import AgentGantry
+        from dotfetch import DotFetch
 
-        gantry = AgentGantry()
+        fetcher = DotFetch()
 
-        @gantry.register
+        @fetcher.register
         def search(query: str) -> str:
             """Search for information."""
             return f"Results for: {query}"
 
-        await gantry.sync()
+        await fetcher.sync()
 
-        result = await gantry.retrieve_tools("search", limit=1, dialect="gemini")
+        result = await fetcher.retrieve_tools("search", limit=1, dialect="gemini")
 
         assert len(result) >= 1
         assert "name" in result[0]
@@ -764,18 +764,18 @@ class TestRetrievalResultToDialect:
     @pytest.mark.asyncio
     async def test_retrieve_tools_openai_responses_dialect(self) -> None:
         """Test retrieve_tools with OpenAI Responses API dialect."""
-        from agent_gantry import AgentGantry
+        from dotfetch import DotFetch
 
-        gantry = AgentGantry()
+        fetcher = DotFetch()
 
-        @gantry.register
+        @fetcher.register
         def send_email(to: str, subject: str, body: str) -> str:
             """Send an email to the specified recipient."""
             return f"Email sent to {to}"
 
-        await gantry.sync()
+        await fetcher.sync()
 
-        result = await gantry.retrieve_tools("send email", limit=1, dialect="openai_responses")
+        result = await fetcher.retrieve_tools("send email", limit=1, dialect="openai_responses")
 
         assert len(result) >= 1
         # Responses API format has name at top level

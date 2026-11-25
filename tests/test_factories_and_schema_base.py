@@ -11,16 +11,16 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from agent_gantry.adapters.vector_stores.memory import InMemoryVectorStore
-from agent_gantry.core.factories import (
+from dotfetch.adapters.vector_stores.memory import InMemoryVectorStore
+from dotfetch.core.factories import (
     build_embedder,
     build_reranker,
     build_telemetry,
     build_vector_store,
 )
-from agent_gantry.observability.console import ConsoleTelemetryAdapter, NoopTelemetryAdapter
-from agent_gantry.schema.base import HealthMetrics, reject_newlines
-from agent_gantry.schema.config import (
+from dotfetch.observability.console import ConsoleTelemetryAdapter, NoopTelemetryAdapter
+from dotfetch.schema.base import HealthMetrics, reject_newlines
+from dotfetch.schema.config import (
     EmbedderConfig,
     RerankerConfig,
     TelemetryConfig,
@@ -108,7 +108,7 @@ class TestRejectNewlines:
 
 class TestBuildImplClassCache:
     def test_same_base_returns_cached_class(self) -> None:
-        from agent_gantry.integrations.agent_framework_provider import _build_impl_class
+        from dotfetch.integrations.agent_framework_provider import _build_impl_class
 
         class _FakeContextProvider:
             def __init__(self, *, source_id: str) -> None:
@@ -135,7 +135,7 @@ class TestHealthMetrics:
 
 class TestUnsetModelDefaults:
     def test_nomic_uses_its_own_default_model(self) -> None:
-        from agent_gantry.adapters.embedders.nomic import NomicEmbedder
+        from dotfetch.adapters.embedders.nomic import NomicEmbedder
 
         embedder = build_embedder(EmbedderConfig(type="nomic"))
         assert isinstance(embedder, NomicEmbedder)
