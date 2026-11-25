@@ -38,7 +38,7 @@ class TestAgentCard:
         card = generate_agent_card(fetcher, "http://localhost:8080")
 
         assert isinstance(card, AgentCard)
-        assert card.name == "DotFetch"
+        assert card.name == "dotfetch"
         assert "tool" in card.description.lower()
         assert card.url == "http://localhost:8080"
         assert card.version == "1.0.0"
@@ -315,7 +315,7 @@ class TestA2AServer:
         try:
             app = create_a2a_server(fetcher, base_url="http://localhost:8080")
             assert app is not None
-            assert app.title == "DotFetch A2A Server"
+            assert app.title == "dotfetch A2A Server"
         except ImportError:
             pytest.skip("FastAPI not installed")
 
@@ -332,7 +332,7 @@ class TestA2AServer:
             assert response.status_code == 200
             data = response.json()
 
-            assert data["name"] == "DotFetch"
+            assert data["name"] == "dotfetch"
             assert data["url"] == "http://localhost:8080"
             assert "skills" in data
             assert len(data["skills"]) == 2
