@@ -517,7 +517,7 @@ class TestPruneSafety:
         """``sync()`` pruned before checking whether anything was registered,
         so a fetcher that had not registered yet asked the store to delete
         everything it did not know about -- which, on a store shared between
-        gantries, is everything the others put there."""
+        fetchers, is everything the others put there."""
         from dotfetch.adapters.vector_stores.memory import InMemoryVectorStore
 
         shared = InMemoryVectorStore()
