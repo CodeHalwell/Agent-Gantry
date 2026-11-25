@@ -11,36 +11,53 @@ import CodeBlock from '../../components/CodeBlock.astro';
 uv add "dotfetch[openai,lancedb,nomic,mcp,a2a]"
 # pip install dotfetch also works`} />
 
-  <h2>1. Create a DotFetch instance</h2>
-  <CodeBlock lang="python" code={`from dotfetch import DotFetch, set_default_fetcher, with_semantic_tools
-
-fetcher = DotFetch()
-set_default_fetcher(fetcher)`} />
+  <h2>1. Import</h2>
+  <CodeBlock lang="python" code={`import dotfetch as dot`} />
+  <p>The module-level functions work on one shared <code>DotFetch</code>, created on first use. To choose its embedder or vector store, call <code>dot.configure(...)</code> with <code>DotFetch</code>'s arguments before registering anything.</p>
 
   <h2>2. Register ordinary functions</h2>
-  <CodeBlock lang="python" code={`@fetcher.register(tags=["weather", "demo"])
+  <CodeBlock lang="python" code={`@dot.register(tags=["weather", "demo"])
 def get_weather(city: str) -> str:
     """Get the current weather for a city."""
     return f"The weather in {city} is 72°F and sunny."`} />
 
-  <h2>3. Wrap an LLM call</h2>
-  <CodeBlock lang="python" code={`@with_semantic_tools(limit=3, dialect="openai")
+  <h2>3. Fetch the relevant tools for a prompt</h2>
+  <CodeBlock lang="python" code={`messages = [{"role": "user", "content": "What's the weather in San Francisco?"}]
+tools = await dot.fetch(messages[0]["content"], limit=3, dialect="openai")
+
+response = await client.chat.completions.create(
+    model="gpt-5.5", messages=messages, tools=tools
+)`} />
+
+  <div class="callout"><strong>What happens automatically?</strong> dotfetch fingerprints registered tools, syncs them to the configured vector store, retrieves semantically relevant definitions, converts schemas to the requested provider dialect, and leaves execution under your control or the dotfetch execution engine.</div>
+
+  <h2>4. Execute the model's tool calls</h2>
+  <CodeBlock lang="python" code={`messages.append(response.choices[0].message)
+messages.extend(await dot.execute_tool_calls(response))`} />
+  <p>Each call runs through the execution engine (policies, timeouts, retries, rate limits) and comes back formatted for the provider, ready to send on the next turn.</p>
+
+  <h2>Working with instances</h2>
+  <p>For more than one registry, or in tests, create instances. Every module-level function above is a method on <code>DotFetch</code>, and <code>dot.default_fetcher()</code> returns the shared one.</p>
+  <CodeBlock lang="python" code={`from dotfetch import DotFetch, set_default_fetcher, with_semantic_tools
+
+fetcher = DotFetch()
+set_default_fetcher(fetcher)
+
+@fetcher.register(tags=["weather"])
+def get_weather(city: str) -> str:
+    """Get the current weather for a city."""
+    ...
+
+tools = await fetcher.fetch("Is it raining in Leeds?")
+
+# Or let a decorator inject the tools into each call.
+@with_semantic_tools(limit=3, dialect="openai")
 async def ask_llm(prompt: str, *, tools=None):
     return await client.chat.completions.create(
         model="gpt-5.5",
         messages=[{"role": "user", "content": prompt}],
         tools=tools,
     )`} />
-
-  <div class="callout"><strong>What happens automatically?</strong> dotfetch fingerprints registered tools, syncs them to the configured vector store, retrieves semantically relevant definitions, converts schemas to the requested provider dialect, and leaves execution under your control or the dotfetch execution engine.</div>
-
-  <h2>4. Execute a selected tool</h2>
-  <CodeBlock lang="python" code={`from dotfetch.schema.execution import ToolCall
-
-result = await fetcher.execute(ToolCall(
-    tool_name="get_weather",
-    arguments={"city": "San Francisco"},
-))`} />
 
   <h2>Next steps</h2>
   <div class="grid">

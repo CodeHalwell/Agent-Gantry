@@ -48,7 +48,7 @@ Subcommands: `list`, `search`, `lint`, `sim` (pairwise similarity), `sync`, `ser
 
 ## Architecture
 
-Everything funnels through one facade: **`DotFetch`** in `dotfetch/core/fetcher.py`. It composes the subsystems below via dependency injection (constructed in `_create_*` helpers). Public API is re-exported from `dotfetch/__init__.py` — import from the top-level package, not deep modules.
+Everything funnels through one facade: **`DotFetch`** in `dotfetch/core/fetcher.py`. It composes the subsystems below via dependency injection (constructed in `_create_*` helpers). Public API is re-exported from `dotfetch/__init__.py` — import from the top-level package, not deep modules. `core/default.py` holds the module-level shortcuts (`import dotfetch as dot`: `dot.register`, `dot.fetch`, `dot.execute_tool_calls`, `dot.configure`, `dot.default_fetcher`), which delegate to one shared `DotFetch` (or the context's `set_default_fetcher` instance); `DotFetch.fetch` is `retrieve_tools` under the library's name.
 
 ### Core flow
 1. **Register** — `@fetcher.register(tags=[...], examples=[...])` (or `add_tool`, `from_modules`, MCP/A2A discovery) records a `ToolDefinition` in the **registry** (`core/registry.py`).

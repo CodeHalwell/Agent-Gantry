@@ -9,9 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.27.0] - 2026-11-25
 
-Agent-Gantry is now **dotfetch**. This is a rename and nothing else: behaviour,
-configuration shape and retrieval results are unchanged. It is a clean break
-with no alias, so `agent_gantry` does not import from this release on.
+Agent-Gantry is now **dotfetch**. Behaviour, configuration shape and retrieval
+results are unchanged; the one addition is a shorter way to use the new name,
+described under "Added". It is a clean break with no alias, so `agent_gantry`
+does not import from this release on.
 
 Renamed:
 
@@ -59,6 +60,36 @@ is not found at all; move the directory or pass its path.
 `agent-gantry` 0.27.0 on PyPI is a final release: it installs `dotfetch` and
 raises a clear `ImportError` explaining the move. It receives no further
 releases.
+
+**Added.** `import dotfetch as dot` now works without an instance, for scripts,
+notebooks and small apps that need one registry:
+
+```python
+import dotfetch as dot
+
+@dot.register(tags=["weather"])
+def get_weather(city: str) -> str:
+    """Get the current weather for a city."""
+    ...
+
+tools = await dot.fetch("Is it raining in Leeds?")
+results = await dot.execute_tool_calls(response)
+```
+
+- `dot.register`, `dot.fetch` and `dot.execute_tool_calls` call the same
+  methods on one shared `DotFetch`, created on first use as `DotFetch()`.
+- `dot.configure(...)` builds that instance from `DotFetch`'s arguments, or
+  takes one you built. It refuses to replace an instance that already has
+  tools, rather than dropping them.
+- `dot.default_fetcher()` returns the instance, for everything else.
+- An instance given to `set_default_fetcher()` takes precedence in its context,
+  and `@with_semantic_tools` without a fetcher now also finds the shared
+  instance, so the two never disagree about which one is meant.
+- `DotFetch.fetch()` is `retrieve_tools()` under the name the library is named
+  for; `retrieve_tools()` stays.
+
+Explicit instances remain the way to run more than one registry, and the
+better choice for tests.
 
 ## [0.26.0] - 2026-11-24
 

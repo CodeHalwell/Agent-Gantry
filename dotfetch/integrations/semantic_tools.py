@@ -593,8 +593,11 @@ def with_semantic_tools(
     if isinstance(fetcher_or_func, DotFetch):
         fetcher, func = fetcher_or_func, None
     elif fetcher_or_func is None or callable(fetcher_or_func):
-        # A bare function (or nothing) uses the context default
-        fetcher, func = _fetcher_context.get(), fetcher_or_func
+        # A bare function (or nothing) uses the default: the context's, or the
+        # shared one behind ``dotfetch.register`` / ``dotfetch.configure``.
+        from dotfetch.core.default import current_default
+
+        fetcher, func = current_default(), fetcher_or_func
         if fetcher is None:
             raise ValueError(
                 (
@@ -605,7 +608,8 @@ def with_semantic_tools(
                 else (
                     "No fetcher provided and no default set. Use one of:\n"
                     "  1. @with_semantic_tools(fetcher, ...)\n"
-                    "  2. set_default_fetcher(fetcher) then @with_semantic_tools(...)"
+                    "  2. set_default_fetcher(fetcher) then @with_semantic_tools(...)\n"
+                    "  3. dotfetch.configure(...) or dotfetch.register first"
                 )
             )
     else:
