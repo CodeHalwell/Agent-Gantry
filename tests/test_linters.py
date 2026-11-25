@@ -1,4 +1,4 @@
-"""Lint rules added for #434: missing examples, inverted thresholds, unclosed gantries."""
+"""Lint rules added for #434: missing examples, inverted thresholds, unclosed instances."""
 
 from __future__ import annotations
 
@@ -62,7 +62,7 @@ def test_a_comment_above_a_multiline_call_counts() -> None:
     assert analyze_source(src, "demo.py").empty
 
 
-# --- source linter: unclosed gantries -----------------------------------------
+# --- source linter: unclosed instances ----------------------------------------
 
 _MAIN = '\nif __name__ == "__main__":\n    import asyncio\n    asyncio.run(run())\n'
 

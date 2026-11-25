@@ -151,13 +151,13 @@ class TestDotFetchModuleImport:
     @pytest.mark.asyncio
     async def test_from_modules_missing_attribute(self) -> None:
         """Test from_modules raises error when attribute doesn't exist."""
-        with pytest.raises(ValueError, match="does not expose an DotFetch instance"):
+        with pytest.raises(ValueError, match="does not expose a DotFetch instance"):
             await DotFetch.from_modules(["tests.test_modules.module_no_tools"])
 
     @pytest.mark.asyncio
     async def test_from_modules_wrong_type(self) -> None:
         """Test from_modules raises error when attribute is not DotFetch."""
-        with pytest.raises(ValueError, match="does not expose an DotFetch instance"):
+        with pytest.raises(ValueError, match="does not expose a DotFetch instance"):
             await DotFetch.from_modules(
                 ["tests.test_modules.module_no_tools"],
                 attr="some_variable",
@@ -221,7 +221,7 @@ class TestDotFetchModuleImport:
     @pytest.mark.asyncio
     async def test_collect_tools_from_modules_error_handling(self, fetcher: DotFetch) -> None:
         """Test collect_tools_from_modules error handling."""
-        with pytest.raises(ValueError, match="does not expose an DotFetch instance"):
+        with pytest.raises(ValueError, match="does not expose a DotFetch instance"):
             await fetcher.collect_tools_from_modules(["tests.test_modules.module_no_tools"])
 
 

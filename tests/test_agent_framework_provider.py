@@ -94,7 +94,7 @@ class TestDotFetchContextProvider:
 
     @pytest.mark.asyncio
     async def test_custom_source_id(self, fetcher_with_tools: DotFetch) -> None:
-        """source_id is overridable so multiple gantries can run side-by-side."""
+        """source_id is overridable so multiple instances can run side-by-side."""
         provider = DotFetchContextProvider(fetcher_with_tools, source_id="fetcher_a")
         assert provider.source_id == "fetcher_a"
 

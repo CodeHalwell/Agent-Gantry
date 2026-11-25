@@ -1013,7 +1013,7 @@ def _native_tool_names(definitions: Sequence[ToolDefinition]) -> dict[str, str]:
 
 @functools.lru_cache(maxsize=16)
 def _native_names_for(identities: tuple[tuple[str, str], ...]) -> dict[str, str]:
-    """Cache only names, bounded across registry churn; never retain tools/gantries."""
+    """Cache only names, bounded across registry churn; never retain tools or DotFetch instances."""
     counts = Counter(name for _, name in identities)
     taken = {name for _, name in identities}
     names: dict[str, str] = {}
