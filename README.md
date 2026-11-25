@@ -54,17 +54,39 @@ uv add "dotfetch[all]"
 ## Quick start
 
 ```python
+import dotfetch as dot
 from openai import AsyncOpenAI
-from dotfetch import DotFetch, set_default_fetcher, with_semantic_tools
 
 client = AsyncOpenAI()
-fetcher = DotFetch()
-set_default_fetcher(fetcher)
 
-@fetcher.register(tags=["weather"])
+@dot.register(tags=["weather"])
 def get_weather(city: str) -> str:
     """Get the current weather for a city."""
     return f"The weather in {city} is 72°F and sunny."
+
+messages = [{"role": "user", "content": "What's the weather in San Francisco?"}]
+tools = await dot.fetch(messages[0]["content"], limit=3)
+
+response = await client.chat.completions.create(
+    model="gpt-5.5", messages=messages, tools=tools
+)
+messages.append(response.choices[0].message)
+messages.extend(await dot.execute_tool_calls(response))
+```
+
+dotfetch automatically fingerprints registered tools, syncs definitions to the configured vector store, retrieves semantically relevant tools, and converts schemas to the requested provider dialect.
+
+`dot` works on one shared `DotFetch`, created on first use. Call
+`dot.configure(...)` before registering to choose its embedder or vector store,
+and `dot.default_fetcher()` to reach the instance itself; the examples below
+call it `fetcher`. For more than one registry, or in tests, create instances
+with `fetcher = DotFetch(...)`: each function above is a method on it.
+
+A decorator can do the fetching instead, injecting the selected tools into
+each call:
+
+```python
+from dotfetch import with_semantic_tools
 
 @with_semantic_tools(limit=3, dialect="openai")
 async def ask_llm(prompt: str, *, tools=None):
@@ -76,8 +98,6 @@ async def ask_llm(prompt: str, *, tools=None):
 
 await ask_llm("What's the weather in San Francisco?")
 ```
-
-dotfetch automatically fingerprints registered tools, syncs definitions to the configured vector store, retrieves semantically relevant tools, and converts schemas to the requested provider dialect.
 
 ## Framework integration in one line
 
@@ -182,7 +202,7 @@ def calculate_tax(amount: float) -> float:
     """Calculate US sales tax for an amount."""
     return amount * 0.08
 
-tools = await fetcher.retrieve_tools("What is the tax on $100?", limit=5)
+tools = await fetcher.fetch("What is the tax on $100?", limit=5)
 result = await fetcher.execute(ToolCall(
     tool_name="calculate_tax",
     arguments={"amount": 100.0},

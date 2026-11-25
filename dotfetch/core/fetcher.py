@@ -1598,6 +1598,32 @@ class DotFetch:
         result = await self.retrieve(tool_query)
         return result.to_dialect(dialect, **adapter_options)
 
+    async def fetch(
+        self,
+        query: str,
+        limit: int = 5,
+        dialect: str = "openai",
+        score_threshold: float = 0.0,
+        dialect_options: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> list[dict[str, Any]]:
+        """Fetch the tools relevant to ``query``, as schemas for ``dialect``.
+
+        The same call as :meth:`retrieve_tools`, under the name the library is
+        named for. :func:`dotfetch.fetch` calls it on the default instance.
+
+        Example:
+            >>> tools = await fetcher.fetch("What is the tax on $100?", limit=3)  # doctest: +SKIP
+        """
+        return await self.retrieve_tools(
+            query,
+            limit=limit,
+            dialect=dialect,
+            score_threshold=score_threshold,
+            dialect_options=dialect_options,
+            **kwargs,
+        )
+
     async def retrieve_context(
         self,
         query: str,

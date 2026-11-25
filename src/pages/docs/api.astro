@@ -11,11 +11,20 @@ import CodeBlock from '../../components/CodeBlock.astro';
     DotFetchContextProvider, enable_console_logging,
     current_tool_invocation, ToolInvocationContext,
 )`} />
+  <h2>Module-level functions</h2>
+  <p><code>import dotfetch as dot</code> gives functions that work on one shared <code>DotFetch</code>, created on first use. An instance passed to <code>set_default_fetcher()</code> takes precedence in its context.</p>
+  <ul>
+    <li><code>dot.register(...)</code>: register a callable as a tool, bare or with the options of <code>DotFetch.register</code>.</li>
+    <li><code>dot.fetch(query, limit=5, dialect="openai")</code>: fetch the relevant tools, syncing changed ones first.</li>
+    <li><code>dot.execute_tool_calls(response)</code>: run the tool calls in a model response and format the results for the provider.</li>
+    <li><code>dot.configure(...)</code>: build the shared instance from <code>DotFetch</code>'s arguments, or pass one; refuses to replace an instance that already has tools.</li>
+    <li><code>dot.default_fetcher()</code>: the shared instance, for everything else.</li>
+  </ul>
   <h2>DotFetch</h2>
   <ul>
     <li><code>register(...)</code>: register a callable as a tool, with tags, capabilities, metadata, and schema inference.</li>
     <li><code>sync()</code>: synchronize tool definitions to the configured vector store.</li>
-    <li><code>retrieve(...)</code> / <code>retrieve_tools(...)</code>: retrieve relevant tools for a query and return internal or provider-specific schemas.</li>
+    <li><code>retrieve(...)</code> / <code>fetch(...)</code>: retrieve relevant tools for a query and return internal or provider-specific schemas (<code>retrieve_tools(...)</code> is the same as <code>fetch(...)</code>).</li>
     <li><code>execute(ToolCall)</code>: execute a selected call through the execution engine.</li>
     <li><code>close()</code>: release vector store, telemetry, and protocol resources.</li>
     <li><code>add_mcp_server(MCPServerConfig(command=[...] | url="https://..."))</code>: discover tools from a local (stdio) or remote (Streamable HTTP / SSE) MCP server; <code>register_mcp_server(...)</code> registers server metadata for semantic server selection.</li>

@@ -9,6 +9,13 @@ Core Philosophy: Context is precious. Execution is sacred. Trust is earned.
 import logging as _logging
 from typing import Any
 
+from dotfetch.core.default import (
+    configure,
+    default_fetcher,
+    execute_tool_calls,
+    fetch,
+    register,
+)
 from dotfetch.core.fetcher import DotFetch, create_default_fetcher
 from dotfetch.core.invocation import current_tool_invocation
 from dotfetch.integrations.agent_framework_bridge import (
@@ -163,8 +170,13 @@ __all__ = [
     "MissingRequiredToolError",
     "RetrievalCandidate",
     "RetrievalDecision",
+    "configure",
     "create_default_fetcher",
     "current_tool_invocation",
+    "default_fetcher",
+    "execute_tool_calls",
+    "fetch",
+    "register",
     "disable_af_instrumentation",
     "enable_console_logging",
     "extract_tool_calls",

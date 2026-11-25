@@ -155,6 +155,22 @@ asyncio.run(main())
 
 `retrieve_tools(...)` returns OpenAI-shape tool schemas by default. Pass `dialect="anthropic"`, `"gemini"`, `"agent_framework"`, etc. to convert.
 
+`fetcher.fetch(...)` is the same call as `retrieve_tools(...)`. For a script or notebook with one registry, the module-level form skips the instance, and fetching syncs changed tools first:
+
+```python
+import dotfetch as dot
+
+@dot.register
+def get_weather(city: str) -> str:
+    """Get the current weather for a city."""
+    return f"Weather in {city}: sunny"
+
+tools = await dot.fetch("weather in Paris", limit=3)
+results = await dot.execute_tool_calls(response)  # after the model replies
+```
+
+`dot.configure(...)` (before registering) chooses the shared instance's embedder or store; `dot.default_fetcher()` returns it. Prefer explicit `DotFetch(...)` instances for more than one registry, in libraries, and in tests.
+
 ## Multi-turn re-selection (ToolRefresher)
 
 `ToolRefresher` generalizes the per-turn retrieval pattern to **any** framework without a native live hook: re-rank the whole registry on every turn so the agent can pivot tools as the task changes.
