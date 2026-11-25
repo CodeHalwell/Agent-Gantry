@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "dotfetch"
-version = "0.26.0"
+version = "0.27.0"
 description = "Universal Tool Orchestration Platform - Intelligent, secure tool orchestration for LLM-based agent systems"
 readme = "README.md"
 license = "MIT"
@@ -602,6 +602,11 @@ include = [
     "dotfetch/**/*.md",
     "dotfetch/**/*.txt",
     "dotfetch/skills/**/*",
+]
+# The legacy ``agent-gantry`` shim package lives in shim/agent-gantry/ and is
+# built and released on its own; keep it out of the dotfetch sdist and wheel.
+exclude = [
+    "shim/",
 ]
 
 [tool.ruff]

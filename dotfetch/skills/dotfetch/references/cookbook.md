@@ -179,7 +179,7 @@ provider = DotFetchContextProvider(
 )
 ```
 
-`static_tools` is the right slot for AF-native `@tool` callables that don't live in the fetcher registry. For fetcher-registered tools, use `always_include=["log_event"]` (by name) instead.
+`static_tools` is the right slot for AF-native `@tool` callables that don't live in the dotfetch registry. For dotfetch-registered tools, use `always_include=["log_event"]` (by name) instead.
 
 ## Recipe 5: Diagnosing "the LLM doesn't see my tool"
 
@@ -218,7 +218,7 @@ fetcher.serve_a2a(host="0.0.0.0", port=8080)
 # Skills exposed: tool_discovery (semantic search), tool_execution (run a tool)
 ```
 
-Consume another A2A agent's skills as fetcher-managed tools:
+Consume another A2A agent's skills as dotfetch-managed tools:
 
 ```python
 from dotfetch.schema.config import A2AAgentConfig
@@ -228,7 +228,7 @@ await fetcher.add_a2a_agent(A2AAgentConfig(
     url="https://translator.example.com",
     namespace="ext",
 ))
-# Translator's skills are now registered as fetcher tools in the "ext" namespace.
+# Translator's skills are now registered as dotfetch tools in the "ext" namespace.
 ```
 
 ## Recipe 7: MCP — dynamic server selection
@@ -296,7 +296,7 @@ from dotfetch.integrations.agent_framework_bridge import DotFetchToolBridge
 
 bridge = DotFetchToolBridge(fetcher)
 tools_full = bridge.wrap_tools(fetcher.list_tools_sync())          # all tools
-tools_top5 = await bridge.get_tools("the query", limit=5)         # fetcher top-5
+tools_top5 = await bridge.get_tools("the query", limit=5)         # dotfetch top-5
 
 # Call your LLM with each list and compare prompt_tokens from the usage block.
 ```

@@ -80,11 +80,11 @@ provider = AgentFrameworkAdapter(fetcher).context_provider(
     top_k=5,
     required=["validate_input"],     # MissingRequiredToolError at construction if absent
     always_include=["log_event"],    # warning + skip if absent
-    static_tools=[some_af_native_tool],  # tool not registered with fetcher
+    static_tools=[some_af_native_tool],  # tool not registered with dotfetch
 )
 ```
 
-`required` and `always_include` reference *fetcher-registered* tool names. `static_tools` is for AF-native `@tool` callables that live outside the fetcher registry — they're appended every round and never filtered.
+`required` and `always_include` reference *dotfetch-registered* tool names. `static_tools` is for AF-native `@tool` callables that live outside the dotfetch registry — they're appended every round and never filtered.
 
 ## Static (no per-turn retrieval — bake once)
 

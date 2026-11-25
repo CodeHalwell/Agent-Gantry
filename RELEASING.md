@@ -15,7 +15,7 @@ attaches the distributions and SHA-256 checksums to a GitHub Release.
 3. Check the metadata and review the exact notes that GitHub will receive:
 
    ```bash
-   python scripts/check_release.py --tag v0.26.0 --notes-file /tmp/release-notes.md
+   python scripts/check_release.py --tag v0.27.0 --notes-file /tmp/release-notes.md
    uv lock --check
    ```
 
@@ -64,6 +64,8 @@ published tag rather than `main`.
 
 ## One-time setup
 
+For the first `dotfetch` upload, register a "pending publisher" on PyPI (and
+TestPyPI) for the new project name; the project does not exist until then.
 Configure a [PyPI trusted publisher](https://docs.pypi.org/trusted-publishers/)
 for `CodeHalwell/Agent-Gantry`, workflow `publish.yml`, environment `pypi`.
 Configure the corresponding TestPyPI publisher for environment `testpypi`.
@@ -81,7 +83,7 @@ Check [PyPI](https://pypi.org/project/dotfetch/) and
 in a fresh environment:
 
 ```bash
-uv venv /tmp/fetcher-release-check
-uv pip install --python /tmp/fetcher-release-check/bin/python dotfetch==0.26.0
-/tmp/fetcher-release-check/bin/python -I -c 'import dotfetch; print(dotfetch.__version__)'
+uv venv /tmp/dotfetch-release-check
+uv pip install --python /tmp/dotfetch-release-check/bin/python dotfetch==0.27.0
+/tmp/dotfetch-release-check/bin/python -I -c 'import dotfetch; print(dotfetch.__version__)'
 ```
