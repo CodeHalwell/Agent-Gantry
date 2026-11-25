@@ -10,7 +10,7 @@ import CodeBlock from '../../components/CodeBlock.astro';
 from dotfetch.schema.config import DotFetchConfig
 
 config = DotFetchConfig(
-    vector_store={"provider": "lancedb", "path": ".fetcher/tools.lance"},
+    vector_store={"provider": "lancedb", "path": ".dotfetch/tools.lance"},
     embedder={"provider": "nomic"},
     routing={"score_threshold": 0.5, "use_llm_for_intent": False},
     execution={"default_timeout_ms": 30000, "max_retries": 2},
