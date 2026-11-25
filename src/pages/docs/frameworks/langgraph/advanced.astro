@@ -6,7 +6,7 @@ import CodeBlock from '../../../../components/CodeBlock.astro';
   <p class="eyebrow">Advanced framework guide</p>
   <h1>Advanced LangGraph</h1>
   <p class="lead">Human approval, how per-turn selection works inside a run, tracing, and using dotfetch tools in your own graph.</p>
-  <p><a class="pill" href="/Agent-Gantry/docs/frameworks/langgraph/">← Basic LangGraph usage</a></p>
+  <p><a class="pill" href="/dotfetch/docs/frameworks/langgraph/">← Basic LangGraph usage</a></p>
 
   <h2>Human approval</h2>
   <p>A tool registered with <code>requires_confirmation=True</code>, or matched by a <code>SecurityPolicy(require_confirmation=[...])</code> pattern, pauses the graph with LangGraph's <code>interrupt()</code>. The interrupt value is <code>&#123;"type": "fetcher_approval", "tool", "description", "arguments", "tool_call_id"&#125;</code>. Resume with <code>Command(resume=True)</code> (or <code>&#123;"approved": True&#125;</code>) to run the call once through <code>fetcher.execute</code> with only the confirmation gate cleared; any other value rejects it and the model is told so.</p>

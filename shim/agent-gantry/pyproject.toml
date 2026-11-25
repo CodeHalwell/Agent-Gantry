@@ -37,8 +37,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/CodeHalwell/Agent-Gantry"
-Repository = "https://github.com/CodeHalwell/Agent-Gantry"
+Homepage = "https://github.com/CodeHalwell/dotfetch"
+Repository = "https://github.com/CodeHalwell/dotfetch"
 
 [tool.hatch.build.targets.wheel]
 packages = ["agent_gantry"]

@@ -6,7 +6,7 @@ import CodeBlock from '../../../../components/CodeBlock.astro';
   <p class="eyebrow">Advanced framework guide</p>
   <h1>Advanced Pydantic AI</h1>
   <p class="lead">Human-in-the-loop approval, dotfetch-backed tool search, per-turn skills, multiple toolsets, tracing, and how per-turn selection behaves inside a run.</p>
-  <p><a class="pill" href="/Agent-Gantry/docs/frameworks/pydantic-ai/">← Basic Pydantic AI usage</a></p>
+  <p><a class="pill" href="/dotfetch/docs/frameworks/pydantic-ai/">← Basic Pydantic AI usage</a></p>
 
   <h2>Human-in-the-loop approval</h2>
   <p>A tool registered with <code>requires_confirmation=True</code>, or matched by a <code>SecurityPolicy(require_confirmation=[...])</code> pattern, pauses the run with Pydantic AI's <code>DeferredToolRequests</code>. Approving it with <code>DeferredToolResults</code> replays the call once through <code>fetcher.execute</code> with the confirmation gate cleared; every other policy check still runs. A denial never executes the tool.</p>

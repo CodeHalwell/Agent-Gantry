@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+The GitHub repository has been renamed too, to
+[`CodeHalwell/dotfetch`](https://github.com/CodeHalwell/dotfetch), and the
+documentation moved with it to <https://codehalwell.github.io/dotfetch/>. This
+corrects the 0.27.0 notes, which said both kept their names. Links to the old
+repository redirect; links to the old documentation address,
+`codehalwell.github.io/Agent-Gantry`, do not. The package's project links, the
+docs site's base path and the shim's message now use the new addresses.
+
 ## [0.27.0] - 2026-11-25
 
 Agent-Gantry is now **dotfetch**. Behaviour, configuration shape and retrieval

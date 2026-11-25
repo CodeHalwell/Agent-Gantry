@@ -63,7 +63,7 @@ def generate_agent_card(fetcher: DotFetch, base_url: str) -> AgentCard:
         authentication=None,  # Basic authentication can be added
         provider={
             "organization": "dotfetch",
-            "url": "https://github.com/CodeHalwell/Agent-Gantry",
+            "url": "https://github.com/CodeHalwell/dotfetch",
         },
     )
 

@@ -22,8 +22,8 @@ By participating in this project, you agree to maintain a respectful and inclusi
 1. **Fork the repository** on GitHub
 2. **Clone your fork** locally:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/Agent-Gantry.git
-   cd Agent-Gantry
+   git clone https://github.com/YOUR_USERNAME/dotfetch.git
+   cd dotfetch
    ```
 3. **Install development dependencies** (uv preferred for reproducibility):
    ```bash

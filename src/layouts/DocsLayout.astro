@@ -5,37 +5,37 @@ interface Link { label: string; href: string }
 interface Section { section: string; links: Link[] }
 const { title = 'dotfetch Docs', description = 'Universal tool orchestration for LLM agents.' } = Astro.props;
 const nav: Section[] = [
-  { section: 'Start', links: [{label:'Home',href:'/Agent-Gantry/'},{label:'Quickstart',href:'/Agent-Gantry/docs/getting-started/'},{label:'Implementation Journey',href:'/Agent-Gantry/docs/journey/'}]},
-  { section: 'Core', links: [{label:'Architecture',href:'/Agent-Gantry/docs/architecture/'},{label:'Configuration',href:'/Agent-Gantry/docs/configuration/'},{label:'API Reference',href:'/Agent-Gantry/docs/api/'}]},
-  { section: 'Integrations', links: [{label:'Frameworks overview',href:'/Agent-Gantry/docs/frameworks/'},{label:'Providers',href:'/Agent-Gantry/docs/providers/'},{label:'Operations',href:'/Agent-Gantry/docs/operations/'}]},
+  { section: 'Start', links: [{label:'Home',href:'/dotfetch/'},{label:'Quickstart',href:'/dotfetch/docs/getting-started/'},{label:'Implementation Journey',href:'/dotfetch/docs/journey/'}]},
+  { section: 'Core', links: [{label:'Architecture',href:'/dotfetch/docs/architecture/'},{label:'Configuration',href:'/dotfetch/docs/configuration/'},{label:'API Reference',href:'/dotfetch/docs/api/'}]},
+  { section: 'Integrations', links: [{label:'Frameworks overview',href:'/dotfetch/docs/frameworks/'},{label:'Providers',href:'/dotfetch/docs/providers/'},{label:'Operations',href:'/dotfetch/docs/operations/'}]},
   { section: 'Framework guides', links: [
-    {label:'Microsoft Agent Framework',href:'/Agent-Gantry/docs/frameworks/agent-framework/'},
-    {label:'LangChain',href:'/Agent-Gantry/docs/frameworks/langchain/'},
-    {label:'LangGraph',href:'/Agent-Gantry/docs/frameworks/langgraph/'},
-    {label:'LlamaIndex',href:'/Agent-Gantry/docs/frameworks/llamaindex/'},
-    {label:'CrewAI',href:'/Agent-Gantry/docs/frameworks/crewai/'},
-    {label:'Google ADK',href:'/Agent-Gantry/docs/frameworks/google-adk/'},
-    {label:'Pydantic AI',href:'/Agent-Gantry/docs/frameworks/pydantic-ai/'},
-    {label:'OpenAI Agents SDK',href:'/Agent-Gantry/docs/frameworks/openai-agents/'},
-    {label:'Haystack',href:'/Agent-Gantry/docs/frameworks/haystack/'},
-    {label:'Agno',href:'/Agent-Gantry/docs/frameworks/agno/'},
+    {label:'Microsoft Agent Framework',href:'/dotfetch/docs/frameworks/agent-framework/'},
+    {label:'LangChain',href:'/dotfetch/docs/frameworks/langchain/'},
+    {label:'LangGraph',href:'/dotfetch/docs/frameworks/langgraph/'},
+    {label:'LlamaIndex',href:'/dotfetch/docs/frameworks/llamaindex/'},
+    {label:'CrewAI',href:'/dotfetch/docs/frameworks/crewai/'},
+    {label:'Google ADK',href:'/dotfetch/docs/frameworks/google-adk/'},
+    {label:'Pydantic AI',href:'/dotfetch/docs/frameworks/pydantic-ai/'},
+    {label:'OpenAI Agents SDK',href:'/dotfetch/docs/frameworks/openai-agents/'},
+    {label:'Haystack',href:'/dotfetch/docs/frameworks/haystack/'},
+    {label:'Agno',href:'/dotfetch/docs/frameworks/agno/'},
   ]},
   { section: 'Advanced guides', links: [
-    {label:'Advanced Agent Framework',href:'/Agent-Gantry/docs/frameworks/agent-framework/advanced/'},
-    {label:'Advanced LangChain',href:'/Agent-Gantry/docs/frameworks/langchain/advanced/'},
-    {label:'Advanced LangGraph',href:'/Agent-Gantry/docs/frameworks/langgraph/advanced/'},
-    {label:'Advanced LlamaIndex',href:'/Agent-Gantry/docs/frameworks/llamaindex/advanced/'},
-    {label:'Advanced CrewAI',href:'/Agent-Gantry/docs/frameworks/crewai/advanced/'},
-    {label:'Advanced Google ADK',href:'/Agent-Gantry/docs/frameworks/google-adk/advanced/'},
-    {label:'Advanced Pydantic AI',href:'/Agent-Gantry/docs/frameworks/pydantic-ai/advanced/'},
-    {label:'Advanced OpenAI Agents',href:'/Agent-Gantry/docs/frameworks/openai-agents/advanced/'},
-    {label:'Advanced Haystack',href:'/Agent-Gantry/docs/frameworks/haystack/advanced/'},
-    {label:'Advanced Agno',href:'/Agent-Gantry/docs/frameworks/agno/advanced/'},
+    {label:'Advanced Agent Framework',href:'/dotfetch/docs/frameworks/agent-framework/advanced/'},
+    {label:'Advanced LangChain',href:'/dotfetch/docs/frameworks/langchain/advanced/'},
+    {label:'Advanced LangGraph',href:'/dotfetch/docs/frameworks/langgraph/advanced/'},
+    {label:'Advanced LlamaIndex',href:'/dotfetch/docs/frameworks/llamaindex/advanced/'},
+    {label:'Advanced CrewAI',href:'/dotfetch/docs/frameworks/crewai/advanced/'},
+    {label:'Advanced Google ADK',href:'/dotfetch/docs/frameworks/google-adk/advanced/'},
+    {label:'Advanced Pydantic AI',href:'/dotfetch/docs/frameworks/pydantic-ai/advanced/'},
+    {label:'Advanced OpenAI Agents',href:'/dotfetch/docs/frameworks/openai-agents/advanced/'},
+    {label:'Advanced Haystack',href:'/dotfetch/docs/frameworks/haystack/advanced/'},
+    {label:'Advanced Agno',href:'/dotfetch/docs/frameworks/agno/advanced/'},
   ]},
 ];
 ---
 <html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width"/><meta name="description" content={description}/><title>{title}</title></head>
-<body><a href="#main-content" class="skip-link">Skip to main content</a><div class="shell"><aside class="sidebar"><a class="brand" href="/Agent-Gantry/"><span class="logo" aria-hidden="true"></span><div><h1>dotfetch</h1><p>v{SITE_VERSION} docs</p></div></a><nav aria-label="Sidebar navigation">
+<body><a href="#main-content" class="skip-link">Skip to main content</a><div class="shell"><aside class="sidebar"><a class="brand" href="/dotfetch/"><span class="logo" aria-hidden="true"></span><div><h1>dotfetch</h1><p>v{SITE_VERSION} docs</p></div></a><nav aria-label="Sidebar navigation">
         {nav.map(({section,links})=>{
           const sectionId = `nav-${section.toLowerCase().replace(/\s+/g, '-')}`;
           return (
@@ -57,8 +57,8 @@ const nav: Section[] = [
         <div class="nav-section">
           <h2 id="nav-project">Project</h2>
           <ul aria-labelledby="nav-project" role="list" style="list-style:none;padding:0;margin:0">
-            <li><a href="https://github.com/CodeHalwell/Agent-Gantry">GitHub</a></li>
-            <li><a href="/Agent-Gantry/docs/quick-reference/" aria-current={Astro.url.pathname === '/Agent-Gantry/docs/quick-reference/' ? 'page' : undefined} style={Astro.url.pathname === '/Agent-Gantry/docs/quick-reference/' ? 'color: var(--text); font-weight: 600; background: var(--panel2);' : undefined}>Quick reference</a></li>
+            <li><a href="https://github.com/CodeHalwell/dotfetch">GitHub</a></li>
+            <li><a href="/dotfetch/docs/quick-reference/" aria-current={Astro.url.pathname === '/dotfetch/docs/quick-reference/' ? 'page' : undefined} style={Astro.url.pathname === '/dotfetch/docs/quick-reference/' ? 'color: var(--text); font-weight: 600; background: var(--panel2);' : undefined}>Quick reference</a></li>
           </ul>
         </div>
         </nav></aside><main class="main" id="main-content" tabindex="-1"><div class="topbar"><span>Context is precious. Execution is sacred. Trust is earned.</span><span class="pill">Python 3.10–3.13</span></div><div class="content"><slot /></div><footer class="footer">Built with Astro, React, and TypeScript. Documentation reflects dotfetch {SITE_VERSION}.</footer></main></div></body></html>

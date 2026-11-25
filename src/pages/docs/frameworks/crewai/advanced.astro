@@ -6,7 +6,7 @@ import CodeBlock from '../../../../components/CodeBlock.astro';
   <p class="eyebrow">Advanced framework guide</p>
   <h1>Advanced CrewAI</h1>
   <p class="lead">Approval, run context, failure policy and per-run selection.</p>
-  <p><a class="pill" href="/Agent-Gantry/docs/frameworks/crewai/">← Basic CrewAI usage</a></p>
+  <p><a class="pill" href="/dotfetch/docs/frameworks/crewai/">← Basic CrewAI usage</a></p>
 
   <h2>Approval</h2>
   <p>CrewAI has no pause-and-resume for a tool call; its native gate is a <code>before_tool_call</code> hook. dotfetch registers one, once per process, and asks the adapter's approver about every confirmation-gated call (<code>requires_confirmation=True</code> or a <code>SecurityPolicy(require_confirmation=[...])</code> pattern).</p>

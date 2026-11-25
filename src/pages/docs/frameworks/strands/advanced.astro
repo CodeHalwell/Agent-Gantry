@@ -6,7 +6,7 @@ import CodeBlock from '../../../../components/CodeBlock.astro';
   <p class="eyebrow">Advanced framework guide</p>
   <h1>Advanced Strands Agents</h1>
   <p class="lead">Interrupt-based approval, how per-turn selection works, and run context.</p>
-  <p><a class="pill" href="/Agent-Gantry/docs/frameworks/strands/">← Basic Strands usage</a></p>
+  <p><a class="pill" href="/dotfetch/docs/frameworks/strands/">← Basic Strands usage</a></p>
 
   <h2>Approval through interrupts</h2>
   <p>A confirmation-gated call (<code>requires_confirmation=True</code> or a <code>SecurityPolicy(require_confirmation=[...])</code> pattern) raises a Strands interrupt from inside the tool, named <code>"fetcher-approval"</code> with a reason holding the tool, its arguments and description. The run stops with <code>stop_reason == "interrupt"</code>.</p>
