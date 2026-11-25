@@ -12,7 +12,7 @@ from uuid import UUID
 import pytest
 from pydantic import BaseModel
 
-from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+from dotfetch.integrations.agent_framework_bridge import DotFetchToolBridge
 
 
 class Payload(BaseModel):
@@ -45,21 +45,21 @@ class Mode(Enum):
         ({"body": b"hello"}, {"body": "hello"}),
     ],
 )
-async def test_structured_result_stays_machine_readable(gantry, framework, value, expected):
+async def test_structured_result_stays_machine_readable(fetcher, framework, value, expected):
     if framework == "openai_agents":
         pytest.importorskip("agents")
 
-    @gantry.register
+    @fetcher.register
     def read_record():
         """Read a record with structured Python values."""
         return value
 
     if framework == "bridge":
-        tools = await GantryToolBridge(gantry, as_function_tool=False).get_tools(
+        tools = await DotFetchToolBridge(fetcher, as_function_tool=False).get_tools(
             "read a record", limit=1
         )
         result = await tools[0]()
     else:
-        tools = await gantry.framework("openai_agents").select("read a record", limit=1)
+        tools = await fetcher.framework("openai_agents").select("read a record", limit=1)
         result = await tools[0].on_invoke_tool(None, "{}")
     assert json.loads(result) == expected

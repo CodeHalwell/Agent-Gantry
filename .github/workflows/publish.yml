@@ -18,7 +18,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: publish-agent-gantry
+  group: publish-dotfetch
   cancel-in-progress: false
 
 jobs:
@@ -118,28 +118,28 @@ jobs:
           import asyncio
           import os
           from pathlib import Path
-          import agent_gantry
-          from agent_gantry import AgentGantry, supported_frameworks
-          from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-          from agent_gantry.integrations.frameworks import GantryToolset
+          import dotfetch
+          from dotfetch import DotFetch, supported_frameworks
+          from dotfetch.adapters.embedders.simple import SimpleEmbedder
+          from dotfetch.integrations.frameworks import DotFetchToolset
 
-          assert agent_gantry.__version__ == os.environ["EXPECTED_VERSION"]
-          assert Path(agent_gantry.__file__).with_name("py.typed").is_file()
+          assert dotfetch.__version__ == os.environ["EXPECTED_VERSION"]
+          assert Path(dotfetch.__file__).with_name("py.typed").is_file()
 
           async def smoke():
-              async with AgentGantry(embedder=SimpleEmbedder()) as gantry:
-                  @gantry.register(examples=["add two numbers"])
+              async with DotFetch(embedder=SimpleEmbedder()) as fetcher:
+                  @fetcher.register(examples=["add two numbers"])
                   def add(a: int, b: int) -> int:
                       """Add two numbers."""
                       return a + b
-                  specs = await GantryToolset(gantry).select("add two numbers", limit=1)
+                  specs = await DotFetchToolset(fetcher).select("add two numbers", limit=1)
                   assert await specs[0].ainvoke(a=2, b=3) == 5
                   assert len(supported_frameworks()) == 12
                   for name in supported_frameworks():
-                      assert callable(gantry.framework(name).select)
+                      assert callable(fetcher.framework(name).select)
 
           asyncio.run(smoke())
-          print(f"agent-gantry {agent_gantry.__version__} wheel smoke passed")
+          print(f"dotfetch {dotfetch.__version__} wheel smoke passed")
           PY
 
   publish-testpypi:
@@ -149,7 +149,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: testpypi
-      url: https://test.pypi.org/p/agent-gantry
+      url: https://test.pypi.org/p/dotfetch
     permissions:
       id-token: write
     steps:
@@ -175,7 +175,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/p/agent-gantry
+      url: https://pypi.org/p/dotfetch
     permissions:
       id-token: write   # PyPI trusted publishing (OIDC)
       contents: write   # create + push the v<version> tag and GitHub Release

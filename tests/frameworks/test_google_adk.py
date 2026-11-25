@@ -7,15 +7,15 @@ import types
 
 import pytest
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-from agent_gantry.integrations.frameworks.base import GantryToolset
-from agent_gantry.integrations.frameworks.google_adk import GoogleADKAdapter
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
+from dotfetch.integrations.frameworks.base import DotFetchToolset
+from dotfetch.integrations.frameworks.google_adk import GoogleADKAdapter
 
 
 @pytest.fixture
-async def gantry():
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+async def fetcher():
+    g = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
     @g.register(tags=["email"])
     def send_email(to: str, body: str = "") -> str:
@@ -49,8 +49,8 @@ def fake_adk(monkeypatch):
     return FunctionTool
 
 
-async def test_spec_to_google_adk_builds_and_routes(gantry, fake_adk):
-    tool = (await GoogleADKAdapter(gantry).select("send an email", limit=1))[0]
+async def test_spec_to_google_adk_builds_and_routes(fetcher, fake_adk):
+    tool = (await GoogleADKAdapter(fetcher).select("send an email", limit=1))[0]
     assert tool.name == "send_email"
     # The wrapped func carries a real signature derived from the JSON schema.
     import inspect
@@ -60,14 +60,14 @@ async def test_spec_to_google_adk_builds_and_routes(gantry, fake_adk):
     assert await tool.func(to="boss@x.com") == "sent:boss@x.com"
 
 
-async def test_for_google_adk_maps_all(gantry, fake_adk):
-    tools = await GoogleADKAdapter(gantry).select("math add numbers", limit=2)
+async def test_for_google_adk_maps_all(fetcher, fake_adk):
+    tools = await GoogleADKAdapter(fetcher).select("math add numbers", limit=2)
     assert len(tools) == 2
 
 
-async def test_missing_google_adk_raises_helpful_error(monkeypatch, gantry):
+async def test_missing_google_adk_raises_helpful_error(monkeypatch, fetcher):
     monkeypatch.setitem(sys.modules, "google.adk", None)
     monkeypatch.setitem(sys.modules, "google.adk.tools", None)
-    specs = await GantryToolset(gantry).select("send an email", limit=1)
-    with pytest.raises(ImportError, match=r"agent-gantry\[google-adk\]"):
+    specs = await DotFetchToolset(fetcher).select("send an email", limit=1)
+    with pytest.raises(ImportError, match=r"dotfetch\[google-adk\]"):
         GoogleADKAdapter.convert(specs[0])

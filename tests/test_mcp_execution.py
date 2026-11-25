@@ -2,7 +2,7 @@
 End-to-end tests for MCP tool execution.
 
 Covers the wiring added so MCP-discovered tools are executable through
-``gantry.execute()`` (handler registration in ``add_mcp_server``), and the
+``fetcher.execute()`` (handler registration in ``add_mcp_server``), and the
 persistent MCP session used by ``MCPClient.call_tool``.
 
 Uses a real stdio MCP server (subprocess) built with the ``mcp`` package.
@@ -19,10 +19,10 @@ import pytest
 
 pytest.importorskip("mcp")
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.executors.mcp_client import MCPClient
-from agent_gantry.schema.config import MCPServerConfig
-from agent_gantry.schema.execution import ExecutionStatus, ToolCall
+from dotfetch import DotFetch
+from dotfetch.adapters.executors.mcp_client import MCPClient
+from dotfetch.schema.config import MCPServerConfig
+from dotfetch.schema.execution import ExecutionStatus, ToolCall
 
 SERVER_SCRIPT = """
 import os
@@ -226,14 +226,14 @@ async def test_client_raises_on_iserror_result(server_config: MCPServerConfig) -
 
 @pytest.mark.asyncio
 async def test_add_mcp_server_tools_are_executable(server_config: MCPServerConfig) -> None:
-    """Tools discovered via add_mcp_server execute through gantry.execute()."""
-    gantry = AgentGantry()
+    """Tools discovered via add_mcp_server execute through fetcher.execute()."""
+    fetcher = DotFetch()
     try:
-        count = await gantry.add_mcp_server(server_config)
+        count = await fetcher.add_mcp_server(server_config)
         assert count == 3
-        assert gantry.tool_count == count  # each discovered tool got a handler
+        assert fetcher.tool_count == count  # each discovered tool got a handler
 
-        result = await gantry.execute(
+        result = await fetcher.execute(
             ToolCall(tool_name="add_numbers", arguments={"a": 20, "b": 22})
         )
         assert result.status == ExecutionStatus.SUCCESS, result.error
@@ -241,7 +241,7 @@ async def test_add_mcp_server_tools_are_executable(server_config: MCPServerConfi
 
         # An isError result from the server must be recorded as a failure,
         # not passed through as a successful result.
-        failed = await gantry.execute(ToolCall(tool_name="always_fails", arguments={}))
+        failed = await fetcher.execute(ToolCall(tool_name="always_fails", arguments={}))
         assert failed.status == ExecutionStatus.FAILURE
         # 1.x relays the tool's own message; 2.x's server replaces it with a
         # generic "Error executing tool <name>" text.
@@ -249,7 +249,7 @@ async def test_add_mcp_server_tools_are_executable(server_config: MCPServerConfi
             failed.error or ""
         )
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 @pytest.mark.asyncio
@@ -258,17 +258,17 @@ async def test_mcp_name_collision_keeps_existing_tool(server_config: MCPServerCo
     hijack its handler: qualified-name dedup keeps the first definition, so
     replacing only the handler would validate against one tool while
     dispatching to another."""
-    gantry = AgentGantry()
+    fetcher = DotFetch()
     try:
 
-        @gantry.register(namespace="mcp_test")
+        @fetcher.register(namespace="mcp_test")
         def add_numbers(a: int, b: int) -> int:
             """Local implementation that shadows the MCP server's tool."""
             return 999
 
-        await gantry.add_mcp_server(server_config)
+        await fetcher.add_mcp_server(server_config)
 
-        result = await gantry.execute(
+        result = await fetcher.execute(
             ToolCall(tool_name="add_numbers", arguments={"a": 1, "b": 2})
         )
         assert result.status == ExecutionStatus.SUCCESS, result.error
@@ -276,10 +276,10 @@ async def test_mcp_name_collision_keeps_existing_tool(server_config: MCPServerCo
         assert result.result == 999
 
         # Non-colliding MCP tools from the same server work normally
-        pid_result = await gantry.execute(ToolCall(tool_name="server_pid", arguments={}))
+        pid_result = await fetcher.execute(ToolCall(tool_name="server_pid", arguments={}))
         assert pid_result.status == ExecutionStatus.SUCCESS, pid_result.error
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 @pytest.mark.asyncio
@@ -306,19 +306,19 @@ async def test_readd_reconfigured_server_refreshes_definitions(tmp_path: Path) -
             namespace="mcp_test",
         )
 
-    gantry = AgentGantry()
+    fetcher = DotFetch()
     try:
-        await gantry.add_mcp_server(config_for(script_v1))
-        old_client = gantry._direct_mcp_clients["mcp_test.test-server"]
+        await fetcher.add_mcp_server(config_for(script_v1))
+        old_client = fetcher._direct_mcp_clients["mcp_test.test-server"]
         assert old_client._connected is True
 
-        await gantry.add_mcp_server(config_for(script_v2))
+        await fetcher.add_mcp_server(config_for(script_v2))
 
         # The config change closed and replaced the cached client
-        assert gantry._direct_mcp_clients["mcp_test.test-server"] is not old_client
+        assert fetcher._direct_mcp_clients["mcp_test.test-server"] is not old_client
         assert old_client._connected is False
 
-        tools = {f"{t.namespace}.{t.name}": t for t in gantry.export_tools()}
+        tools = {f"{t.namespace}.{t.name}": t for t in fetcher.export_tools()}
         assert "(v2)" in tools["mcp_test.add_numbers"].description
 
         # Tools the reconfigured server no longer exposes are removed — their
@@ -326,17 +326,17 @@ async def test_readd_reconfigured_server_refreshes_definitions(tmp_path: Path) -
         # old command
         assert "mcp_test.server_pid" not in tools
         assert "mcp_test.server_pid_v2" in tools
-        stale = await gantry.execute(ToolCall(tool_name="server_pid", arguments={}))
+        stale = await fetcher.execute(ToolCall(tool_name="server_pid", arguments={}))
         assert stale.status != ExecutionStatus.SUCCESS
 
         # And execution dispatches to the reconfigured server
-        result = await gantry.execute(
+        result = await fetcher.execute(
             ToolCall(tool_name="add_numbers", arguments={"a": 2, "b": 2})
         )
         assert result.status == ExecutionStatus.SUCCESS, result.error
         assert _text_content(result.result) == "4"
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 @pytest.mark.asyncio
@@ -344,33 +344,33 @@ async def test_failed_reconfiguration_keeps_old_client(tmp_path: Path) -> None:
     """If a re-add with a changed config fails discovery, the old client must
     stay cached and working — the swap is only committed after the
     replacement discovers successfully. Otherwise handlers close over a
-    client gantry.close() can no longer reach."""
+    client fetcher.close() can no longer reach."""
     script = tmp_path / "server.py"
     script.write_text(SERVER_SCRIPT)
 
     def config_for(command: list[str]) -> MCPServerConfig:
         return MCPServerConfig(name="test-server", command=command, namespace="mcp_test")
 
-    gantry = AgentGantry()
+    fetcher = DotFetch()
     try:
-        await gantry.add_mcp_server(config_for([sys.executable, str(script)]))
-        old_client = gantry._direct_mcp_clients["mcp_test.test-server"]
+        await fetcher.add_mcp_server(config_for([sys.executable, str(script)]))
+        old_client = fetcher._direct_mcp_clients["mcp_test.test-server"]
 
         # Reconfigure to a command that cannot start
         with pytest.raises(Exception):
-            await gantry.add_mcp_server(
+            await fetcher.add_mcp_server(
                 config_for([sys.executable, str(tmp_path / "missing.py")])
             )
 
         # The old client remains cached and the tools still execute
-        assert gantry._direct_mcp_clients["mcp_test.test-server"] is old_client
-        result = await gantry.execute(
+        assert fetcher._direct_mcp_clients["mcp_test.test-server"] is old_client
+        result = await fetcher.execute(
             ToolCall(tool_name="add_numbers", arguments={"a": 5, "b": 6})
         )
         assert result.status == ExecutionStatus.SUCCESS, result.error
         assert _text_content(result.result) == "11"
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 @pytest.mark.asyncio
@@ -380,46 +380,46 @@ async def test_mcp_tools_executable_before_sync_with_auto_sync_off(
     """MCP-discovered tools are executable immediately even with
     auto_sync=False — the definition must enter the registry alongside the
     handler, mirroring add_tool()'s documented guarantee."""
-    from agent_gantry.schema.config import AgentGantryConfig
+    from dotfetch.schema.config import DotFetchConfig
 
-    gantry = AgentGantry(AgentGantryConfig(auto_sync=False))
+    fetcher = DotFetch(DotFetchConfig(auto_sync=False))
     try:
-        count = await gantry.add_mcp_server(server_config)
+        count = await fetcher.add_mcp_server(server_config)
         assert count == 3
 
-        result = await gantry.execute(
+        result = await fetcher.execute(
             ToolCall(tool_name="add_numbers", arguments={"a": 3, "b": 4})
         )
         assert result.status == ExecutionStatus.SUCCESS, result.error
         assert _text_content(result.result) == "7"
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
-GANTRY_SERVER_SCRIPT = """
+DOTFETCH_SERVER_SCRIPT = """
 import asyncio
 
-from agent_gantry import AgentGantry
-from agent_gantry.servers.mcp_server import create_mcp_server
+from dotfetch import DotFetch
+from dotfetch.servers.mcp_server import create_mcp_server
 
-gantry = AgentGantry()
+fetcher = DotFetch()
 
 
-@gantry.register
+@fetcher.register
 def echo(text: str) -> str:
     \"\"\"Echo the given text back.\"\"\"
     return text
 
 
-@gantry.register
+@fetcher.register
 def boom() -> str:
     \"\"\"Always fails with a server-side error.\"\"\"
     raise ValueError("server-side failure")
 
 
 async def main() -> None:
-    await gantry.sync()
-    server = create_mcp_server(gantry, mode="static", name="gantry-e2e")
+    await fetcher.sync()
+    server = create_mcp_server(fetcher, mode="static", name="fetcher-e2e")
     await server.run_stdio()
 
 
@@ -429,18 +429,18 @@ if __name__ == "__main__":
 
 
 @pytest.mark.asyncio
-async def test_gantry_mcp_server_roundtrip(tmp_path: Path) -> None:
-    """Full wire round trip against Gantry's own MCPServer: success content
+async def test_fetcher_mcp_server_roundtrip(tmp_path: Path) -> None:
+    """Full wire round trip against dotfetch's own MCPServer: success content
     comes back, and a failed execution arrives as an isError result — pinning
     the assumption that the 1.x SDK wraps raised handler exceptions (and that
     the 2.x callback marks is_error itself), which unit tests can't see."""
-    script = tmp_path / "gantry_mcp_server.py"
-    script.write_text(GANTRY_SERVER_SCRIPT)
+    script = tmp_path / "fetcher_mcp_server.py"
+    script.write_text(DOTFETCH_SERVER_SCRIPT)
     client = MCPClient(
         MCPServerConfig(
-            name="gantry-e2e",
+            name="fetcher-e2e",
             command=[sys.executable, str(script)],
-            namespace="gantry_e2e",
+            namespace="fetcher_e2e",
         )
     )
     try:
@@ -484,8 +484,8 @@ def test_a_long_server_tool_name_does_not_abort_discovery() -> None:
     ``ValidationError`` was raised inside ``list_tools``' list comprehension,
     taking down discovery for the whole server -- the failure this padding
     exists to avoid, reached by a long name instead of a long description."""
-    from agent_gantry.adapters.executors.mcp_client import _split_description
-    from agent_gantry.schema.tool import ToolDefinition
+    from dotfetch.adapters.executors.mcp_client import _split_description
+    from dotfetch.schema.tool import ToolDefinition
 
     description, extended = _split_description("hi", "x" * 3000, "s" * 3000)
     assert len(description) <= 2000, len(description)

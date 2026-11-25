@@ -1,11 +1,11 @@
 """
 Microsoft Agent Framework (1.5.0+) integration example.
 
-Demonstrates how Agent-Gantry's semantic routing reduces token usage in
+Demonstrates how dotfetch's semantic routing reduces token usage in
 multi-agent systems by surfacing only the relevant tools per query.
 
 The ``agent-framework`` range in ``pyproject.toml`` is ``>=1.19.0,<2.0.0``.
-``GantryToolBridge`` works against any AF release in that range.
+``DotFetchToolBridge`` works against any AF release in that range.
 
 **AF 1.6.0 concurrent workflow note:**
 AF 1.6.0 enables ContextVar-based instrumentation by default.  Sequential
@@ -13,11 +13,11 @@ workflows (WorkflowAgent, SequentialBuilder, HandoffBuilder — all used here)
 are **not** affected.  If you run concurrent workflows via ``asyncio.gather()``
 or ``TaskGroup`` on AF 1.6.0, add one call at startup::
 
-    from agent_gantry import disable_af_instrumentation
+    from dotfetch import disable_af_instrumentation
     disable_af_instrumentation()
 
 
-Or construct the bridge with ``GantryToolBridge(gantry, disable_af_instrumentation=True)``.
+Or construct the bridge with ``DotFetchToolBridge(fetcher, disable_af_instrumentation=True)``.
 
 Covers three construction patterns:
 
@@ -30,7 +30,7 @@ Covers three construction patterns:
    directly into ``HandoffBuilder`` or ``SequentialBuilder``.
 
 3. ``bridge.build_workflow([specs], edges=[...])``
-   Assembles a ``WorkflowAgent`` from multiple Gantry-equipped agents wired
+   Assembles a ``WorkflowAgent`` from multiple dotfetch-equipped agents wired
    together via ``AgentExecutor`` nodes and ``WorkflowBuilder`` edges.
 """
 
@@ -38,15 +38,15 @@ import asyncio
 
 from dotenv import load_dotenv
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-from agent_gantry.core.security import SecurityPolicy
-from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
-from agent_gantry.integrations.agent_framework_middleware import (
-    GantryApprovalMiddleware,
-    GantryObservabilityMiddleware,
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
+from dotfetch.core.security import SecurityPolicy
+from dotfetch.integrations.agent_framework_bridge import DotFetchToolBridge
+from dotfetch.integrations.agent_framework_middleware import (
+    DotFetchApprovalMiddleware,
+    DotFetchObservabilityMiddleware,
 )
-from agent_gantry.schema.tool import ToolCapability
+from dotfetch.schema.tool import ToolCapability
 
 try:
     from agent_framework.openai import OpenAIChatClient
@@ -58,33 +58,33 @@ load_dotenv()
 
 async def main() -> str:
     # -----------------------------------------------------------------------
-    # 1. Register tools with Agent-Gantry
+    # 1. Register tools with dotfetch
     # -----------------------------------------------------------------------
-    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
+    fetcher = DotFetch(embedder=SimpleEmbedder(dimension=256))
     try:
 
-        @gantry.register(examples=["who is this user", "look up the customer profile"])
+        @fetcher.register(examples=["who is this user", "look up the customer profile"])
         def get_user_profile(user_id: str) -> dict[str, str]:
             """Fetch a user's profile from the CRM system including plan and region."""
             return {"user_id": user_id, "plan": "pro", "region": "us-east"}
 
-        @gantry.register(examples=["what do they owe", "show billing for this account"])
+        @fetcher.register(examples=["what do they owe", "show billing for this account"])
         def get_billing_info(user_id: str) -> dict[str, str]:
             """Retrieve billing information for a customer account."""
             return {"user_id": user_id, "balance": "$0.00", "next_invoice": "2026-04-01"}
 
-        @gantry.register(examples=["find a help article", "search the knowledge base"])
+        @fetcher.register(examples=["find a help article", "search the knowledge base"])
         def search_knowledge_base(query: str) -> str:
             """Search the internal knowledge base for support articles."""
             return f"Found 3 articles matching '{query}'"
 
-        @gantry.register(examples=["any open tickets", "what support cases are outstanding"])
+        @fetcher.register(examples=["any open tickets", "what support cases are outstanding"])
         def list_open_tickets(user_id: str) -> list[str]:
             """List open support tickets for a user."""
             return ["TICKET-001", "TICKET-042"]
 
         # Destructive: DELETE_DATA capability → AF approval_mode="always_require"
-        @gantry.register(
+        @fetcher.register(
             capabilities=[ToolCapability.DELETE_DATA],
             examples=["delete this account", "remove the user permanently"],
         )
@@ -92,19 +92,19 @@ async def main() -> str:
             """Delete a user account. Destructive; requires human approval."""
             return f"deleted:{user_id}"
 
-        await gantry.sync()
+        await fetcher.sync()
 
         # No score_threshold: it defaults to 0.0. Raising it is a silent-drop
         # trap — a longer query dilutes absolute similarity, so a non-zero
         # cutoff can quietly return no tools at all.
-        bridge = GantryToolBridge(gantry)
+        bridge = DotFetchToolBridge(fetcher)
 
         # Selection needs no client, so show it first. This is the same
         # `get_tools` call `build_agent` makes below for Pattern 1's query.
         support_query = "What plan is user abc123 on?"
         _tools, decision = await bridge.get_tools_with_decision(support_query, limit=2)
         print("Catalogue: 5 tools, one of them DELETE_DATA (AF gates it behind approval).")
-        print(f"Gantry selected {len(decision.injected)} for {support_query!r}:")
+        print(f"dotfetch selected {len(decision.injected)} for {support_query!r}:")
         for name in decision.injected:
             print(f"  - {name}")
         print()
@@ -132,8 +132,8 @@ async def main() -> str:
             max_requests_per_minute=60,
         )
         middleware = [
-            GantryApprovalMiddleware(policy),
-            GantryObservabilityMiddleware(gantry),
+            DotFetchApprovalMiddleware(policy),
+            DotFetchObservabilityMiddleware(fetcher),
         ]
 
         # -----------------------------------------------------------------------
@@ -240,7 +240,7 @@ async def main() -> str:
         print(f"Response: {response}")
         return str(response)
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 if __name__ == "__main__":

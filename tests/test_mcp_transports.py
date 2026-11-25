@@ -1,10 +1,10 @@
 """
 MCP over the network, both directions, plus the hardening around discovery.
 
-Spins up Gantry's own MCPServer over Streamable HTTP and legacy SSE in-process
+Spins up dotfetch's own MCPServer over Streamable HTTP and legacy SSE in-process
 (uvicorn on a loopback port) and drives it with ``MCPClient`` configured by
 ``url`` — the remote-server path that used to be impossible (the client was
-stdio-only) — then registers the remote server's tools into a second gantry
+stdio-only) — then registers the remote server's tools into a second fetcher
 and executes through it.
 """
 
@@ -24,13 +24,13 @@ import pytest
 pytest.importorskip("mcp")
 uvicorn = pytest.importorskip("uvicorn")
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.executors.mcp_client import MCPClient, sanitize_tool_name
-from agent_gantry.schema.config import MCPServerConfig
-from agent_gantry.schema.execution import ExecutionStatus, ToolCall
-from agent_gantry.schema.mcp import MCPServerDefinition
-from agent_gantry.schema.tool import ToolDefinition
-from agent_gantry.servers.mcp_server import (
+from dotfetch import DotFetch
+from dotfetch.adapters.executors.mcp_client import MCPClient, sanitize_tool_name
+from dotfetch.schema.config import MCPServerConfig
+from dotfetch.schema.execution import ExecutionStatus, ToolCall
+from dotfetch.schema.mcp import MCPServerDefinition
+from dotfetch.schema.tool import ToolDefinition
+from dotfetch.servers.mcp_server import (
     MCPServer,
     _render_tool_output,
     _StreamableHTTPApp,
@@ -112,25 +112,25 @@ def _text(result: Any) -> str:
     raise AssertionError(f"No text content in {result!r}")
 
 
-async def _served_gantry() -> AgentGantry:
-    gantry = AgentGantry()
+async def _served_fetcher() -> DotFetch:
+    fetcher = DotFetch()
 
-    @gantry.register(tags=["math"])
+    @fetcher.register(tags=["math"])
     def add_numbers(a: int, b: int) -> int:
         """Add two integers together and return the sum."""
         return a + b
 
-    @gantry.register(namespace="text", tags=["text"])
+    @fetcher.register(namespace="text", tags=["text"])
     def shout(text: str) -> dict[str, Any]:
         """Upper-case a piece of text and report its length."""
         return {"upper": text.upper(), "length": len(text)}
 
-    await gantry.sync()
-    return gantry
+    await fetcher.sync()
+    return fetcher
 
 
 class _Served:
-    """A Gantry MCP server running on a loopback port for one test."""
+    """A dotfetch MCP server running on a loopback port for one test."""
 
     def __init__(self, server: MCPServer, transport: str) -> None:
         self.server = server
@@ -176,18 +176,18 @@ class _Served:
 
 
 @pytest.fixture(params=["streamable_http", "sse"])
-async def served(request: pytest.FixtureRequest) -> AsyncIterator[tuple[_Served, AgentGantry]]:
-    gantry = await _served_gantry()
-    server = create_mcp_server(gantry, mode="hybrid", name="e2e", expose=["add_numbers"])
+async def served(request: pytest.FixtureRequest) -> AsyncIterator[tuple[_Served, DotFetch]]:
+    fetcher = await _served_fetcher()
+    server = create_mcp_server(fetcher, mode="hybrid", name="e2e", expose=["add_numbers"])
     async with _Served(server, request.param) as running:
-        yield running, gantry
-    await gantry.close()
+        yield running, fetcher
+    await fetcher.close()
 
 
 @pytest.mark.asyncio
-async def test_remote_roundtrip(served: tuple[_Served, AgentGantry]) -> None:
-    """Remote client against Gantry's HTTP server: list, search, execute, errors."""
-    running, _gantry = served
+async def test_remote_roundtrip(served: tuple[_Served, DotFetch]) -> None:
+    """Remote client against dotfetch's HTTP server: list, search, execute, errors."""
+    running, _fetcher = served
     client = MCPClient(MCPServerConfig(name="remote", url=running.url, transport=running.transport))
     try:
         tools = await asyncio.wait_for(client.list_tools(), 60)
@@ -233,12 +233,12 @@ async def test_remote_roundtrip(served: tuple[_Served, AgentGantry]) -> None:
 
 
 @pytest.mark.asyncio
-async def test_remote_server_tools_execute_through_a_second_gantry(
-    served: tuple[_Served, AgentGantry],
+async def test_remote_server_tools_execute_through_a_second_fetcher(
+    served: tuple[_Served, DotFetch],
 ) -> None:
     """add_mcp_server with a url discovers the remote tools and executes them."""
-    running, _gantry = served
-    consumer = AgentGantry()
+    running, _fetcher = served
+    consumer = DotFetch()
     try:
         # Bounded: this test hung here for the full CI job cap -- nearly six
         # hours on ubuntu 3.11 and windows 3.11 in one run -- and the log
@@ -322,14 +322,14 @@ def test_server_definition_roundtrips_remote_fields() -> None:
 
 @pytest.mark.asyncio
 async def test_register_remote_mcp_server_is_retrievable() -> None:
-    gantry = AgentGantry()
-    gantry.register_mcp_server(
+    fetcher = DotFetch()
+    fetcher.register_mcp_server(
         name="search",
         url="https://x.example/mcp",
         description="Web search, news lookup and page fetching",
         tags=["web", "search"],
     )
-    servers = await gantry.retrieve_mcp_servers("search the web for news", limit=1)
+    servers = await fetcher.retrieve_mcp_servers("search the web for news", limit=1)
     assert [s.name for s in servers] == ["search"]
     assert servers[0].resolved_transport == "streamable_http"
 
@@ -465,24 +465,24 @@ def test_a_definition_rejects_a_non_http_url() -> None:
 async def test_re_registering_a_server_drops_the_cached_client() -> None:
     """A client cached from the previous definition would keep discovering and
     executing against the old endpoint."""
-    gantry = AgentGantry()
-    gantry.register_mcp_server(
+    fetcher = DotFetch()
+    fetcher.register_mcp_server(
         name="search", url="https://old.example/mcp", description="The original search endpoint"
     )
-    assert gantry._mcp_registry.get_client("search").config.url == "https://old.example/mcp"
+    assert fetcher._mcp_registry.get_client("search").config.url == "https://old.example/mcp"
 
-    gantry.register_mcp_server(
+    fetcher.register_mcp_server(
         name="search", url="https://new.example/mcp", description="The replacement search endpoint"
     )
-    assert gantry._mcp_registry.get_client("search").config.url == "https://new.example/mcp"
+    assert fetcher._mcp_registry.get_client("search").config.url == "https://new.example/mcp"
 
     # An unchanged re-registration keeps the existing client
-    before = gantry._mcp_registry.get_client("search")
-    gantry.register_mcp_server(
+    before = fetcher._mcp_registry.get_client("search")
+    fetcher.register_mcp_server(
         name="search", url="https://new.example/mcp", description="The replacement search endpoint"
     )
-    assert gantry._mcp_registry.get_client("search") is before
-    await gantry.close()
+    assert fetcher._mcp_registry.get_client("search") is before
+    await fetcher.close()
 
 
 @pytest.mark.asyncio
@@ -490,8 +490,8 @@ async def test_a_reconfigured_server_is_honoured_by_existing_handlers() -> None:
     """Dropping the registry's cached client is not enough: a handler created
     by an earlier discovery closed over the old client directly, so an
     already-discovered tool kept executing against the replaced endpoint."""
-    gantry = AgentGantry()
-    gantry.register_mcp_server(
+    fetcher = DotFetch()
+    fetcher.register_mcp_server(
         name="search", url="https://old.example/mcp", description="The original search endpoint"
     )
     used: list[str] = []
@@ -514,31 +514,31 @@ async def test_a_reconfigured_server_is_honoured_by_existing_handlers() -> None:
 
         client.call_tool = call_tool
 
-    arm(gantry._mcp_registry.get_client("search"))
-    await gantry.discover_tools_from_server("search")
-    await gantry.execute(ToolCall(tool_name="probe", arguments={}))
+    arm(fetcher._mcp_registry.get_client("search"))
+    await fetcher.discover_tools_from_server("search")
+    await fetcher.execute(ToolCall(tool_name="probe", arguments={}))
 
-    gantry.register_mcp_server(
+    fetcher.register_mcp_server(
         name="search", url="https://new.example/mcp", description="The replacement search endpoint"
     )
-    arm(gantry._mcp_registry.get_client("search"))
-    result = await gantry.execute(ToolCall(tool_name="probe", arguments={}))
+    arm(fetcher._mcp_registry.get_client("search"))
+    result = await fetcher.execute(ToolCall(tool_name="probe", arguments={}))
 
     assert result.status == ExecutionStatus.SUCCESS, result.error
     assert used == ["https://old.example/mcp", "https://new.example/mcp"]
-    await gantry.close()
+    await fetcher.close()
 
 
 @pytest.mark.asyncio
 async def test_a_pinned_tool_named_like_a_meta_tool_stays_reachable() -> None:
     """``_call_tool`` dispatches the meta names before consulting ``_exposed``,
     so a pinned tool claiming one was advertised and then unreachable."""
-    gantry = AgentGantry()
+    fetcher = DotFetch()
 
     async def handler(**kwargs: Any) -> str:
         return "pinned!"
 
-    await gantry.add_tool(
+    await fetcher.add_tool(
         ToolDefinition(
             name="execute_tool",
             description="A user tool whose name clashes with the meta-tool",
@@ -546,7 +546,7 @@ async def test_a_pinned_tool_named_like_a_meta_tool_stays_reachable() -> None:
         ),
         handler=handler,
     )
-    server = create_mcp_server(gantry, mode="hybrid", expose=["execute_tool"])
+    server = create_mcp_server(fetcher, mode="hybrid", expose=["execute_tool"])
 
     wire_names = [tool.name for tool in await server._list_tools()]
     assert len(wire_names) == len(set(wire_names)), wire_names
@@ -560,13 +560,13 @@ async def test_a_pinned_tool_named_like_a_meta_tool_stays_reachable() -> None:
     # ...and the meta-tool still owns its own name
     with pytest.raises(ValueError, match="requires a 'tool_name'"):
         await server._call_tool("execute_tool", {})
-    await gantry.close()
+    await fetcher.close()
 
 
 @pytest.mark.asyncio
 async def test_handlers_dispatch_with_the_servers_own_name() -> None:
-    """The normalised name is Gantry's; the server must be called by its own."""
-    gantry = AgentGantry()
+    """The normalised name is dotfetch's; the server must be called by its own."""
+    fetcher = DotFetch()
     client = MagicMock()
     client.config = MCPServerConfig(name="wild", command=["srv"], namespace="wild")
     client.call_tool = AsyncMock(return_value="ok")
@@ -577,8 +577,8 @@ async def test_handlers_dispatch_with_the_servers_own_name() -> None:
         parameters_schema={"type": "object", "properties": {"q": {"type": "string"}}},
         metadata={"mcp_server": "wild", "mcp_tool_name": "searchWeb"},
     )
-    gantry._register_mcp_tool_handlers(client, [tool])
-    result = await gantry.execute(
+    fetcher._register_mcp_tool_handlers(client, [tool])
+    result = await fetcher.execute(
         ToolCall(tool_name="search_web", namespace="wild", arguments={"q": "x"})
     )
     assert result.status == ExecutionStatus.SUCCESS, result.error
@@ -594,8 +594,8 @@ async def test_handlers_dispatch_with_the_servers_own_name() -> None:
 async def test_find_relevant_tools_surfaces_tools_with_the_default_embedder() -> None:
     """The hash embedder's scores sit under ToolQuery's 0.5 default threshold;
     the meta-tool must not inherit that silent-drop cutoff."""
-    gantry = await _served_gantry()
-    server = create_mcp_server(gantry)
+    fetcher = await _served_fetcher()
+    server = create_mcp_server(fetcher)
     blocks = await server._handle_find_relevant_tools({"query": "add two numbers", "limit": 500})
     assert blocks and blocks[0]["text"].startswith("Tool: add_numbers")
     assert "Parameters: {" in blocks[0]["text"]
@@ -604,28 +604,28 @@ async def test_find_relevant_tools_surfaces_tools_with_the_default_embedder() ->
         await server._handle_find_relevant_tools({"query": "   "})
     with pytest.raises(ValueError, match="must be an object"):
         await server._handle_execute_tool({"tool_name": "add_numbers", "arguments": [1, 2]})
-    await gantry.close()
+    await fetcher.close()
 
 
 @pytest.mark.asyncio
 async def test_hybrid_lists_pinned_tools_and_static_qualifies_collisions() -> None:
-    gantry = await _served_gantry()
+    fetcher = await _served_fetcher()
 
-    @gantry.register(namespace="other")
+    @fetcher.register(namespace="other")
     def add_numbers(a: int, b: int) -> int:
         """Add two numbers in another namespace."""
         return a + b
 
-    await gantry.sync()
+    await fetcher.sync()
 
-    hybrid = create_mcp_server(gantry, mode="hybrid", expose=["text.shout", "missing_tool"])
+    hybrid = create_mcp_server(fetcher, mode="hybrid", expose=["text.shout", "missing_tool"])
     names = [t.name for t in await hybrid._list_tools()]
     assert names == ["find_relevant_tools", "execute_tool", "shout"]
     assert await hybrid._call_tool("shout", {"text": "ab"}) == [
         {"type": "text", "text": '{"upper": "AB", "length": 2}'}
     ]
 
-    static = create_mcp_server(gantry, mode="static")
+    static = create_mcp_server(fetcher, mode="static")
     names = sorted(t.name for t in await static._list_tools())
     # the two add_numbers collide on their bare name, so both are qualified
     assert names == ["default_add_numbers", "other_add_numbers", "shout"]
@@ -634,8 +634,8 @@ async def test_hybrid_lists_pinned_tools_and_static_qualifies_collisions() -> No
     ]
 
     with pytest.raises(ValueError, match="Unsupported MCP server mode"):
-        MCPServer(gantry, mode="bogus")
-    await gantry.close()
+        MCPServer(fetcher, mode="bogus")
+    await fetcher.close()
 
 
 @pytest.mark.asyncio
@@ -650,8 +650,8 @@ async def test_the_app_serves_when_mounted_into_another_service() -> None:
     from starlette.routing import Mount, Route
 
     del starlette
-    gantry = await _served_gantry()
-    mounted = create_mcp_server(gantry, name="mounted").streamable_http_app("/mcp")
+    fetcher = await _served_fetcher()
+    mounted = create_mcp_server(fetcher, name="mounted").streamable_http_app("/mcp")
     host = Starlette(
         routes=[
             Route("/health", lambda request: PlainTextResponse("ok")),
@@ -706,7 +706,7 @@ async def test_the_app_serves_when_mounted_into_another_service() -> None:
                 with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
                     await asyncio.wait_for(task, 10)
             _release_sse_shutdown_latch(server)
-            await gantry.close()
+            await fetcher.close()
 
 
 @pytest.mark.asyncio
@@ -724,10 +724,10 @@ async def test_a_second_server_still_streams_after_the_first_has_shut_down() -> 
     """
     sse = pytest.importorskip("sse_starlette.sse")
 
-    gantry = await _served_gantry()
+    fetcher = await _served_fetcher()
     try:
         for cycle in range(2):
-            server = create_mcp_server(gantry, mode="hybrid", name="e2e", expose=["add_numbers"])
+            server = create_mcp_server(fetcher, mode="hybrid", name="e2e", expose=["add_numbers"])
             async with _Served(server, "streamable_http") as running:
                 client = MCPClient(MCPServerConfig(name=f"cycle{cycle}", url=running.url))
                 try:
@@ -748,7 +748,7 @@ async def test_a_second_server_still_streams_after_the_first_has_shut_down() -> 
                 sse.AppStatus.should_exit = True
     finally:
         sse.AppStatus.should_exit = False
-        await gantry.close()
+        await fetcher.close()
 
 
 @pytest.mark.asyncio
@@ -756,13 +756,13 @@ async def test_a_qualified_wire_name_never_takes_another_tools_name() -> None:
     """``a.x`` and ``b.x`` qualify to ``a_x``/``b_x``, which can collide with a
     real ``default.a_x``. The later one used to overwrite the earlier in the
     dispatch map, so calling one tool ran the other."""
-    gantry = AgentGantry()
+    fetcher = DotFetch()
 
     async def handler(**kwargs: Any) -> dict[str, Any]:
         return kwargs
 
     for namespace, name in (("a", "x"), ("b", "x"), ("default", "a_x")):
-        await gantry.add_tool(
+        await fetcher.add_tool(
             ToolDefinition(
                 name=name,
                 namespace=namespace,
@@ -772,7 +772,7 @@ async def test_a_qualified_wire_name_never_takes_another_tools_name() -> None:
             handler=handler,
         )
 
-    server = create_mcp_server(gantry, mode="static")
+    server = create_mcp_server(fetcher, mode="static")
     wire_names = [tool.name for tool in await server._list_tools()]
     assert len(wire_names) == len(set(wire_names)), wire_names
     # the genuine tool keeps its own name; the qualified one yields
@@ -782,7 +782,7 @@ async def test_a_qualified_wire_name_never_takes_another_tools_name() -> None:
         "a_x_2": ("a", "x"),
         "b_x": ("b", "x"),
     }
-    await gantry.close()
+    await fetcher.close()
 
 
 @pytest.mark.asyncio
@@ -795,13 +795,13 @@ async def test_static_mode_can_serve_a_tool_named_after_a_meta_tool() -> None:
     ``sanitize_tool_name`` can mint this name from an upstream MCP tool called
     ``execute``, so it is reachable without anyone choosing it.
     """
-    gantry = AgentGantry()
+    fetcher = DotFetch()
 
     async def handler(**kwargs: Any) -> dict[str, Any]:
         return {"ran": "the real tool", **kwargs}
 
     for name in ("execute_tool", "find_relevant_tools"):
-        await gantry.add_tool(
+        await fetcher.add_tool(
             ToolDefinition(
                 name=name,
                 description="A genuine registered tool that happens to be named this",
@@ -810,7 +810,7 @@ async def test_static_mode_can_serve_a_tool_named_after_a_meta_tool() -> None:
             handler=handler,
         )
 
-    server = create_mcp_server(gantry, mode="static")
+    server = create_mcp_server(fetcher, mode="static")
     # listed under their own names, since nothing else claims them here
     assert sorted(tool.name for tool in await server._list_tools()) == [
         "execute_tool",
@@ -818,7 +818,7 @@ async def test_static_mode_can_serve_a_tool_named_after_a_meta_tool() -> None:
     ]
     for name in ("execute_tool", "find_relevant_tools"):
         assert "the real tool" in _text(await server._call_tool(name, {"a": 1})), name
-    await gantry.close()
+    await fetcher.close()
 
 
 @pytest.mark.asyncio
@@ -827,13 +827,13 @@ async def test_a_generated_alias_is_callable_without_a_prior_list() -> None:
     cached from an earlier process found nothing there. A bare name might
     still resolve through the registry fallback, but a generated alias is not
     a registry name and failed as an unknown tool."""
-    gantry = AgentGantry()
+    fetcher = DotFetch()
 
     async def handler(**kwargs: Any) -> dict[str, Any]:
         return {"ran": "real", **kwargs}
 
     for namespace in ("alpha", "beta"):
-        await gantry.add_tool(
+        await fetcher.add_tool(
             ToolDefinition(
                 name="add_numbers",
                 namespace=namespace,
@@ -844,10 +844,10 @@ async def test_a_generated_alias_is_callable_without_a_prior_list() -> None:
         )
 
     # a server that has never served tools/list
-    server = create_mcp_server(gantry, mode="static")
+    server = create_mcp_server(fetcher, mode="static")
     assert server._exposed == {}
     assert "ran" in _text(await server._call_tool("alpha_add_numbers", {"a": 1}))
-    await gantry.close()
+    await fetcher.close()
 
 
 @pytest.mark.asyncio
@@ -987,12 +987,12 @@ async def test_a_failed_startup_marks_the_manager_spent() -> None:
 async def test_hybrid_mode_still_dispatches_its_own_meta_tools() -> None:
     """The guard above is mode-scoped, so hybrid must be unaffected: there the
     meta-tools *are* advertised and a pinned tool claiming one is renamed."""
-    gantry = AgentGantry()
+    fetcher = DotFetch()
 
     async def handler(**kwargs: Any) -> dict[str, Any]:
         return {"ran": "the real tool", **kwargs}
 
-    await gantry.add_tool(
+    await fetcher.add_tool(
         ToolDefinition(
             name="execute_tool",
             description="A pinned tool claiming a meta-tool's name in hybrid mode",
@@ -1000,7 +1000,7 @@ async def test_hybrid_mode_still_dispatches_its_own_meta_tools() -> None:
         ),
         handler=handler,
     )
-    server = create_mcp_server(gantry, mode="hybrid", expose=["execute_tool"])
+    server = create_mcp_server(fetcher, mode="hybrid", expose=["execute_tool"])
     wire_names = {tool.name for tool in await server._list_tools()}
     assert "execute_tool" in wire_names and "find_relevant_tools" in wire_names
     # the meta-tool keeps its name and its handler...
@@ -1010,7 +1010,7 @@ async def test_hybrid_mode_still_dispatches_its_own_meta_tools() -> None:
     renamed = next(name for name in wire_names if name not in {"execute_tool",
                                                                "find_relevant_tools"})
     assert "the real tool" in _text(await server._call_tool(renamed, {"a": 1}))
-    await gantry.close()
+    await fetcher.close()
 
 
 @pytest.mark.asyncio
@@ -1018,13 +1018,13 @@ async def test_find_relevant_tools_clamps_an_explicit_zero_limit() -> None:
     """``int(arguments.get("limit") or default)`` read an explicit ``0`` as
     absent and substituted the configured default, so the clamp below never
     saw the caller's value."""
-    gantry = AgentGantry()
+    fetcher = DotFetch()
 
     async def handler(**kwargs: Any) -> dict[str, Any]:
         return kwargs
 
     for i in range(4):
-        await gantry.add_tool(
+        await fetcher.add_tool(
             ToolDefinition(
                 name=f"sample_tool_{i}",
                 description=f"Sample tool {i} for the limit clamp test",
@@ -1032,23 +1032,23 @@ async def test_find_relevant_tools_clamps_an_explicit_zero_limit() -> None:
             ),
             handler=handler,
         )
-    server = create_mcp_server(gantry, mode="dynamic")
+    server = create_mcp_server(fetcher, mode="dynamic")
 
     captured: list[int] = []
-    original = gantry.retrieve
+    original = fetcher.retrieve
 
     async def recording(query: Any) -> Any:
         captured.append(query.limit)
         return await original(query)
 
-    gantry.retrieve = recording  # type: ignore[method-assign]
+    fetcher.retrieve = recording  # type: ignore[method-assign]
     await server._call_tool("find_relevant_tools", {"query": "sample", "limit": 0})
     await server._call_tool("find_relevant_tools", {"query": "sample"})
-    gantry.retrieve = original  # type: ignore[method-assign]
+    fetcher.retrieve = original  # type: ignore[method-assign]
 
     # an explicit 0 clamps to the minimum; an absent one takes the default
     assert captured == [1, server._find_limit]
-    await gantry.close()
+    await fetcher.close()
 
 
 @pytest.mark.asyncio
@@ -1057,7 +1057,7 @@ async def test_a_qualified_wire_name_stays_within_the_length_limit() -> None:
     qualifying it as ``namespace_name`` overran it and a collision suffix
     pushed it further. Every registered tool was valid, yet the listing a
     client received could be rejected whole by name validation."""
-    gantry = AgentGantry()
+    fetcher = DotFetch()
 
     async def handler(**kwargs: Any) -> dict[str, Any]:
         return kwargs
@@ -1066,7 +1066,7 @@ async def test_a_qualified_wire_name_stays_within_the_length_limit() -> None:
     # Namespaces that differ only *past* the cut, so trimming alone would
     # merge the two tools into one wire name.
     for namespace in ("n" * 130 + "_one", "n" * 130 + "_two"):
-        await gantry.add_tool(
+        await fetcher.add_tool(
             ToolDefinition(
                 name=long_name,
                 namespace=namespace,
@@ -1076,7 +1076,7 @@ async def test_a_qualified_wire_name_stays_within_the_length_limit() -> None:
             handler=handler,
         )
 
-    server = create_mcp_server(gantry, mode="static")
+    server = create_mcp_server(fetcher, mode="static")
     wire_names = [tool.name for tool in await server._list_tools()]
     assert all(len(name) <= 128 for name in wire_names), [len(n) for n in wire_names]
     # ...and trimming has not collapsed them onto each other
@@ -1085,7 +1085,7 @@ async def test_a_qualified_wire_name_stays_within_the_length_limit() -> None:
         "n" * 130 + "_one",
         "n" * 130 + "_two",
     }
-    await gantry.close()
+    await fetcher.close()
 
 
 def test_render_tool_output_prefers_json_for_structured_results() -> None:
@@ -1166,7 +1166,7 @@ def test_normalised_mcp_names_do_not_depend_on_discovery_order() -> None:
     ordering, so a server reordering its response silently swapped which
     upstream operation ``get_user`` referred to, and a model calling the name
     it was given last time reached the other tool."""
-    from agent_gantry.adapters.executors.mcp_client import _dedupe_names
+    from dotfetch.adapters.executors.mcp_client import _dedupe_names
 
     meanings = set()
     for raw in (["getUser", "get_user"], ["get_user", "getUser"]):
@@ -1195,15 +1195,15 @@ async def test_a_qualified_alias_does_not_depend_on_listing_order() -> None:
 
     meanings = set()
     for order in (["a+b", "a_b"], ["a_b", "a+b"]):
-        gantry = AgentGantry()
+        fetcher = DotFetch()
         for namespace in order:
-            await gantry.add_tool(_tool(namespace), handler=lambda **kw: kw)
-        server = create_mcp_server(gantry, mode="static")
+            await fetcher.add_tool(_tool(namespace), handler=lambda **kw: kw)
+        server = create_mcp_server(fetcher, mode="static")
         # emitted in the order given, so only the allocation is sorted
         wire_names = [tool.name for tool in await server._list_tools()]
         assert sorted(wire_names) == ["a_b_x", "a_b_x_2"], wire_names
         meanings.add(server._exposed["a_b_x"].namespace)
-        await gantry.close()
+        await fetcher.close()
 
     assert len(meanings) == 1, f"'a_b_x' changed meaning with listing order: {meanings}"
 
@@ -1213,40 +1213,40 @@ async def test_serve_mcp_forwards_a_custom_path_to_the_sse_transport() -> None:
     """SSE takes its endpoint as ``sse_path``, so ``path`` was accepted and
     silently dropped: ``serve_mcp(transport="sse", path="/custom")`` served
     ``/sse`` regardless, with nothing to say so."""
-    gantry = AgentGantry()
+    fetcher = DotFetch()
     try:
         with patch.object(MCPServer, "run_sse", new=AsyncMock()) as run_sse:
-            await gantry.serve_mcp(transport="sse", path="/custom")
+            await fetcher.serve_mcp(transport="sse", path="/custom")
         assert run_sse.call_args.kwargs["sse_path"] == "/custom"
 
         # An explicit ``/mcp`` is a request, not an absent argument. Comparing
         # ``path`` against the Streamable HTTP default could not tell the two
         # apart, so this asked for ``/mcp`` and got ``/sse``.
         with patch.object(MCPServer, "run_sse", new=AsyncMock()) as run_sse:
-            await gantry.serve_mcp(transport="sse", path="/mcp")
+            await fetcher.serve_mcp(transport="sse", path="/mcp")
         assert run_sse.call_args.kwargs["sse_path"] == "/mcp"
 
         # ...while asking for nothing still leaves SSE on its own ``/sse``.
         with patch.object(MCPServer, "run_sse", new=AsyncMock()) as run_sse:
-            await gantry.serve_mcp(transport="sse")
+            await fetcher.serve_mcp(transport="sse")
         assert "sse_path" not in run_sse.call_args.kwargs
 
         # ...and http still gets its own default when nothing was asked for.
         with patch.object(MCPServer, "run_http", new=AsyncMock()) as run_http:
-            await gantry.serve_mcp(transport="streamable_http")
+            await fetcher.serve_mcp(transport="streamable_http")
         assert run_http.call_args.kwargs["path"] == "/mcp"
 
         # http is unchanged
         with patch.object(MCPServer, "run_http", new=AsyncMock()) as run_http:
-            await gantry.serve_mcp(transport="streamable_http", path="/custom")
+            await fetcher.serve_mcp(transport="streamable_http", path="/custom")
         assert run_http.call_args.kwargs["path"] == "/custom"
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 @pytest.mark.asyncio
 async def test_run_http_clears_the_latch_so_a_second_run_http_streams() -> None:
-    """#424: the Gantry-owned entry points never reset the latch themselves.
+    """#424: the dotfetch-owned entry points never reset the latch themselves.
 
     ``reset_sse_shutdown_latch`` was public, but ``_serve_asgi`` built its
     uvicorn server locally, never called the reset, and never exposed the
@@ -1256,10 +1256,10 @@ async def test_run_http_clears_the_latch_so_a_second_run_http_streams() -> None:
     """
     sse = pytest.importorskip("sse_starlette.sse")
 
-    gantry = await _served_gantry()
+    fetcher = await _served_fetcher()
     try:
         for cycle in range(2):
-            server = create_mcp_server(gantry, mode="hybrid", name="e2e", expose=["add_numbers"])
+            server = create_mcp_server(fetcher, mode="hybrid", name="e2e", expose=["add_numbers"])
             port = _free_port()
             task = asyncio.create_task(
                 server.run_http(host="127.0.0.1", port=port, log_level="warning")
@@ -1299,4 +1299,4 @@ async def test_run_http_clears_the_latch_so_a_second_run_http_streams() -> None:
             assert server._uvicorn_server is None
     finally:
         sse.AppStatus.should_exit = False
-        await gantry.close()
+        await fetcher.close()

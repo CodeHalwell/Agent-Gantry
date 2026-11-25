@@ -2,40 +2,40 @@
 import DocsLayout from '../../../../layouts/DocsLayout.astro';
 import CodeBlock from '../../../../components/CodeBlock.astro';
 ---
-<DocsLayout title="LlamaIndex guide | Agent-Gantry" description="Integrate Agent-Gantry with LlamaIndex: per-step tool selection for FunctionAgent, failures as error ToolOutputs, human-in-the-loop approval and workflow context.">
+<DocsLayout title="LlamaIndex guide | dotfetch" description="Integrate dotfetch with LlamaIndex: per-step tool selection for FunctionAgent, failures as error ToolOutputs, human-in-the-loop approval and workflow context.">
   <p class="eyebrow">Framework guide</p>
   <h1>LlamaIndex</h1>
-  <p class="lead">Agent-Gantry plugs into LlamaIndex's agent workflows: a tool retriever that picks each step's tools, failures returned as error <code>ToolOutput</code>s, approval through workflow human-in-the-loop events, and the workflow <code>Context</code> for your state.</p>
+  <p class="lead">dotfetch plugs into LlamaIndex's agent workflows: a tool retriever that picks each step's tools, failures returned as error <code>ToolOutput</code>s, approval through workflow human-in-the-loop events, and the workflow <code>Context</code> for your state.</p>
   <p><a class="pill" href="/Agent-Gantry/docs/frameworks/llamaindex/advanced/">Advanced LlamaIndex usage →</a></p>
 
   <h2>Install</h2>
-  <CodeBlock lang="bash" code={`uv add "agent-gantry[llamaindex]"   # llama-index-core >= 0.13`} />
+  <CodeBlock lang="bash" code={`uv add "dotfetch[llamaindex]"   # llama-index-core >= 0.13`} />
 
   <h2>Basic page: tools picked every step</h2>
   <CodeBlock lang="python" code={`from llama_index.llms.openai import OpenAI
-from agent_gantry import AgentGantry
-from agent_gantry.llamaindex import LlamaIndexAdapter
+from dotfetch import DotFetch
+from dotfetch.llamaindex import LlamaIndexAdapter
 
-gantry = AgentGantry()
+fetcher = DotFetch()
 
-@gantry.register(examples=["where is my order", "has order 4471 shipped"])
+@fetcher.register(examples=["where is my order", "has order 4471 shipped"])
 def get_order_status(order_id: str) -> str:
     """Return the current shipping status for an order."""
     return "in_transit"
 
-await gantry.sync()
-agent = LlamaIndexAdapter(gantry).function_agent(OpenAI(model="gpt-5.5"), limit=5)
+await fetcher.sync()
+agent = LlamaIndexAdapter(fetcher).function_agent(OpenAI(model="gpt-5.5"), limit=5)
 response = await agent.run(user_msg="Has order 4471 shipped?")`} />
   <p>For a fixed set, pass <code>FunctionAgent(tools=await adapter.select(query), llm=llm)</code> instead.</p>
 
   <h2>What the model sees when a tool fails</h2>
   <p>A failed call raises <code>LlamaIndexToolError</code>, whose text is <code>&lt;type&gt;: &lt;message&gt;</code> capped at 2,000 characters. The agent turns it into <code>ToolOutput(is_error=True)</code> and the model can try again.</p>
-  <div class="callout"><strong>Redact or opt out:</strong> <code>LlamaIndexAdapter(gantry, error_formatter=redact)</code> rewrites the text; <code>error_mode="raise"</code> raises the plain <code>ToolExecutionError</code>.</div>
+  <div class="callout"><strong>Redact or opt out:</strong> <code>LlamaIndexAdapter(fetcher, error_formatter=redact)</code> rewrites the text; <code>error_mode="raise"</code> raises the plain <code>ToolExecutionError</code>.</div>
 
-  <h2>Reading workflow state from a Gantry tool</h2>
-  <CodeBlock lang="python" code={`from agent_gantry.llamaindex import current_workflow_context
+  <h2>Reading workflow state from a dotfetch tool</h2>
+  <CodeBlock lang="python" code={`from dotfetch.llamaindex import current_workflow_context
 
-@gantry.register
+@fetcher.register
 async def get_balance(account: str) -> str:
     """Fetch an account balance for the signed-in user."""
     ctx = current_workflow_context()   # the workflow Context, or None for a direct call

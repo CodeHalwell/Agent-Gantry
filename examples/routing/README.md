@@ -10,7 +10,7 @@ adapters.
 - `health_aware_routing_demo.py`: Demonstrates how tool health (success rate, circuit breaker state)
   affects ranking.
 - `nomic_tool_demo.py`: Uses the high-accuracy Nomic embedder for better semantic matches on nuanced
-  queries. Needs `agent-gantry[nomic]`; downloads the model (~550 MB) on first run.
+  queries. Needs `dotfetch[nomic]`; downloads the model (~550 MB) on first run.
 - `system_one_selection_demo.py`: Replaces semantic matching with a decision model — `SystemOneSelector` for
   tools and skills, `SystemOneReranker` over the vector-search shortlist. Runs without an API key, where
   it demonstrates the fail-open path instead.
@@ -26,8 +26,8 @@ python examples/routing/custom_adapter_demo.py
 python examples/routing/filtering_demo.py
 python examples/routing/health_aware_routing_demo.py
 python examples/routing/nomic_tool_demo.py
-python examples/routing/system_one_selection_demo.py          # agent-gantry[system-one] + TYPESAFE_API_KEY; runs without (fallback)
-python examples/routing/system_one_threshold_tuning_demo.py   # needs agent-gantry[system-one] + TYPESAFE_API_KEY
+python examples/routing/system_one_selection_demo.py          # dotfetch[system-one] + TYPESAFE_API_KEY; runs without (fallback)
+python examples/routing/system_one_threshold_tuning_demo.py   # needs dotfetch[system-one] + TYPESAFE_API_KEY
 python examples/routing/asymmetric_embedder_demo.py    # no key, no download
 ```
 

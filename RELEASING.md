@@ -1,4 +1,4 @@
-# Releasing Agent-Gantry
+# Releasing dotfetch
 
 The [Publish to PyPI workflow](.github/workflows/publish.yml) builds one source
 archive and wheel, validates them, publishes with PyPI trusted publishing, and
@@ -6,7 +6,7 @@ attaches the distributions and SHA-256 checksums to a GitHub Release.
 
 ## Prepare the release
 
-1. Update `pyproject.toml`, `agent_gantry/__init__.py`, the editable project
+1. Update `pyproject.toml`, `dotfetch/__init__.py`, the editable project
    version in `uv.lock`, `package.json`, the root versions in `package-lock.json`,
    and the version in `README.md`.
 2. Move the accumulated `CHANGELOG.md` notes into a dated release entry, keeping
@@ -15,13 +15,13 @@ attaches the distributions and SHA-256 checksums to a GitHub Release.
 3. Check the metadata and review the exact notes that GitHub will receive:
 
    ```bash
-   python scripts/check_release.py --tag v0.26.0 --notes-file /tmp/release-notes.md
+   python scripts/check_release.py --tag v0.27.0 --notes-file /tmp/release-notes.md
    uv lock --check
    ```
 
 4. Run the relevant tests, including `tests/examples/` and
    `tests/frameworks/test_real_packages.py` with the optional SDKs installed.
-   Check `ruff check agent_gantry examples scripts tests`, `uv build`,
+   Check `ruff check dotfetch examples scripts tests`, `uv build`,
    `uv tool run twine check dist/*`, and `npm run build` for the docs.
 5. Merge the release PR to `main` after CI passes, including the native SDK
    matrix and package build job. Preparing a release does not publish it.
@@ -64,6 +64,8 @@ published tag rather than `main`.
 
 ## One-time setup
 
+For the first `dotfetch` upload, register a "pending publisher" on PyPI (and
+TestPyPI) for the new project name; the project does not exist until then.
 Configure a [PyPI trusted publisher](https://docs.pypi.org/trusted-publishers/)
 for `CodeHalwell/Agent-Gantry`, workflow `publish.yml`, environment `pypi`.
 Configure the corresponding TestPyPI publisher for environment `testpypi`.
@@ -75,13 +77,13 @@ permission; only the production job can write tags and release assets.
 
 ## Verify the published version
 
-Check [PyPI](https://pypi.org/project/agent-gantry/) and
+Check [PyPI](https://pypi.org/project/dotfetch/) and
 [GitHub Releases](https://github.com/CodeHalwell/Agent-Gantry/releases). Download
 `SHA256SUMS` and the artifacts to verify their hashes, then install the version
 in a fresh environment:
 
 ```bash
-uv venv /tmp/gantry-release-check
-uv pip install --python /tmp/gantry-release-check/bin/python agent-gantry==0.26.0
-/tmp/gantry-release-check/bin/python -I -c 'import agent_gantry; print(agent_gantry.__version__)'
+uv venv /tmp/dotfetch-release-check
+uv pip install --python /tmp/dotfetch-release-check/bin/python dotfetch==0.27.0
+/tmp/dotfetch-release-check/bin/python -I -c 'import dotfetch; print(dotfetch.__version__)'
 ```

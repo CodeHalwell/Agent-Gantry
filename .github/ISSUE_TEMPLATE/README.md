@@ -1,12 +1,12 @@
 # GitHub Issue Templates
 
-This directory contains issue templates for Agent-Gantry. These templates help contributors submit well-structured feature requests and bug reports aligned with the project's strategic roadmap.
+This directory contains issue templates for dotfetch. These templates help contributors submit well-structured feature requests and bug reports aligned with the project's strategic roadmap.
 
 ## Available Templates
 
 ### Strategic Feature Request Templates
 
-These templates correspond to Agent-Gantry's strategic expansion areas:
+These templates correspond to dotfetch's strategic expansion areas:
 
 1. **🎯 Advanced Routing & Orchestration** (`01-advanced-routing-orchestration.md`)
    - Hierarchical / Domain Routing (Router of Routers)
@@ -24,7 +24,7 @@ These templates correspond to Agent-Gantry's strategic expansion areas:
    - Other Tool Source Integrations
 
 4. **🎨 Developer Experience & UI** (`04-developer-experience-ui.md`)
-   - Gantry Dashboard (Web UI)
+   - dotfetch Dashboard (Web UI)
    - Simulation & Replay (Snapshot Testing)
    - Visualization and Debugging Tools
 
@@ -84,7 +84,7 @@ When submitting an issue:
 
 ## Strategic Roadmap Alignment
 
-These templates align with Agent-Gantry's vision to become a comprehensive orchestration platform. Each template corresponds to a strategic expansion area designed to:
+These templates align with dotfetch's vision to become a comprehensive orchestration platform. Each template corresponds to a strategic expansion area designed to:
 
 - Scale to enterprise-level tool inventories (10,000+ tools)
 - Provide production-grade security and compliance

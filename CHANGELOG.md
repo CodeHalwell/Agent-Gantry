@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-11-25
+
+Agent-Gantry is now **dotfetch**. This is a rename and nothing else: behaviour,
+configuration shape and retrieval results are unchanged. It is a clean break
+with no alias, so `agent_gantry` does not import from this release on.
+
+Renamed:
+
+- the distribution on PyPI and the import package: `agent-gantry` /
+  `agent_gantry` -> `dotfetch`;
+- the facade class `AgentGantry` -> `DotFetch`, and `AgentGantryConfig` ->
+  `DotFetchConfig`;
+- every other `Gantry*` class -> `DotFetch*` (for example `GantryToolset` ->
+  `DotFetchToolset`);
+- the CLI command `agent-gantry` -> `dotfetch`, and the bundled Claude Skill
+  `agent-gantry` -> `dotfetch` (`dotfetch install-skill --claude`);
+- the logger name `agent_gantry` -> `dotfetch` (and its children, such as
+  `dotfetch.core.fetcher`), for anyone filtering logs by name;
+- the helpers named for the instance, such as `set_default_gantry` ->
+  `set_default_fetcher`, and `core/gantry.py` -> `core/fetcher.py`.
+
+The GitHub repository keeps its name, `CodeHalwell/Agent-Gantry`, as does the
+documentation site's address.
+
+**Migrating.** A find-and-replace is enough:
+
+- `pip install dotfetch` in place of `pip install agent-gantry`, and
+  `dotfetch[...]` for every extra;
+- `agent_gantry` -> `dotfetch` in imports;
+- `AgentGantry` -> `DotFetch`, and the `Gantry` prefix of any other class ->
+  `DotFetch`;
+- `agent-gantry` -> `dotfetch` in scripts and CI, and `agent_gantry` ->
+  `dotfetch` in logging configuration;
+- helper functions named `*_gantry` -> `*_fetcher`.
+
+The library reads no environment variables of its own, before or after the
+rename, so there is nothing to change there; the only `GANTRY_*` names were in
+this repository's own CI and tests.
+
+**Stores written by 0.26.0 or earlier are re-embedded once.** The names under
+which a vector store keeps its own bookkeeping changed with the rest: LanceDB's
+metadata table `_gantry_metadata` is now `_fetcher_metadata`, the Qdrant and
+Chroma metadata entry `__gantry_meta__` is now `__fetcher_meta__`, and the
+default LanceDB directory `.agent_gantry/lancedb` is now `.dotfetch/lancedb`.
+A store you point at explicitly keeps its tool rows but no longer recognises
+its bookkeeping, so the first `sync()` re-embeds every tool and the old
+bookkeeping rows can be deleted. A LanceDB store left at the default location
+is not found at all; move the directory or pass its path.
+
+`agent-gantry` 0.27.0 on PyPI is a final release: it installs `dotfetch` and
+raises a clear `ImportError` explaining the move. It receives no further
+releases.
+
 ## [0.26.0] - 2026-11-24
 
 Retrieval can now be measured, and this release's relevance changes were
@@ -5857,7 +5910,8 @@ adapters, and the provider dialects agree with it.
 - LLM SDK compatibility guide
 - Architecture diagrams
 
-[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.26.0...HEAD
+[Unreleased]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.27.0...HEAD
+[0.27.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.26.0...v0.27.0
 [0.26.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/CodeHalwell/Agent-Gantry/compare/v0.23.0...v0.24.0

@@ -1,4 +1,4 @@
-from agent_gantry.core.security import validate_description
+from dotfetch.core.security import validate_description
 
 
 def test_validate_description_multiline_bypass():
@@ -18,7 +18,7 @@ def test_validate_description_valid():
 def test_ssrf_domain_extraction_bypass():
     import pytest
 
-    from agent_gantry.core.security import PermissionDeniedError, SecurityPolicy
+    from dotfetch.core.security import PermissionDeniedError, SecurityPolicy
 
     sp = SecurityPolicy(allowed_domains=["example.com"])
 
@@ -35,7 +35,7 @@ def test_ssrf_domain_extraction_bypass():
 def test_ssrf_port_bypass():
     import pytest
 
-    from agent_gantry.core.security import PermissionDeniedError, SecurityPolicy
+    from dotfetch.core.security import PermissionDeniedError, SecurityPolicy
 
     sp = SecurityPolicy(allowed_domains=["example.com"])
 
@@ -54,7 +54,7 @@ def test_ssrf_port_bypass():
 def test_ssrf_invalid_port_with_hostname():
     import pytest
 
-    from agent_gantry.core.security import PermissionDeniedError, SecurityPolicy
+    from dotfetch.core.security import PermissionDeniedError, SecurityPolicy
 
     sp = SecurityPolicy(allowed_domains=["example.com"])
 
@@ -84,7 +84,7 @@ def test_confirmation_approved_skips_pattern_gate_but_not_denials():
     run."""
     import pytest
 
-    from agent_gantry.core.security import (
+    from dotfetch.core.security import (
         ConfirmationRequiredError,
         PermissionDeniedError,
         SecurityPolicy,
@@ -113,7 +113,7 @@ def test_accepts_confirmation_approved():
     """The signature-inspection guard both call sites (executor,
     Agent Framework approval middleware) share to decide whether a policy's
     check_permission understands confirmation_approved."""
-    from agent_gantry.core.security import SecurityPolicy, accepts_confirmation_approved
+    from dotfetch.core.security import SecurityPolicy, accepts_confirmation_approved
 
     assert accepts_confirmation_approved(SecurityPolicy()) is True
 
@@ -142,7 +142,7 @@ def test_confirmation_probe_is_not_counted_against_rate_limit():
     any confirmation-gated tool permanently unexecutable."""
     import pytest
 
-    from agent_gantry.core.security import (
+    from dotfetch.core.security import (
         ConfirmationRequiredError,
         PermissionDeniedError,
         SecurityPolicy,
@@ -168,7 +168,7 @@ def test_confirmation_approved_cannot_bypass_the_rate_limit():
     rate limit just by setting the flag (PR #381 review)."""
     import pytest
 
-    from agent_gantry.core.security import PermissionDeniedError, SecurityPolicy
+    from dotfetch.core.security import PermissionDeniedError, SecurityPolicy
 
     policy = SecurityPolicy(require_confirmation=[], max_requests_per_minute=2)
 
@@ -184,7 +184,7 @@ def test_denied_calls_still_consume_rate_limit_quota():
     so it counts, keeping a flood of rejected calls bounded."""
     import pytest
 
-    from agent_gantry.core.security import PermissionDeniedError, SecurityPolicy
+    from dotfetch.core.security import PermissionDeniedError, SecurityPolicy
 
     policy = SecurityPolicy(
         require_confirmation=[], allowed_domains=["example.com"], max_requests_per_minute=1
@@ -198,7 +198,7 @@ def test_denied_calls_still_consume_rate_limit_quota():
 
 
 def test_accepts_keyword_generalizes_the_signature_check():
-    from agent_gantry.core.security import SecurityPolicy, accepts_keyword
+    from dotfetch.core.security import SecurityPolicy, accepts_keyword
 
     policy = SecurityPolicy()
     assert accepts_keyword(policy, "confirmation_approved") is True
@@ -218,7 +218,7 @@ def test_pending_confirmation_defers_accounting_without_relaxing_checks():
     runs; only the recording is deferred to the replay."""
     import pytest
 
-    from agent_gantry.core.security import PermissionDeniedError, SecurityPolicy
+    from dotfetch.core.security import PermissionDeniedError, SecurityPolicy
 
     policy = SecurityPolicy(
         require_confirmation=[], allowed_domains=["example.com"], max_requests_per_minute=2
@@ -250,7 +250,7 @@ def test_denied_probe_still_consumes_quota_despite_pending_confirmation():
     here left rejected calls unbounded (PR #381 review)."""
     import pytest
 
-    from agent_gantry.core.security import PermissionDeniedError, SecurityPolicy
+    from dotfetch.core.security import PermissionDeniedError, SecurityPolicy
 
     policy = SecurityPolicy(
         require_confirmation=[], allowed_domains=["example.com"], max_requests_per_minute=1
@@ -272,7 +272,7 @@ def test_clean_probes_remain_exempt_from_accounting():
     """The denial carve-out must not undo the probe exemption itself."""
     import pytest
 
-    from agent_gantry.core.security import PermissionDeniedError, SecurityPolicy
+    from dotfetch.core.security import PermissionDeniedError, SecurityPolicy
 
     policy = SecurityPolicy(
         require_confirmation=[], allowed_domains=["example.com"], max_requests_per_minute=1
@@ -297,7 +297,7 @@ def test_arguments_valid_false_charges_a_pattern_gated_call():
     (PR #381 review)."""
     import pytest
 
-    from agent_gantry.core.security import (
+    from dotfetch.core.security import (
         ConfirmationRequiredError,
         PermissionDeniedError,
         SecurityPolicy,
@@ -319,7 +319,7 @@ def test_arguments_valid_defaults_to_true_and_keeps_the_exemption():
     valid probe stays free and its approved replay still fits the window."""
     import pytest
 
-    from agent_gantry.core.security import (
+    from dotfetch.core.security import (
         ConfirmationRequiredError,
         PermissionDeniedError,
         SecurityPolicy,
@@ -344,7 +344,7 @@ def test_pattern_gated_execution_is_rate_limited_like_any_other():
     unlimited (PR #381 review)."""
     import pytest
 
-    from agent_gantry.core.security import (
+    from dotfetch.core.security import (
         ConfirmationRequiredError,
         PermissionDeniedError,
         SecurityPolicy,

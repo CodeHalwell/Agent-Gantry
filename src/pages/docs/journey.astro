@@ -5,9 +5,9 @@ import { buildHighlightedJourneyStages } from '../../lib/journey';
 
 const stages = await buildHighlightedJourneyStages();
 ---
-<DocsLayout title="Implementation Journey | Agent-Gantry">
+<DocsLayout title="Implementation Journey | dotfetch">
   <h1>The implementation journey</h1>
-  <p class="lead">The fastest way to adopt Agent-Gantry is to start as a decorator around an existing LLM call, then graduate to persistent retrieval, governance, observability, and protocol bridges.</p>
+  <p class="lead">The fastest way to adopt dotfetch is to start as a decorator around an existing LLM call, then graduate to persistent retrieval, governance, observability, and protocol bridges.</p>
   <ToolJourney client:load stages={stages} />
   <div class="journey">
     <div class="step"><h2>Prototype with in-memory routing</h2><p>Use the default in-memory vector store and simple embedder. This validates tool descriptions, tags, and score thresholds without external infrastructure.</p></div>

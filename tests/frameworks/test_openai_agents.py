@@ -12,8 +12,8 @@ import types
 
 import pytest
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
 
 
 class _FakeFunctionTool:
@@ -53,8 +53,8 @@ def fake_agents(monkeypatch):
 
 
 @pytest.fixture
-async def gantry():
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+async def fetcher():
+    g = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
     @g.register(tags=["email"])
     def send_email(to: str, body: str = "") -> str:
@@ -70,11 +70,11 @@ async def gantry():
     return g
 
 
-async def test_spec_to_openai_agents_builds_native_tool(fake_agents, gantry):
-    from agent_gantry.integrations.frameworks.base import GantryToolset
-    from agent_gantry.integrations.frameworks.openai_agents import OpenAIAgentsAdapter
+async def test_spec_to_openai_agents_builds_native_tool(fake_agents, fetcher):
+    from dotfetch.integrations.frameworks.base import DotFetchToolset
+    from dotfetch.integrations.frameworks.openai_agents import OpenAIAgentsAdapter
 
-    specs = await GantryToolset(gantry).select("send an email", limit=1)
+    specs = await DotFetchToolset(fetcher).select("send an email", limit=1)
     spec = specs[0]
     tool = OpenAIAgentsAdapter.convert(spec)
 
@@ -85,7 +85,7 @@ async def test_spec_to_openai_agents_builds_native_tool(fake_agents, gantry):
     assert tool.params_json_schema["additionalProperties"] is False
     assert tool.params_json_schema["properties"]["to"]["type"] == "string"
 
-    # on_invoke_tool parses a JSON string and routes through gantry.execute.
+    # on_invoke_tool parses a JSON string and routes through fetcher.execute.
     result = await tool.on_invoke_tool(None, '{"to": "boss@x.com"}')
     assert isinstance(result, str)
     assert "sent:boss@x.com" in result
@@ -96,10 +96,10 @@ async def test_spec_to_openai_agents_builds_native_tool(fake_agents, gantry):
     assert "sent:boss@x.com" in result_dict
 
 
-async def test_for_openai_agents_returns_tool_list(fake_agents, gantry):
-    from agent_gantry.integrations.frameworks.openai_agents import OpenAIAgentsAdapter
+async def test_for_openai_agents_returns_tool_list(fake_agents, fetcher):
+    from dotfetch.integrations.frameworks.openai_agents import OpenAIAgentsAdapter
 
-    tools = await OpenAIAgentsAdapter(gantry).select("send an email", limit=2)
+    tools = await OpenAIAgentsAdapter(fetcher).select("send an email", limit=2)
 
     assert isinstance(tools, list)
     assert len(tools) >= 1
@@ -108,19 +108,19 @@ async def test_for_openai_agents_returns_tool_list(fake_agents, gantry):
     assert all(t.params_json_schema["additionalProperties"] is False for t in tools)
 
 
-async def test_missing_openai_agents_raises_helpful_error(monkeypatch, gantry):
+async def test_missing_openai_agents_raises_helpful_error(monkeypatch, fetcher):
     # Ensure the lazy import fails even if a real package is somehow present.
     monkeypatch.setitem(sys.modules, "agents", None)
 
-    from agent_gantry.integrations.frameworks.base import GantryToolset
-    from agent_gantry.integrations.frameworks.openai_agents import OpenAIAgentsAdapter
+    from dotfetch.integrations.frameworks.base import DotFetchToolset
+    from dotfetch.integrations.frameworks.openai_agents import OpenAIAgentsAdapter
 
-    specs = await GantryToolset(gantry).select("send an email", limit=1)
-    with pytest.raises(ImportError, match=r"agent-gantry\[openai-agents\]"):
+    specs = await DotFetchToolset(fetcher).select("send an email", limit=1)
+    with pytest.raises(ImportError, match=r"dotfetch\[openai-agents\]"):
         OpenAIAgentsAdapter.convert(specs[0])
 
 
-async def test_strict_schema_keeps_optional_params_optional(fake_agents, gantry):
+async def test_strict_schema_keeps_optional_params_optional(fake_agents, fetcher):
     """Strict mode must not silently promote optional params to mandatory.
 
     ``FunctionTool.strict_json_schema`` defaults to True and the SDK then runs
@@ -129,10 +129,10 @@ async def test_strict_schema_keeps_optional_params_optional(fake_agents, gantry)
     that rewrite to make ``body`` mandatory with no ``null`` union — the model
     was then forced to invent a value for a parameter the tool defaults.
     """
-    from agent_gantry.integrations.frameworks.base import GantryToolset
-    from agent_gantry.integrations.frameworks.openai_agents import OpenAIAgentsAdapter
+    from dotfetch.integrations.frameworks.base import DotFetchToolset
+    from dotfetch.integrations.frameworks.openai_agents import OpenAIAgentsAdapter
 
-    specs = await GantryToolset(gantry).select("send an email", limit=1)
+    specs = await DotFetchToolset(fetcher).select("send an email", limit=1)
     schema = OpenAIAgentsAdapter.convert(specs[0]).params_json_schema
 
     assert schema["additionalProperties"] is False
@@ -142,11 +142,11 @@ async def test_strict_schema_keeps_optional_params_optional(fake_agents, gantry)
     assert schema["properties"]["body"]["type"] == ["string", "null"]
 
 
-async def test_strict_schema_does_not_mutate_the_registry(fake_agents, gantry):
-    from agent_gantry.integrations.frameworks.base import GantryToolset
-    from agent_gantry.integrations.frameworks.openai_agents import OpenAIAgentsAdapter
+async def test_strict_schema_does_not_mutate_the_registry(fake_agents, fetcher):
+    from dotfetch.integrations.frameworks.base import DotFetchToolset
+    from dotfetch.integrations.frameworks.openai_agents import OpenAIAgentsAdapter
 
-    specs = await GantryToolset(gantry).select("send an email", limit=1)
+    specs = await DotFetchToolset(fetcher).select("send an email", limit=1)
     spec = specs[0]
     before = spec.parameters.get("required", [])
 
@@ -156,14 +156,14 @@ async def test_strict_schema_does_not_mutate_the_registry(fake_agents, gantry):
     assert "additionalProperties" not in spec.parameters
 
 
-async def test_structured_results_are_json_not_python_repr(fake_agents, gantry):
+async def test_structured_results_are_json_not_python_repr(fake_agents, fetcher):
     """A dict result must reach the model as JSON, not ``str(dict)``."""
     import json
 
-    from agent_gantry.integrations.frameworks.base import GantryToolset
-    from agent_gantry.integrations.frameworks.openai_agents import OpenAIAgentsAdapter
+    from dotfetch.integrations.frameworks.base import DotFetchToolset
+    from dotfetch.integrations.frameworks.openai_agents import OpenAIAgentsAdapter
 
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+    g = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
     @g.register(tags=["report"])
     def build_report(name: str) -> dict:
@@ -172,7 +172,7 @@ async def test_structured_results_are_json_not_python_repr(fake_agents, gantry):
 
     await g.sync()
 
-    specs = await GantryToolset(g).select("build a structured report", limit=1)
+    specs = await DotFetchToolset(g).select("build a structured report", limit=1)
     tool = OpenAIAgentsAdapter.convert(specs[0])
     rendered = await tool.on_invoke_tool(None, json.dumps({"name": "q3"}))
 
@@ -186,7 +186,7 @@ def test_strict_schema_declines_strict_for_open_maps():
     arbitrary keys with ``UserError``. ``strict_json_schema()`` deliberately
     leaves such a schema alone, so this adapter has to turn the flag off
     rather than hand the SDK something it refuses (PR #381 review)."""
-    from agent_gantry.integrations.frameworks.openai_agents import _strict_schema
+    from dotfetch.integrations.frameworks.openai_agents import _strict_schema
 
     open_map = {
         "type": "object",
@@ -207,19 +207,19 @@ def test_strict_schema_declines_strict_for_open_maps():
     assert params["additionalProperties"] is False
 
 
-async def test_open_map_tool_is_built_without_strict(fake_agents, gantry):
+async def test_open_map_tool_is_built_without_strict(fake_agents, fetcher):
     """End to end: a tool with a dict parameter reaches the SDK with the flag
     off instead of raising UserError inside it."""
-    from agent_gantry.integrations.frameworks.base import GantryToolset
-    from agent_gantry.integrations.frameworks.openai_agents import OpenAIAgentsAdapter
+    from dotfetch.integrations.frameworks.base import DotFetchToolset
+    from dotfetch.integrations.frameworks.openai_agents import OpenAIAgentsAdapter
 
-    @gantry.register(tags=["metrics"])
+    @fetcher.register(tags=["metrics"])
     def tally(counts: dict[str, int]) -> int:
         "Add up a mapping of named counts."
         return sum(counts.values())
 
-    await gantry.sync()
-    specs = await GantryToolset(gantry).select("add up named counts", limit=5)
+    await fetcher.sync()
+    specs = await DotFetchToolset(fetcher).select("add up named counts", limit=5)
     spec = next(s for s in specs if s.name == "tally")
     tool = OpenAIAgentsAdapter.convert(spec)
     assert tool.strict_json_schema is False

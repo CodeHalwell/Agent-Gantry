@@ -10,10 +10,10 @@ from __future__ import annotations
 
 import pytest
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.rerankers.cross_encoder import CrossEncoderReranker, _bounded_scores
-from agent_gantry.schema.query import ConversationContext, ScoredTool, ToolQuery
-from agent_gantry.schema.tool import ToolDefinition
+from dotfetch import DotFetch
+from dotfetch.adapters.rerankers.cross_encoder import CrossEncoderReranker, _bounded_scores
+from dotfetch.schema.query import ConversationContext, ScoredTool, ToolQuery
+from dotfetch.schema.tool import ToolDefinition
 
 
 def _tool(name: str) -> ToolDefinition:
@@ -61,11 +61,11 @@ async def test_rerank_scores_fit_scored_tool() -> None:
 async def test_retrieve_with_logit_reranker_does_not_fail_validation() -> None:
     reranker = CrossEncoderReranker()
     reranker._model = _LogitModel()
-    gantry = AgentGantry(reranker=reranker)
+    fetcher = DotFetch(reranker=reranker)
     for name in ("a", "b", "c"):
-        await gantry.add_tool(_tool(name))
+        await fetcher.add_tool(_tool(name))
 
-    result = await gantry.retrieve(
+    result = await fetcher.retrieve(
         ToolQuery(
             context=ConversationContext(query="something useful"),
             limit=3,

@@ -1,4 +1,4 @@
-"""CrewAI + Agent-Gantry, through CrewAI's own mechanisms.
+"""CrewAI + dotfetch, through CrewAI's own mechanisms.
 
 1. **Selected tools** -- ``adapter.select(query)`` hands an agent only the
    relevant slice of the catalogue, as native ``BaseTool``s.
@@ -6,7 +6,7 @@
    agent reads it and CrewAI records it on ``TaskOutput.tool_failures``.
 3. **Approval** -- a ``requires_confirmation`` tool goes through the adapter's
    approver (CrewAI ``before_tool_call`` hook); a refused call is blocked.
-4. **Run context** -- a Gantry tool reads the CrewAI agent and task through
+4. **Run context** -- a dotfetch tool reads the CrewAI agent and task through
    ``current_crew_context()``.
 
 Everything runs **offline**: a scripted LLM answers in CrewAI's ReAct format,
@@ -15,7 +15,7 @@ to use a real model.
 
 Install and run (Python 3.10-3.13)::
 
-    pip install 'agent-gantry[crewai]'
+    pip install 'dotfetch[crewai]'
     python examples/agent_frameworks/crewai_example.py
 """
 
@@ -27,35 +27,35 @@ import os
 import re
 from typing import Any
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
 
 os.environ.setdefault("CREWAI_DISABLE_TELEMETRY", "true")
 os.environ.setdefault("CREWAI_TRACING_ENABLED", "false")
 
 
-def build_gantry() -> AgentGantry:
-    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
+def build_fetcher() -> DotFetch:
+    fetcher = DotFetch(embedder=SimpleEmbedder(dimension=256))
 
-    @gantry.register(tags=["math"], examples=["divide 10 by 2"])
+    @fetcher.register(tags=["math"], examples=["divide 10 by 2"])
     def divide(a: int, b: int) -> float:
         """Divide integer a by integer b."""
         return a / b
 
-    @gantry.register(tags=["email"], examples=["email the team"], requires_confirmation=True)
+    @fetcher.register(tags=["email"], examples=["email the team"], requires_confirmation=True)
     def send_email(to: str) -> str:
         """Send an email message to a recipient."""
         return f"Email sent to {to}."
 
-    @gantry.register(tags=["identity"], examples=["who is doing this task"])
+    @fetcher.register(tags=["identity"], examples=["who is doing this task"])
     def whoami() -> str:
         """Report which agent and task are making this call."""
-        from agent_gantry.crewai import current_crew_context
+        from dotfetch.crewai import current_crew_context
 
         ctx = current_crew_context()
         return f"Agent {ctx.agent.role!r} on task {ctx.task.name!r}." if ctx else "Unknown."
 
-    return gantry
+    return fetcher
 
 
 def scripted(*calls: tuple[str, dict[str, Any]]) -> Any:
@@ -91,27 +91,27 @@ async def run(adapter: Any, query: str, *calls: tuple[str, dict[str, Any]]) -> t
 
     llm = scripted(*calls)
     tools = await adapter.select(query, limit=1)
-    agent = Agent(role="clerk", goal="help", backstory="Uses Gantry tools.", llm=llm, tools=tools)
+    agent = Agent(role="clerk", goal="help", backstory="Uses dotfetch tools.", llm=llm, tools=tools)
     task = Task(name="chores", description=query, expected_output="done", agent=agent)
     output = await Crew(agents=[agent], tasks=[task]).kickoff_async()
     return output, llm
 
 
 async def main() -> None:
-    gantry = build_gantry()
+    fetcher = build_fetcher()
     try:
-        await gantry.sync()
+        await fetcher.sync()
         try:
-            from agent_gantry.crewai import CrewAIAdapter
+            from dotfetch.crewai import CrewAIAdapter
         except ImportError as exc:  # pragma: no cover
-            print(f"Agent-Gantry import failed: {exc}")
+            print(f"dotfetch import failed: {exc}")
             return
         try:
             import crewai  # noqa: F401
         except ImportError as exc:
             print(
                 f"The CrewAI demo needs crewai ({exc}).\n"
-                "Install it with `pip install 'agent-gantry[crewai]'` (Python 3.10-3.13)."
+                "Install it with `pip install 'dotfetch[crewai]'` (Python 3.10-3.13)."
             )
             return
 
@@ -121,7 +121,7 @@ async def main() -> None:
             approvals.append(f"{request.tool_name}({request.arguments})")
             return True  # a real app would ask a person here
 
-        adapter = CrewAIAdapter(gantry, approve=approve)
+        adapter = CrewAIAdapter(fetcher, approve=approve)
 
         # 1 + 2. Selected tools and readable errors ------------------------- #
         output, _ = await run(adapter, "divide 1 by 0", ("divide", {"a": 1, "b": 0}))
@@ -138,11 +138,11 @@ async def main() -> None:
         print(f"[context] the tool replied: {seen.group(0) if seen else '(not found)'}")
 
         print(
-            "\nEvery tool call above went through gantry.execute, so the security "
+            "\nEvery tool call above went through fetcher.execute, so the security "
             "policy, retries, timeouts and circuit breakers all applied."
         )
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 if __name__ == "__main__":

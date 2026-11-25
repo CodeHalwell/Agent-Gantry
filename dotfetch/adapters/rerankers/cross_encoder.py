@@ -1,0 +1,158 @@
+"""
+Cross-encoder reranker adapter using sentence-transformers.
+
+Uses a cross-encoder model to rerank tool candidates by computing
+pairwise relevance scores between the query and each tool description.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import math
+import threading
+from typing import TYPE_CHECKING, Any
+
+from dotfetch.adapters.embedders.base import LazyModelMixin
+
+if TYPE_CHECKING:
+    from dotfetch.schema.tool import ToolDefinition
+
+logger = logging.getLogger(__name__)
+
+
+def _sigmoid(value: float) -> float:
+    """Logistic function, written to avoid ``exp`` overflow on large negatives."""
+    if value >= 0.0:
+        return 1.0 / (1.0 + math.exp(-value))
+    exp_value = math.exp(value)
+    return exp_value / (1.0 + exp_value)
+
+
+def _bounded_scores(scores: list[float]) -> list[float]:
+    """Return ``scores`` within ``[0, 1]``, squashing raw logits if needed.
+
+    sentence-transformers applies a sigmoid for single-label rerankers, but a
+    model configured with an identity activation, or one with several labels,
+    hands back raw logits — and :class:`~dotfetch.schema.query.ScoredTool`
+    bounds its score to ``[0, 1]``, so one out-of-range value failed
+    validation and took the whole retrieval down with it. Squash only when a
+    value is out of range, so a model that already reports probabilities is
+    left untouched; the sigmoid is monotonic, so the ranking is the same
+    either way.
+    """
+    if any(score < 0.0 or score > 1.0 for score in scores):
+        return [_sigmoid(score) for score in scores]
+    return scores
+
+
+class CrossEncoderReranker(LazyModelMixin):
+    """
+    Reranker using sentence-transformers cross-encoder models.
+
+    Cross-encoders provide higher accuracy than bi-encoders for reranking
+    because they jointly attend to both the query and document, at the
+    cost of being slower (not parallelizable for encoding).
+
+    Example:
+        >>> reranker = CrossEncoderReranker(model="cross-encoder/ms-marco-MiniLM-L-6-v2")
+        >>> reranked = await reranker.rerank("find weather", tools_with_scores, top_k=3)
+    """
+
+    def __init__(
+        self,
+        model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2",
+        device: str | None = None,
+    ) -> None:
+        """
+        Initialize the cross-encoder reranker.
+
+        Args:
+            model: Hugging Face model identifier for the cross-encoder
+            device: Device to run on ("cpu", "cuda"). Auto-detected if None.
+        """
+        self._model_name = model
+        self._device = device
+        self._model: Any = None
+        self._load_lock = threading.Lock()
+
+    def _load_model(self) -> None:
+        """Construct the cross-encoder. Caller holds ``_load_lock``."""
+        try:
+            from sentence_transformers import CrossEncoder
+        except ImportError as exc:
+            raise ImportError(
+                "sentence-transformers is required for CrossEncoderReranker. "
+                "Install it with: pip install sentence-transformers (or uv add sentence-transformers)"
+            ) from exc
+
+        kwargs: dict[str, Any] = {}
+        if self._device:
+            kwargs["device"] = self._device
+
+        self._model = CrossEncoder(self._model_name, **kwargs)
+
+    async def rerank(
+        self,
+        query: str,
+        tools: list[tuple[ToolDefinition, float]],
+        top_k: int,
+    ) -> list[tuple[ToolDefinition, float]]:
+        """
+        Rerank tools using cross-encoder relevance scores.
+
+        Args:
+            query: The user's query
+            tools: List of (tool, initial_score) tuples from vector search
+            top_k: Number of top results to return
+
+        Returns:
+            Reranked list of (tool, cross_encoder_score) tuples
+        """
+        if not tools:
+            return []
+
+        await self._aensure_initialized()
+
+        # Build query-document pairs for cross-encoder
+        pairs = [
+            [query, tool.to_searchable_text()]
+            for tool, _ in tools
+        ]
+
+        # Score pairs in a thread to avoid blocking the event loop
+        scores = await asyncio.to_thread(
+            self._model.predict,
+            pairs,
+        )
+
+        scores = _bounded_scores([float(score) for score in scores])
+
+        # Combine tools with their new scores
+        scored_tools = [
+            (tool, score)
+            for (tool, _), score in zip(tools, scores)
+        ]
+
+        # Sort by cross-encoder score (descending) and take top_k
+        scored_tools.sort(key=lambda x: x[1], reverse=True)
+        return scored_tools[:top_k]
+
+    async def rerank_texts(self, query: str, texts: list[str], top_k: int) -> list[tuple[int, float]]:
+        """
+        Rerank arbitrary texts: a skill's or an MCP server's, as well as a tool's.
+
+        Args:
+            query: The user's query
+            texts: The texts to rank
+            top_k: Number of top results to return
+
+        Returns:
+            ``(index into texts, score)``, best first
+        """
+        if not texts:
+            return []
+        await self._aensure_initialized()
+        raw = await asyncio.to_thread(self._model.predict, [[query, text] for text in texts])
+        scores = _bounded_scores([float(score) for score in raw])
+        return sorted(enumerate(scores), key=lambda pair: pair[1], reverse=True)[:top_k]

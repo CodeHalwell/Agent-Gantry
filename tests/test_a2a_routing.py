@@ -11,14 +11,14 @@ from typing import Any
 
 import pytest
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-from agent_gantry.providers.a2a_client import A2AClient
-from agent_gantry.schema.a2a import AgentCard, AgentSkill, a2a_agent_tag
-from agent_gantry.schema.config import A2AAgentConfig
-from agent_gantry.schema.query import ConversationContext, ToolQuery
-from agent_gantry.schema.selection import SelectionCandidate, SelectionResult
-from agent_gantry.schema.tool import A2A_AGENT_NAMESPACE, is_reserved_namespace
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
+from dotfetch.providers.a2a_client import A2AClient
+from dotfetch.schema.a2a import AgentCard, AgentSkill, a2a_agent_tag
+from dotfetch.schema.config import A2AAgentConfig
+from dotfetch.schema.query import ConversationContext, ToolQuery
+from dotfetch.schema.selection import SelectionCandidate, SelectionResult
+from dotfetch.schema.tool import A2A_AGENT_NAMESPACE, is_reserved_namespace
 
 _CARDS = {
     "travel": AgentCard(
@@ -60,15 +60,15 @@ def cards(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
     return fetched
 
 
-def _gantry(**kwargs: Any) -> AgentGantry:
-    gantry = AgentGantry(embedder=SimpleEmbedder(), **kwargs)
-    gantry.register_a2a_agent(
+def _fetcher(**kwargs: Any) -> DotFetch:
+    fetcher = DotFetch(embedder=SimpleEmbedder(), **kwargs)
+    fetcher.register_a2a_agent(
         "travel", "https://travel.example", description="Plans trips and books travel."
     )
-    gantry.register_a2a_agent(
+    fetcher.register_a2a_agent(
         "ledger", "https://ledger.example", description="Bookkeeping and tax returns."
     )
-    return gantry
+    return fetcher
 
 
 def _query(text: str, **fields: Any) -> ToolQuery:
@@ -78,76 +78,76 @@ def _query(text: str, **fields: Any) -> ToolQuery:
 async def test_an_agent_is_registered_and_routed_to_without_being_contacted(
     cards: dict[str, int],
 ) -> None:
-    gantry = _gantry()
+    fetcher = _fetcher()
     try:
-        agents = await gantry.retrieve_a2a_agents("bookkeeping and tax returns", limit=1)
+        agents = await fetcher.retrieve_a2a_agents("bookkeeping and tax returns", limit=1)
 
         assert [a.name for a in agents] == ["ledger"]
         assert cards == {}  # nothing was fetched
-        assert await gantry.list_tools() == []  # and no skill became a tool
-        assert [a.name for a in gantry.list_a2a_agents()] == ["travel", "ledger"]
-        assert await gantry.retrieve_a2a_agents("   ") == []
+        assert await fetcher.list_tools() == []  # and no skill became a tool
+        assert [a.name for a in fetcher.list_a2a_agents()] == ["travel", "ledger"]
+        assert await fetcher.retrieve_a2a_agents("   ") == []
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 def test_registration_checks_the_url_and_the_description() -> None:
-    gantry = AgentGantry(embedder=SimpleEmbedder())
+    fetcher = DotFetch(embedder=SimpleEmbedder())
     with pytest.raises(ValueError, match="http"):
-        gantry.register_a2a_agent("bad", "ftp://agent.example", description="Plans trips for people.")
+        fetcher.register_a2a_agent("bad", "ftp://agent.example", description="Plans trips for people.")
     with pytest.raises(ValueError):
-        gantry.register_a2a_agent("bad", "https://agent.example", description="short")
+        fetcher.register_a2a_agent("bad", "https://agent.example", description="short")
 
 
 async def test_discovering_a_registered_agent_makes_its_skills_tools_and_findable_by(
     cards: dict[str, int],
 ) -> None:
-    gantry = _gantry()
+    fetcher = _fetcher()
     try:
         # Nothing in either registration mentions hotels.
-        before = await gantry.retrieve_a2a_agents("find a hotel room for given nights", limit=1)
+        before = await fetcher.retrieve_a2a_agents("find a hotel room for given nights", limit=1)
 
-        assert await gantry.discover_skills_from_agent("travel") == 2
+        assert await fetcher.discover_skills_from_agent("travel") == 2
         assert cards == {"travel": 1}
 
-        after = await gantry.retrieve_a2a_agents("find a hotel room for given nights", limit=1)
+        after = await fetcher.retrieve_a2a_agents("find a hotel room for given nights", limit=1)
         assert [a.name for a in after] == ["travel"]
-        agent = gantry.list_a2a_agents()[0]
+        agent = fetcher.list_a2a_agents()[0]
         assert agent.description == "Plans trips and books travel."  # the registration's wording stays
         assert agent.skills == [
             "Book flight: Book a flight between two cities.",
             "Find hotel: Find a hotel room for given nights.",
         ]
-        assert sorted(t.name for t in await gantry.list_tools()) == sorted(
-            t.name for t in await gantry.list_tools() if t.metadata["a2a_agent"] == "travel"
+        assert sorted(t.name for t in await fetcher.list_tools()) == sorted(
+            t.name for t in await fetcher.list_tools() if t.metadata["a2a_agent"] == "travel"
         )
         assert before is not None
 
         with pytest.raises(ValueError, match="not found"):
-            await gantry.discover_skills_from_agent("nobody")
+            await fetcher.discover_skills_from_agent("nobody")
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_an_agent_added_directly_becomes_routable_from_its_card(cards: dict[str, int]) -> None:
-    gantry = AgentGantry(embedder=SimpleEmbedder())
+    fetcher = DotFetch(embedder=SimpleEmbedder())
     try:
-        await gantry.add_a2a_agent(A2AAgentConfig(name="ledger", url="https://ledger.example"))
+        await fetcher.add_a2a_agent(A2AAgentConfig(name="ledger", url="https://ledger.example"))
 
-        agents = await gantry.retrieve_a2a_agents("prepare a quarterly VAT return", limit=1)
+        agents = await fetcher.retrieve_a2a_agents("prepare a quarterly VAT return", limit=1)
         assert [a.name for a in agents] == ["ledger"]
         # "Bookkeeping help." is the card's own description, kept as written.
         assert agents[0].description == "Bookkeeping help."
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_a_converted_skill_is_tagged_and_grouped_by_its_agent(cards: dict[str, int]) -> None:
-    gantry = _gantry()
+    fetcher = _fetcher()
     try:
-        await gantry.discover_skills_from_agent("travel")
-        await gantry.discover_skills_from_agent("ledger")
-        tools = await gantry.list_tools()
+        await fetcher.discover_skills_from_agent("travel")
+        await fetcher.discover_skills_from_agent("ledger")
+        tools = await fetcher.list_tools()
 
         for tool in tools:
             agent = tool.metadata["a2a_agent"]
@@ -155,48 +155,48 @@ async def test_a_converted_skill_is_tagged_and_grouped_by_its_agent(cards: dict[
             assert agent in tool.to_searchable_text()
             assert SelectionCandidate.from_tool(tool).group == agent
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_a_search_can_be_scoped_to_one_agent(cards: dict[str, int]) -> None:
-    gantry = _gantry()
+    fetcher = _fetcher()
     try:
-        await gantry.discover_skills_from_agent("travel")
-        await gantry.discover_skills_from_agent("ledger")
+        await fetcher.discover_skills_from_agent("travel")
+        await fetcher.discover_skills_from_agent("ledger")
 
-        scoped = await gantry.retrieve(_query("book", limit=10, a2a_agents=["ledger"]))
+        scoped = await fetcher.retrieve(_query("book", limit=10, a2a_agents=["ledger"]))
         assert len(scoped.tools) == 2
         assert {t.tool.metadata["a2a_agent"] for t in scoped.tools} == {"ledger"}
 
-        assert (await gantry.retrieve(_query("book", limit=10, a2a_agents=[]))).tools == []
+        assert (await fetcher.retrieve(_query("book", limit=10, a2a_agents=[]))).tools == []
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_agent_entries_are_never_returned_as_tools_and_go_with_the_agent(
     cards: dict[str, int],
 ) -> None:
-    gantry = _gantry()
+    fetcher = _fetcher()
     try:
-        await gantry.discover_skills_from_agent("travel")
-        await gantry.retrieve_a2a_agents("plans trips", limit=2)  # syncs the agent entries
-        rows = await gantry.list_tools(namespace=A2A_AGENT_NAMESPACE)
+        await fetcher.discover_skills_from_agent("travel")
+        await fetcher.retrieve_a2a_agents("plans trips", limit=2)  # syncs the agent entries
+        rows = await fetcher.list_tools(namespace=A2A_AGENT_NAMESPACE)
         assert len(rows) >= 3  # two agents, and travel's skills
 
-        result = await gantry.retrieve(_query("plans trips and books travel", limit=10))
+        result = await fetcher.retrieve(_query("plans trips and books travel", limit=10))
         assert result.tools
         assert not [t for t in result.tools if is_reserved_namespace(t.tool.namespace)]
 
         # Pruning tools leaves the agents' entries alone.
-        await gantry.sync(prune=True)
-        assert len(await gantry.list_tools(namespace=A2A_AGENT_NAMESPACE)) == len(rows)
+        await fetcher.sync(prune=True)
+        assert len(await fetcher.list_tools(namespace=A2A_AGENT_NAMESPACE)) == len(rows)
 
-        assert gantry._a2a_manager.remove("travel")
-        await gantry.retrieve_a2a_agents("plans trips", limit=2)
-        remaining = await gantry.list_tools(namespace=A2A_AGENT_NAMESPACE)
+        assert fetcher._a2a_manager.remove("travel")
+        await fetcher.retrieve_a2a_agents("plans trips", limit=2)
+        remaining = await fetcher.list_tools(namespace=A2A_AGENT_NAMESPACE)
         assert {r.metadata["agent_name"] for r in remaining} == {"ledger"}
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_a_selector_chooses_among_agents_and_is_shown_their_skills(
@@ -211,30 +211,30 @@ async def test_a_selector_chooses_among_agents_and_is_shown_their_skills(
             chosen = [c.id for c in candidates if "ledger" in c.id][:limit]
             return SelectionResult(selected=chosen, scores={cid: 0.9 for cid in chosen})
 
-    gantry = _gantry(selector=_Selector())
+    fetcher = _fetcher(selector=_Selector())
     try:
-        await gantry.discover_skills_from_agent("ledger")
-        agents = await gantry.retrieve_a2a_agents("file my VAT", limit=2)
+        await fetcher.discover_skills_from_agent("ledger")
+        agents = await fetcher.retrieve_a2a_agents("file my VAT", limit=2)
 
         assert [a.name for a in agents] == ["ledger"]
         by_id = {c.id: c for c in seen}
         assert "Prepare a quarterly VAT return." in by_id["default.ledger"].description
         assert by_id["default.travel"].description == "Plans trips and books travel."
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_agents_join_the_combined_view(cards: dict[str, int]) -> None:
-    gantry = _gantry()
+    fetcher = _fetcher()
     try:
-        await gantry.discover_skills_from_agent("travel")
-        result = await gantry.retrieve_context(
+        await fetcher.discover_skills_from_agent("travel")
+        result = await fetcher.retrieve_context(
             "book a flight between two cities", tools=1, skills=0, servers=0, agents=1
         )
         assert [(e.kind, e.rank) for e in result.entries] == [("tool", 1), ("a2a_agent", 1)]
         assert [a.name for a in result.a2a_agents] == ["travel"]
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_a_namespace_scope_is_not_lost_among_other_namespaces_agents() -> None:
@@ -243,30 +243,30 @@ async def test_a_namespace_scope_is_not_lost_among_other_namespaces_agents() -> 
     The scope is applied to what the store returns, and the search used to
     stop at 64 rows for one agent asked for.
     """
-    gantry = AgentGantry(embedder=SimpleEmbedder())
+    fetcher = DotFetch(embedder=SimpleEmbedder())
     try:
         for i in range(70):
-            gantry.register_a2a_agent(
+            fetcher.register_a2a_agent(
                 f"payroll_{i}",
                 f"https://payroll-{i}.example",
                 description="Payroll payroll payroll queries about payroll.",
                 namespace="finance",
             )
-        gantry.register_a2a_agent(
+        fetcher.register_a2a_agent(
             "wages", "https://wages.example", description="Answers payroll queries.", namespace="ops"
         )
 
-        agents = await gantry.retrieve_a2a_agents("payroll", limit=1, namespaces=["ops"])
+        agents = await fetcher.retrieve_a2a_agents("payroll", limit=1, namespaces=["ops"])
         assert [a.name for a in agents] == ["wages"]
         # Unscoped, one of the seventy is the better match: the scope did the work.
-        assert (await gantry.retrieve_a2a_agents("payroll", limit=1))[0].namespace == "finance"
+        assert (await fetcher.retrieve_a2a_agents("payroll", limit=1))[0].namespace == "finance"
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_an_agent_registered_while_a_sync_is_in_flight_is_not_lost() -> None:
     """The sync's snapshot does not hold it, so the sync must not mark it synced."""
-    gantry = AgentGantry(embedder=SimpleEmbedder())
+    fetcher = DotFetch(embedder=SimpleEmbedder())
 
     class _Interrupting(SimpleEmbedder):
         registered = False
@@ -274,26 +274,26 @@ async def test_an_agent_registered_while_a_sync_is_in_flight_is_not_lost() -> No
         async def embed_batch(self, texts: list[str], batch_size: int | None = None) -> Any:
             if not self.registered:
                 self.registered = True
-                gantry.register_a2a_agent(
+                fetcher.register_a2a_agent(
                     "latecomer", "https://late.example", description="Handles payroll queries."
                 )
             return await super().embed_batch(texts, batch_size)
 
-    manager = gantry._a2a_manager
+    manager = fetcher._a2a_manager
     manager._embedder = _Interrupting()
     try:
-        gantry.register_a2a_agent(
+        fetcher.register_a2a_agent(
             "travel", "https://travel.example", description="Plans trips and books travel."
         )
-        await gantry._ensure_initialized()
+        await fetcher._ensure_initialized()
         await manager.sync()
 
         assert manager.needs_sync  # the latecomer is still owed a sync
-        agents = await gantry.retrieve_a2a_agents("payroll queries", limit=1)
+        agents = await fetcher.retrieve_a2a_agents("payroll queries", limit=1)
         assert [a.name for a in agents] == ["latecomer"]
         assert not manager.needs_sync
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_agent_entries_are_re_embedded_when_the_embedding_model_changes() -> None:
@@ -314,7 +314,7 @@ async def test_agent_entries_are_re_embedded_when_the_embedding_model_changes() 
             return await super().embed_batch(texts, batch_size)
 
     def tool() -> Any:
-        from agent_gantry.schema.tool import ToolDefinition
+        from dotfetch.schema.tool import ToolDefinition
 
         return ToolDefinition(
             name="add_numbers",
@@ -322,13 +322,13 @@ async def test_agent_entries_are_re_embedded_when_the_embedding_model_changes() 
             parameters_schema={"type": "object", "properties": {}},
         )
 
-    first = AgentGantry(embedder=_Counting("model-a"))
+    first = DotFetch(embedder=_Counting("model-a"))
     first.register_a2a_agent("travel", "https://travel.example", description="Plans trips and books travel.")
     await first.add_tool(tool())
     await first.retrieve_a2a_agents("plans trips", limit=1)
 
     newer = _Counting("model-b")
-    second = AgentGantry(embedder=newer, vector_store=first._vector_store)
+    second = DotFetch(embedder=newer, vector_store=first._vector_store)
     try:
         second.register_a2a_agent("travel", "https://travel.example", description="Plans trips and books travel.")
         await second.add_tool(tool())  # the tool sync marks the store as model-b
@@ -353,22 +353,22 @@ async def test_many_agent_entries_do_not_hide_a_tool_from_a_tool_search() -> Non
     Three searches of 32, 64 and 96 rows held nothing but agents, and the
     search stopped there with no tool, at a threshold of zero.
     """
-    gantry = AgentGantry(embedder=SimpleEmbedder())
+    fetcher = DotFetch(embedder=SimpleEmbedder())
     try:
         for i in range(110):
-            gantry.register_a2a_agent(
+            fetcher.register_a2a_agent(
                 f"payroll_{i}",
                 f"https://payroll-{i}.example",
                 description="Payroll payroll payroll queries about payroll.",
             )
 
-        @gantry.register
+        @fetcher.register
         def run_report(month: str) -> str:
             """Run the monthly payroll report for the finance team."""
             return month
 
-        await gantry.retrieve_a2a_agents("payroll", limit=1)  # indexes the agents
-        result = await gantry.retrieve(_query("payroll", limit=1))
+        await fetcher.retrieve_a2a_agents("payroll", limit=1)  # indexes the agents
+        result = await fetcher.retrieve(_query("payroll", limit=1))
         assert [scored.tool.name for scored in result.tools] == ["run_report"]
     finally:
-        await gantry.close()
+        await fetcher.close()

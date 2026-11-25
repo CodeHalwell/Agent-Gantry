@@ -1,19 +1,19 @@
 """
-Pytest configuration and fixtures for Agent-Gantry tests.
+Pytest configuration and fixtures for dotfetch tests.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from agent_gantry import AgentGantry
-from agent_gantry.schema.tool import ToolDefinition
+from dotfetch import DotFetch
+from dotfetch.schema.tool import ToolDefinition
 
 
 @pytest.fixture
-def gantry() -> AgentGantry:
-    """Create a fresh AgentGantry instance for testing."""
-    return AgentGantry()
+def fetcher() -> DotFetch:
+    """Create a fresh DotFetch instance for testing."""
+    return DotFetch()
 
 
 @pytest.fixture

@@ -16,9 +16,9 @@ import types
 
 import pytest
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-from agent_gantry.integrations.frameworks.base import ToolExecutionError
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
+from dotfetch.integrations.frameworks.base import ToolExecutionError
 
 
 class _FakeDecoratedFunctionTool:
@@ -72,8 +72,8 @@ def fake_strands(monkeypatch):
 
 
 @pytest.fixture
-async def gantry():
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+async def fetcher():
+    g = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
     @g.register(tags=["email"])
     def send_email(to: str, body: str = "") -> str:
@@ -89,11 +89,11 @@ async def gantry():
     return g
 
 
-async def test_spec_to_strands_builds_native_tool(fake_strands, gantry):
-    from agent_gantry.integrations.frameworks.base import GantryToolset
-    from agent_gantry.strands import StrandsAdapter
+async def test_spec_to_strands_builds_native_tool(fake_strands, fetcher):
+    from dotfetch.integrations.frameworks.base import DotFetchToolset
+    from dotfetch.strands import StrandsAdapter
 
-    specs = await GantryToolset(gantry).select("send an email", limit=1)
+    specs = await DotFetchToolset(fetcher).select("send an email", limit=1)
     spec = specs[0]
     tool = StrandsAdapter.convert(spec)
 
@@ -101,13 +101,13 @@ async def test_spec_to_strands_builds_native_tool(fake_strands, gantry):
     assert (
         tool.tool_spec["description"] == spec.description == "Send an email message to a recipient."
     )
-    # Gantry's own JSON-Schema parameters are passed through verbatim under
+    # dotfetch's own JSON-Schema parameters are passed through verbatim under
     # the Bedrock-style {"json": ...} envelope Strands' ToolSpec expects.
     assert tool.tool_spec["inputSchema"] == {"json": spec.parameters}
     assert tool.tool_spec["inputSchema"]["json"]["properties"]["to"]["type"] == "string"
 
     # The wrapped function carries a real signature/annotations derived from
-    # the JSON schema (not a bare **kwargs), and routes through gantry.execute.
+    # the JSON schema (not a bare **kwargs), and routes through fetcher.execute.
     import inspect
 
     params = inspect.signature(tool._tool_func).parameters
@@ -117,12 +117,12 @@ async def test_spec_to_strands_builds_native_tool(fake_strands, gantry):
     assert result == "sent:boss@x.com"
 
 
-async def test_spec_to_strands_drops_none_optional_args(fake_strands, gantry):
+async def test_spec_to_strands_drops_none_optional_args(fake_strands, fetcher):
     """Optional params left at their None default are dropped so the tool's own default applies."""
-    from agent_gantry.integrations.frameworks.base import GantryToolset
-    from agent_gantry.strands import StrandsAdapter
+    from dotfetch.integrations.frameworks.base import DotFetchToolset
+    from dotfetch.strands import StrandsAdapter
 
-    specs = await GantryToolset(gantry).select("send an email", limit=1)
+    specs = await DotFetchToolset(fetcher).select("send an email", limit=1)
     tool = StrandsAdapter.convert(specs[0])
 
     # `body` defaults to None in the generated signature; omitting it should
@@ -131,10 +131,10 @@ async def test_spec_to_strands_drops_none_optional_args(fake_strands, gantry):
     assert result == "sent:boss@x.com"
 
 
-async def test_for_strands_returns_tool_list(fake_strands, gantry):
-    from agent_gantry.strands import StrandsAdapter
+async def test_for_strands_returns_tool_list(fake_strands, fetcher):
+    from dotfetch.strands import StrandsAdapter
 
-    tools = await StrandsAdapter(gantry).select("send an email", limit=2)
+    tools = await StrandsAdapter(fetcher).select("send an email", limit=2)
 
     assert isinstance(tools, list)
     assert len(tools) >= 1
@@ -142,19 +142,19 @@ async def test_for_strands_returns_tool_list(fake_strands, gantry):
     assert "send_email" in names
 
 
-async def test_select_routes_through_gantry_execute_and_reports_failure(fake_strands, gantry):
-    """A failed Gantry execution is an error ToolResult by default; error_mode="raise" raises."""
-    from agent_gantry.integrations.frameworks.base import GantryToolset
-    from agent_gantry.strands import StrandsAdapter
+async def test_select_routes_through_fetcher_execute_and_reports_failure(fake_strands, fetcher):
+    """A failed dotfetch execution is an error ToolResult by default; error_mode="raise" raises."""
+    from dotfetch.integrations.frameworks.base import DotFetchToolset
+    from dotfetch.strands import StrandsAdapter
 
-    @gantry.register(tags=["danger"])
+    @fetcher.register(tags=["danger"])
     def explode() -> str:
         "Always raises."
         raise RuntimeError("boom")
 
-    await gantry.sync()
+    await fetcher.sync()
 
-    specs = await GantryToolset(gantry).select("always raises", limit=1)
+    specs = await DotFetchToolset(fetcher).select("always raises", limit=1)
     result = await StrandsAdapter.convert(specs[0])()
     assert result["status"] == "error"
     assert "boom" in result["content"][0]["text"]
@@ -163,30 +163,30 @@ async def test_select_routes_through_gantry_execute_and_reports_failure(fake_str
         await StrandsAdapter.convert(specs[0], error_mode="raise")()
 
 
-async def test_missing_strands_raises_helpful_error(monkeypatch, gantry):
+async def test_missing_strands_raises_helpful_error(monkeypatch, fetcher):
     # Ensure the lazy import fails even if a real package is somehow present.
     monkeypatch.setitem(sys.modules, "strands", None)
 
-    from agent_gantry.integrations.frameworks.base import GantryToolset
-    from agent_gantry.strands import StrandsAdapter
+    from dotfetch.integrations.frameworks.base import DotFetchToolset
+    from dotfetch.strands import StrandsAdapter
 
-    specs = await GantryToolset(gantry).select("send an email", limit=1)
-    with pytest.raises(ImportError, match=r"agent-gantry\[strands\]"):
+    specs = await DotFetchToolset(fetcher).select("send an email", limit=1)
+    with pytest.raises(ImportError, match=r"dotfetch\[strands\]"):
         StrandsAdapter.convert(specs[0])
 
 
-async def test_tool_hook_and_agent_builders_require_strands(monkeypatch, gantry):
+async def test_tool_hook_and_agent_builders_require_strands(monkeypatch, fetcher):
     """The live per-turn helpers also raise a clean ImportError without strands-agents."""
     monkeypatch.setitem(sys.modules, "strands", None)
     monkeypatch.setitem(sys.modules, "strands.hooks", None)
 
-    from agent_gantry.strands import StrandsAdapter
+    from dotfetch.strands import StrandsAdapter
 
-    adapter = StrandsAdapter(gantry)
+    adapter = StrandsAdapter(fetcher)
     # Building the hook object itself never imports strands (lazy inside
     # register_hooks), but building a full agent does.
     hook = adapter.tool_hook(limit=2)
     assert hook is not None
 
-    with pytest.raises(ImportError, match=r"agent-gantry\[strands\]"):
+    with pytest.raises(ImportError, match=r"dotfetch\[strands\]"):
         adapter.agent()

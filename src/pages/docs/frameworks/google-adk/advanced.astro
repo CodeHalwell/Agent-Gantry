@@ -2,7 +2,7 @@
 import DocsLayout from '../../../../layouts/DocsLayout.astro';
 import CodeBlock from '../../../../components/CodeBlock.astro';
 ---
-<DocsLayout title="Advanced Google ADK guide | Agent-Gantry" description="Tool confirmation, how per-turn selection works inside a run, tracing and error modes for the Agent-Gantry Google ADK integration.">
+<DocsLayout title="Advanced Google ADK guide | dotfetch" description="Tool confirmation, how per-turn selection works inside a run, tracing and error modes for the dotfetch Google ADK integration.">
   <p class="eyebrow">Advanced framework guide</p>
   <h1>Advanced Google ADK</h1>
   <p class="lead">Tool confirmation, how per-turn selection works inside a run, and tracing.</p>
@@ -24,8 +24,8 @@ if pending is not None:
     message = types.Content(role="user", parts=[types.Part(function_response=reply)])
     async for event in runner.run_async(user_id=uid, session_id=sid, new_message=message):
         ...`} />
-  <p>A confirmed call runs once through <code>gantry.execute</code> with only the confirmation gate cleared; ADK refuses a rejected one itself. <code>gantry.requires_confirmation(tool)</code> answers the same question without running anything.</p>
-  <p>ADK resumes a confirmed call through the agent's own tools. <code>adapter.agent()</code> includes a toolset that supplies the gated Gantry tools only on the turn answering a confirmation; if you wire <code>before_model_callback()</code> into your own agent, add <code>tools=[adapter.confirmation_toolset()]</code>.</p>
+  <p>A confirmed call runs once through <code>fetcher.execute</code> with only the confirmation gate cleared; ADK refuses a rejected one itself. <code>fetcher.requires_confirmation(tool)</code> answers the same question without running anything.</p>
+  <p>ADK resumes a confirmed call through the agent's own tools. <code>adapter.agent()</code> includes a toolset that supplies the gated dotfetch tools only on the turn answering a confirmation; if you wire <code>before_model_callback()</code> into your own agent, add <code>tools=[adapter.confirmation_toolset()]</code>.</p>
 
   <h2>Per-turn selection inside a run</h2>
   <ul>
@@ -37,7 +37,7 @@ if pending is not None:
   </ul>
 
   <h2>Run context and tracing</h2>
-  <p><code>current_tool_context()</code> returns the call's ADK <code>ToolContext</code>: session <code>state</code>, <code>user_id</code>, <code>invocation_id</code>, <code>function_call_id</code>, artifacts and memory. <code>current_tool_invocation()</code> carries the same object, with <code>deps</code> set to the session state. ADK traces with OpenTelemetry, so its active span becomes the Gantry <code>ToolCall</code>'s <code>trace_id</code> and <code>parent_span_id</code>.</p>
+  <p><code>current_tool_context()</code> returns the call's ADK <code>ToolContext</code>: session <code>state</code>, <code>user_id</code>, <code>invocation_id</code>, <code>function_call_id</code>, artifacts and memory. <code>current_tool_invocation()</code> carries the same object, with <code>deps</code> set to the session state. ADK traces with OpenTelemetry, so its active span becomes the dotfetch <code>ToolCall</code>'s <code>trace_id</code> and <code>parent_span_id</code>.</p>
 
   <h2>Production checklist</h2>
   <ul>

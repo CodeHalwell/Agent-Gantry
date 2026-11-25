@@ -1,4 +1,4 @@
-"""Build the eval catalogue into a gantry and measure every modality."""
+"""Build the eval catalogue into a fetcher and measure every modality."""
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from agent_gantry import AgentGantry
-from agent_gantry.evaluation import (
+from dotfetch import DotFetch
+from dotfetch.evaluation import (
     RetrievalReport,
     ThresholdCalibration,
     calibrate_threshold,
@@ -16,17 +16,17 @@ from agent_gantry.evaluation import (
     skill_retriever,
     tool_retriever,
 )
-from agent_gantry.schema.tool import ToolDefinition
+from dotfetch.schema.tool import ToolDefinition
 from tests.retrieval import catalogue
 
 BASELINE_PATH = Path(__file__).with_name("baseline.json")
 
 
-async def build_gantry(**gantry_kwargs: Any) -> AgentGantry:
-    """A gantry holding the whole eval catalogue: tools, skills and MCP servers.
+async def build_fetcher(**fetcher_kwargs: Any) -> DotFetch:
+    """A fetcher holding the whole eval catalogue: tools, skills and MCP servers.
 
     Args:
-        **gantry_kwargs: Passed to :class:`AgentGantry`, e.g. ``embedder``,
+        **fetcher_kwargs: Passed to :class:`DotFetch`, e.g. ``embedder``,
             ``reranker`` or ``selector``: whatever backend is being measured.
 
     Raises:
@@ -34,25 +34,25 @@ async def build_gantry(**gantry_kwargs: Any) -> AgentGantry:
             tools are a fifth of the catalogue, so the numbers without them
             would not be comparable to the baseline.
     """
-    gantry = AgentGantry(**gantry_kwargs)
+    fetcher = DotFetch(**fetcher_kwargs)
     mcp_tools = catalogue.mcp_tools()
     for tool in [*catalogue.native_tools(), *mcp_tools]:
-        await gantry.add_tool(tool)
-    await gantry.sync()
-    await gantry.add_skills(catalogue.skills())
+        await fetcher.add_tool(tool)
+    await fetcher.sync()
+    await fetcher.add_skills(catalogue.skills())
     by_server: dict[str, list[ToolDefinition]] = {}
     for tool in mcp_tools:
         by_server.setdefault(tool.metadata["mcp_server"], []).append(tool)
     for name, description in catalogue.MCP_SERVERS.items():
-        gantry.register_mcp_server(name, url=f"https://{name}.example/mcp", description=description)
+        fetcher.register_mcp_server(name, url=f"https://{name}.example/mcp", description=description)
         if name in by_server:
             # Catalogue the server as a deployment would, with the fixture
             # standing in for the live server, so it is routed to by what it
             # lists as well as by its (deliberately vague) description.
-            gantry._mcp_registry.get_client(name).list_tools = _lister(by_server[name])
-            await gantry.list_server_tools(name)
-    await gantry.sync_mcp_servers()
-    return gantry
+            fetcher._mcp_registry.get_client(name).list_tools = _lister(by_server[name])
+            await fetcher.list_server_tools(name)
+    await fetcher.sync_mcp_servers()
+    return fetcher
 
 
 def _lister(tools: list[ToolDefinition]) -> Any:
@@ -63,62 +63,62 @@ def _lister(tools: list[ToolDefinition]) -> Any:
 
 
 async def measure(
-    *, k: int = 5, score_threshold: float = 0.0, **gantry_kwargs: Any
+    *, k: int = 5, score_threshold: float = 0.0, **fetcher_kwargs: Any
 ) -> list[RetrievalReport]:
     """Run the three labelled sets and return a report for each modality."""
-    gantry = await build_gantry(**gantry_kwargs)
+    fetcher = await build_fetcher(**fetcher_kwargs)
     threshold = score_threshold or None
     try:
         return [
             await evaluate_retrieval(
-                tool_retriever(gantry, score_threshold=score_threshold),
+                tool_retriever(fetcher, score_threshold=score_threshold),
                 catalogue.TOOL_CASES,
                 k=k,
                 modality="tools",
             ),
             await evaluate_retrieval(
-                skill_retriever(gantry, score_threshold=threshold),
+                skill_retriever(fetcher, score_threshold=threshold),
                 catalogue.SKILL_CASES,
                 k=k,
                 modality="skills",
             ),
             await evaluate_retrieval(
-                mcp_server_retriever(gantry, score_threshold=threshold),
+                mcp_server_retriever(fetcher, score_threshold=threshold),
                 catalogue.MCP_SERVER_CASES,
                 k=k,
                 modality="mcp_servers",
             ),
         ]
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
-async def calibrate(*, k: int = 5, **gantry_kwargs: Any) -> list[ThresholdCalibration]:
+async def calibrate(*, k: int = 5, **fetcher_kwargs: Any) -> list[ThresholdCalibration]:
     """Find, per modality, the score threshold the labelled sets support."""
-    gantry = await build_gantry(**gantry_kwargs)
+    fetcher = await build_fetcher(**fetcher_kwargs)
     try:
         return [
             await calibrate_threshold(
-                lambda t: tool_retriever(gantry, score_threshold=t),
+                lambda t: tool_retriever(fetcher, score_threshold=t),
                 catalogue.TOOL_CASES,
                 k=k,
                 modality="tools",
             ),
             await calibrate_threshold(
-                lambda t: skill_retriever(gantry, score_threshold=t or None),
+                lambda t: skill_retriever(fetcher, score_threshold=t or None),
                 catalogue.SKILL_CASES,
                 k=k,
                 modality="skills",
             ),
             await calibrate_threshold(
-                lambda t: mcp_server_retriever(gantry, score_threshold=t or None),
+                lambda t: mcp_server_retriever(fetcher, score_threshold=t or None),
                 catalogue.MCP_SERVER_CASES,
                 k=k,
                 modality="mcp_servers",
             ),
         ]
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 def flatten(reports: list[RetrievalReport]) -> dict[str, dict[str, Any]]:

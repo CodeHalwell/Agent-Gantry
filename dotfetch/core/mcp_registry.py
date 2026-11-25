@@ -1,0 +1,236 @@
+"""
+MCP Server registry for dotfetch.
+
+Manages MCP server registration, health tracking, and lifecycle.
+"""
+
+from __future__ import annotations
+
+import logging
+from collections.abc import Sequence
+from typing import Any
+
+from dotfetch.adapters.executors.mcp_client import MCPClient, _schedule_client_close
+from dotfetch.schema.mcp import MCPServerDefinition
+
+logger = logging.getLogger(__name__)
+
+
+class MCPRegistry:
+    """
+    Registry for managing MCP server definitions and clients.
+
+    Handles:
+    - MCP server registration and metadata
+    - Client lifecycle management
+    - Server health tracking
+    - Lazy client instantiation
+    """
+
+    def __init__(self) -> None:
+        """Initialize the registry."""
+        self._servers: dict[str, MCPServerDefinition] = {}
+        self._clients: dict[str, MCPClient] = {}
+        # Clients dropped from the cache that could not be closed at the time,
+        # because no event loop was running to schedule the close on. Held so
+        # ``close_all_clients`` can still reach them; otherwise the HTTP
+        # connection or stdio subprocess would survive to process teardown.
+        self._retired: list[MCPClient] = []
+        self._pending: list[MCPServerDefinition] = []
+
+    def register_server(
+        self,
+        server: MCPServerDefinition,
+    ) -> None:
+        """
+        Register an MCP server definition.
+
+        Args:
+            server: The server definition to register
+        """
+        key = server.qualified_name
+        self._servers[key] = server
+        logger.debug(f"Registered MCP server: {key}")
+
+    def add_pending(self, server: MCPServerDefinition) -> None:
+        """
+        Add a server to the pending list.
+
+        Args:
+            server: The server definition to add
+        """
+        self._pending.append(server)
+
+    def get_server(self, name: str, namespace: str = "default") -> MCPServerDefinition | None:
+        """
+        Get a server by name and namespace.
+
+        Args:
+            name: Server name
+            namespace: Server namespace
+
+        Returns:
+            The server definition if found
+        """
+        key = f"{namespace}.{name}"
+        return self._servers.get(key)
+
+    def get_client(self, name: str, namespace: str = "default") -> MCPClient | None:
+        """
+        Get or create an MCP client for a server.
+
+        Lazy instantiation - client is created on first access.
+
+        Args:
+            name: Server name
+            namespace: Server namespace
+
+        Returns:
+            MCPClient instance or None if server not found
+        """
+        key = f"{namespace}.{name}"
+        server = self._servers.get(key)
+
+        if not server:
+            return None
+
+        # Return existing client if available
+        if key in self._clients:
+            return self._clients[key]
+
+        # Create new client from server definition
+        from dotfetch.schema.config import MCPServerConfig
+
+        config = MCPServerConfig(**server.to_config())
+        client = MCPClient(config)
+        self._clients[key] = client
+        logger.debug(f"Created MCP client for: {key}")
+
+        return client
+
+    def _retire_client(self, key: str) -> bool:
+        """Drop the cached client for ``key``, closing it now or in ``close_all_clients``."""
+        client = self._clients.pop(key, None)
+        if client is None:
+            return False
+        if not _schedule_client_close(client):
+            self._retired.append(client)
+        return True
+
+    def forget_client(self, name: str, namespace: str = "default") -> bool:
+        """Drop a cached client, keeping the server (it now points elsewhere).
+
+        Returns:
+            True if a cached client was dropped.
+        """
+        if not self._retire_client(f"{namespace}.{name}"):
+            return False
+        logger.debug(f"Dropped cached MCP client for: {namespace}.{name}")
+        return True
+
+    def list_servers(self, namespace: str | None = None) -> list[MCPServerDefinition]:
+        """
+        List all registered servers.
+
+        Args:
+            namespace: Filter by namespace
+
+        Returns:
+            List of server definitions
+        """
+        servers = list(self._servers.values())
+        if namespace:
+            servers = [s for s in servers if s.namespace == namespace]
+        return servers
+
+    def delete_server(self, name: str, namespace: str = "default") -> bool:
+        """
+        Delete a server from the registry.
+
+        Args:
+            name: Server name
+            namespace: Server namespace
+
+        Returns:
+            True if the server was deleted
+        """
+        key = f"{namespace}.{name}"
+        if key not in self._servers:
+            return False
+        del self._servers[key]
+        self._retire_client(key)
+        logger.debug(f"Deleted MCP server: {key}")
+        return True
+
+    async def close_all_clients(self) -> None:
+        """Close all cached clients' persistent connections.
+
+        Closes run concurrently so shutdown is bounded by the slowest single
+        client (each close can wait up to 5s on a stuck owner task), not the
+        sum across servers.
+        """
+        import asyncio
+
+        # Retired clients included: one dropped outside a running loop had no
+        # way to be closed then, and is unreachable through the cache now.
+        clients = list(self._clients.values()) + self._retired
+        # Cleared *before* the await: a client registered or retired while the
+        # gather is in flight must stay reachable through the cache.
+        self._clients.clear()
+        self._retired.clear()
+        results = await asyncio.gather(
+            *(client.close() for client in clients), return_exceptions=True
+        )
+        for result in results:
+            if isinstance(result, BaseException):
+                logger.debug("Error closing MCP client", exc_info=result)
+
+    def get_pending(self) -> list[MCPServerDefinition]:
+        """
+        Get servers pending sync to vector store.
+
+        Returns:
+            List of pending server definitions
+        """
+        return self._pending.copy()
+
+    def drain_pending(self, covered: Sequence[MCPServerDefinition]) -> None:
+        """Drop only the pending entries ``covered`` accounts for.
+
+        A registration landing while a sync is awaiting stays pending. Identity,
+        not equality: two registrations of one definition are distinct entries.
+        """
+        done = {id(server) for server in covered}
+        self._pending = [server for server in self._pending if id(server) not in done]
+
+    def update_health(
+        self,
+        name: str,
+        namespace: str = "default",
+        **health_updates: Any,
+    ) -> bool:
+        """
+        Update health metrics for a server.
+
+        Args:
+            name: Server name
+            namespace: Server namespace
+            **health_updates: Health fields to update
+
+        Returns:
+            True if server was found and updated
+        """
+        server = self.get_server(name, namespace)
+        if not server:
+            return False
+
+        for key, value in health_updates.items():
+            if hasattr(server.health, key):
+                setattr(server.health, key, value)
+
+        return True
+
+    @property
+    def server_count(self) -> int:
+        """Return the number of registered servers."""
+        return len(self._servers)

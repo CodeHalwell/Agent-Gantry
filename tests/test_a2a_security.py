@@ -1,8 +1,8 @@
 import pytest
 from pydantic import ValidationError
 
-from agent_gantry.schema.a2a import AgentCard, AgentSkill
-from agent_gantry.schema.config import A2AAgentConfig
+from dotfetch.schema.a2a import AgentCard, AgentSkill
+from dotfetch.schema.config import A2AAgentConfig
 
 
 def test_a2a_newline_injection():

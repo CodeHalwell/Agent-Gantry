@@ -1,5 +1,5 @@
 """
-Performance benchmarks for Agent-Gantry.
+Performance benchmarks for dotfetch.
 
 These tests verify the performance improvements from the code review:
 1. Event loop non-blocking in Nomic embedder
@@ -14,9 +14,9 @@ import time
 
 import pytest
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.base import EmbeddingAdapter
-from agent_gantry.adapters.vector_stores.memory import InMemoryVectorStore
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.base import EmbeddingAdapter
+from dotfetch.adapters.vector_stores.memory import InMemoryVectorStore
 
 
 class MockEmbedder(EmbeddingAdapter):
@@ -75,9 +75,9 @@ class MockEmbedder(EmbeddingAdapter):
 
 
 @pytest.fixture
-async def gantry_with_tools():
-    """Create a gantry instance with multiple tools for testing."""
-    gantry = AgentGantry(
+async def fetcher_with_tools():
+    """Create a fetcher instance with multiple tools for testing."""
+    fetcher = DotFetch(
         embedder=MockEmbedder(latency_ms=50),
         vector_store=InMemoryVectorStore(),
     )
@@ -85,7 +85,7 @@ async def gantry_with_tools():
     # Register 50 tools with diverse descriptions
     for i in range(50):
 
-        @gantry.register(namespace="test")
+        @fetcher.register(namespace="test")
         def tool_func(x: int = i) -> str:
             return f"Result from tool {x}"
 
@@ -93,32 +93,32 @@ async def gantry_with_tools():
         tool_func.__name__ = f"tool_{i}"
         tool_func.__doc__ = f"Tool number {i} for testing. Category: {i % 5}"
 
-    await gantry.sync()
-    return gantry
+    await fetcher.sync()
+    return fetcher
 
 
 @pytest.mark.asyncio
-async def test_concurrent_retrieval_throughput(gantry_with_tools):
+async def test_concurrent_retrieval_throughput(fetcher_with_tools):
     """
     Test that concurrent retrievals don't block each other.
 
     This verifies the Nomic embedder event loop blocking fix.
     Expected: Concurrent requests should complete much faster than sequential.
     """
-    gantry = gantry_with_tools
+    fetcher = fetcher_with_tools
     num_requests = 20
 
     # Test 1: Sequential retrievals (baseline)
     start = time.perf_counter()
     for i in range(num_requests):
-        await gantry.retrieve_tools(f"query {i}", limit=5)
+        await fetcher.retrieve_tools(f"query {i}", limit=5)
     sequential_duration = time.perf_counter() - start
 
     # Test 2: Concurrent retrievals (should overlap if non-blocking)
-    embedder = gantry._embedder
+    embedder = fetcher._embedder
     embedder.peak_in_flight = 0
     start = time.perf_counter()
-    tasks = [gantry.retrieve_tools(f"query {i}", limit=5) for i in range(num_requests)]
+    tasks = [fetcher.retrieve_tools(f"query {i}", limit=5) for i in range(num_requests)]
     await asyncio.gather(*tasks)
     concurrent_duration = time.perf_counter() - start
     peak_in_flight = embedder.peak_in_flight
@@ -170,7 +170,7 @@ async def test_mmr_embedding_caching():
     This verifies the MMR optimization from the code review.
     """
     embedder = MockEmbedder(latency_ms=50)
-    gantry = AgentGantry(
+    fetcher = DotFetch(
         embedder=embedder,
         vector_store=InMemoryVectorStore(),
     )
@@ -178,19 +178,19 @@ async def test_mmr_embedding_caching():
     # Register tools
     for i in range(10):
 
-        @gantry.register
+        @fetcher.register
         def tool_func(x: int = i) -> str:
             return f"Result {x}"
 
         tool_func.__name__ = f"diverse_tool_{i}"
         tool_func.__doc__ = f"Tool for task type {i}"
 
-    await gantry.sync()
+    await fetcher.sync()
     initial_embed_count = embedder.embed_count
 
     # Retrieve with MMR diversity
     start = time.perf_counter()
-    await gantry.retrieve_tools(
+    await fetcher.retrieve_tools(
         "task query",
         limit=5,
         diversity_factor=0.5,  # Enable MMR
@@ -253,16 +253,16 @@ async def test_embedding_latency():
 
 
 @pytest.mark.asyncio
-async def test_vector_search_performance(gantry_with_tools):
+async def test_vector_search_performance(fetcher_with_tools):
     """
     Benchmark vector search performance.
 
     Measures the speed of similarity search in the vector store.
     """
-    gantry = gantry_with_tools
+    fetcher = fetcher_with_tools
 
     # Generate a test query embedding
-    query_embedding = await gantry._embedder.embed_text("test query")
+    query_embedding = await fetcher._embedder.embed_text("test query")
 
     # Benchmark search performance.
     # Use time.perf_counter() — time.time() on Windows has ~15ms resolution and
@@ -270,7 +270,7 @@ async def test_vector_search_performance(gantry_with_tools):
     iterations = 100
     start = time.perf_counter()
     for _ in range(iterations):
-        await gantry._vector_store.search(
+        await fetcher._vector_store.search(
             query_vector=query_embedding,
             limit=10,
         )
@@ -297,7 +297,7 @@ async def test_vector_search_performance(gantry_with_tools):
 
 
 @pytest.mark.asyncio
-async def test_end_to_end_retrieval_latency(gantry_with_tools):
+async def test_end_to_end_retrieval_latency(fetcher_with_tools):
     """
     Benchmark end-to-end tool retrieval latency.
 
@@ -307,10 +307,10 @@ async def test_end_to_end_retrieval_latency(gantry_with_tools):
     - Scoring
     - Filtering
     """
-    gantry = gantry_with_tools
+    fetcher = fetcher_with_tools
 
     # Warm up
-    await gantry.retrieve_tools("warmup query", limit=5)
+    await fetcher.retrieve_tools("warmup query", limit=5)
 
     # Benchmark retrieval
     iterations = 50
@@ -318,7 +318,7 @@ async def test_end_to_end_retrieval_latency(gantry_with_tools):
 
     for i in range(iterations):
         start = time.perf_counter()
-        tools = await gantry.retrieve_tools(f"query {i}", limit=5)
+        tools = await fetcher.retrieve_tools(f"query {i}", limit=5)
         latency = (time.perf_counter() - start) * 1000
         latencies.append(latency)
         assert len(tools) <= 5, "Limit not respected"
@@ -353,7 +353,7 @@ async def test_concurrent_execution_scalability():
 
     Measures throughput at different concurrency levels.
     """
-    gantry = AgentGantry(
+    fetcher = DotFetch(
         embedder=MockEmbedder(latency_ms=50),
         vector_store=InMemoryVectorStore(),
     )
@@ -361,14 +361,14 @@ async def test_concurrent_execution_scalability():
     # Register tools
     for i in range(30):
 
-        @gantry.register
+        @fetcher.register
         def tool_func(x: int = i) -> str:
             return f"Result {x}"
 
         tool_func.__name__ = f"scale_tool_{i}"
         tool_func.__doc__ = f"Scalability test tool {i}"
 
-    await gantry.sync()
+    await fetcher.sync()
 
     # Test different concurrency levels
     concurrency_levels = [1, 5, 10, 20]
@@ -376,7 +376,7 @@ async def test_concurrent_execution_scalability():
 
     for concurrency in concurrency_levels:
         start = time.perf_counter()
-        tasks = [gantry.retrieve_tools(f"query {i}", limit=5) for i in range(concurrency)]
+        tasks = [fetcher.retrieve_tools(f"query {i}", limit=5) for i in range(concurrency)]
         await asyncio.gather(*tasks)
         duration = time.perf_counter() - start
         throughput = concurrency / duration if duration > 0 else float("inf")
@@ -408,4 +408,4 @@ async def test_concurrent_execution_scalability():
 
 if __name__ == "__main__":
     # Run benchmarks directly
-    asyncio.run(test_concurrent_retrieval_throughput(asyncio.run(gantry_with_tools())))
+    asyncio.run(test_concurrent_retrieval_throughput(asyncio.run(fetcher_with_tools())))

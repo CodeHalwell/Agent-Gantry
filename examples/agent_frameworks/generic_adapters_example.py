@@ -1,12 +1,12 @@
 """
-No adapter for your framework? Use the framework-neutral ``GantryToolset``.
+No adapter for your framework? Use the framework-neutral ``DotFetchToolset``.
 
 Every ``<Framework>Adapter`` in this directory is a thin layer over the same
-core: ``GantryToolset.select(query, limit=...)`` runs retrieval and returns
+core: ``DotFetchToolset.select(query, limit=...)`` runs retrieval and returns
 ``ToolSpec`` handles. Each spec carries what any framework's tool constructor
 wants — ``name``, ``description`` and a JSON-Schema ``parameters`` dict — plus
 ``ainvoke(**kwargs)`` / ``invoke(**kwargs)`` that execute through
-``gantry.execute`` (retries, timeouts, circuit breakers, security policy).
+``fetcher.execute`` (retries, timeouts, circuit breakers, security policy).
 Hand those three fields to your framework's tool type and point its callback
 at ``spec.ainvoke``; that is all a dedicated adapter does.
 
@@ -14,7 +14,7 @@ This file needs no framework installed and **no API key**.
 
 Run with::
 
-    pip install agent-gantry
+    pip install dotfetch
     python examples/agent_frameworks/generic_adapters_example.py
 """
 
@@ -23,19 +23,19 @@ from __future__ import annotations
 import asyncio
 import json
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-from agent_gantry.integrations.frameworks import GantryToolset
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
+from dotfetch.integrations.frameworks import DotFetchToolset
 
 USER_QUERY = "What is the market data for MSFT?"
 
 
 async def main() -> None:
-    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
+    fetcher = DotFetch(embedder=SimpleEmbedder(dimension=256))
     try:
         # `examples=[...]` is the text the router embeds — the single
         # highest-value field on a tool definition.
-        @gantry.register(
+        @fetcher.register(
             tags=["finance"],
             examples=["what's AAPL trading at right now", "get me live prices for TSLA"],
         )
@@ -43,7 +43,7 @@ async def main() -> None:
             """Get real-time market data for a ticker."""
             return {"ticker": ticker, "price": 250.45, "volume": "1.2M"}
 
-        @gantry.register(
+        @fetcher.register(
             tags=["finance"],
             examples=["convert 100 dollars to euros", "how much is 50 GBP in USD"],
         )
@@ -51,7 +51,7 @@ async def main() -> None:
             """Convert an amount of money from one currency to another."""
             return f"{amount} {frm} = {amount * 1.1:.2f} {to}"
 
-        @gantry.register(
+        @fetcher.register(
             tags=["comms"],
             examples=["email the team", "send Priya a note about the report"],
         )
@@ -59,13 +59,13 @@ async def main() -> None:
             """Send an email message to a named recipient."""
             return f"Emailed {to}."
 
-        await gantry.sync()
+        await fetcher.sync()
 
         # No score_threshold: it defaults to 0.0, and raising it is a
         # silent-drop trap on longer queries.
-        specs = await GantryToolset(gantry).select(USER_QUERY, limit=1)
+        specs = await DotFetchToolset(fetcher).select(USER_QUERY, limit=1)
 
-        print(f"Catalogue: 3 tools. Gantry selected {len(specs)} for this query:")
+        print(f"Catalogue: 3 tools. dotfetch selected {len(specs)} for this query:")
         for spec in specs:
             print(f"  - {spec.native_name}: {spec.description}")
 
@@ -76,11 +76,11 @@ async def main() -> None:
         print(json.dumps(spec.parameters, indent=2))
 
         # The callback you wire in is `spec.ainvoke` (or `spec.invoke` from
-        # sync code). It runs through gantry.execute like every adapter does.
-        print("\nInvoking it through Gantry:")
+        # sync code). It runs through fetcher.execute like every adapter does.
+        print("\nInvoking it through dotfetch:")
         print(f"  {spec.name}(ticker='MSFT') -> {await spec.ainvoke(ticker='MSFT')}")
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 if __name__ == "__main__":

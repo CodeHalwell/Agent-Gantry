@@ -12,7 +12,7 @@ import tracemalloc
 from datetime import datetime
 from typing import Any
 
-from agent_gantry.integrations.frameworks.base import _json_native
+from dotfetch.integrations.frameworks.base import _json_native
 
 
 def cases() -> dict[str, tuple[Any, dict[str, Any]]]:

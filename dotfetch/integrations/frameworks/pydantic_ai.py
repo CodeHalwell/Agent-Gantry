@@ -1,0 +1,542 @@
+"""Pydantic AI native tool adapter for dotfetch.
+
+Pydantic AI is a first-class target: dotfetch plugs into each of its native
+extension points rather than handing it opaque callables.
+
+- **Static tools** -- :meth:`PydanticAIAdapter.select` / :meth:`~PydanticAIAdapter.convert`
+  build ``pydantic_ai.Tool`` objects from dotfetch's JSON schema verbatim.
+- **Per-turn toolset** -- :meth:`PydanticAIAdapter.toolset` returns an
+  ``AbstractToolset`` that re-selects on every model step from the newest user
+  prompt or tool result (``Agent(model, toolsets=[...])``).
+- **Tool search** -- :meth:`PydanticAIAdapter.deferred_toolset` exposes the
+  catalogue as ``defer_loading`` tools and :meth:`PydanticAIAdapter.tool_search`
+  backs Pydantic AI's ``ToolSearch`` capability with dotfetch's semantic router,
+  so the model discovers tools by meaning while the tool list (and the provider
+  prompt cache) stays stable.
+- **Capability** -- :meth:`PydanticAIAdapter.capability` bundles either mode
+  with per-turn dotfetch skills as instructions (``Agent(model, capabilities=[...])``).
+
+Every path executes through ``fetcher.execute`` (security policy, retries,
+timeouts, circuit breakers, telemetry) and speaks Pydantic AI's own control
+flow: argument errors become ``ModelRetry`` so the model can correct itself,
+terminal failures become ``ToolFailed``, and dotfetch's confirmation gate becomes
+``ApprovalRequired`` -- Pydantic AI's human-in-the-loop flow -- with an
+approved replay executing exactly once. The run's ``RunContext`` (``deps``,
+``run_id``, ``tool_call_id``) is visible to dotfetch tool handlers through
+:func:`dotfetch.current_tool_invocation`, and the active OpenTelemetry span
+is propagated into dotfetch's execution telemetry.
+
+The ``pydantic_ai`` import is lazy so ``import dotfetch`` never requires
+Pydantic AI to be installed. Supported: ``pydantic-ai`` / ``pydantic-ai-slim``
+2.x (``ToolFailed`` is used where available; on earlier 2.x releases a
+terminal failure is returned as the tool's result instead).
+
+Public entry point: :class:`PydanticAIAdapter`.
+"""
+
+from __future__ import annotations
+
+import copy
+import logging
+from contextlib import nullcontext
+from typing import TYPE_CHECKING, Any, Literal
+
+from dotfetch.core.invocation import tool_invocation
+from dotfetch.integrations.frameworks.base import (
+    DEFAULT_TOOL_LIMIT,
+    BaseFrameworkAdapter,
+    DotFetchToolset,
+    ToolConfirmationRequiredError,
+    ToolExecutionError,
+    ToolSpec,
+    _coerce_arguments,
+)
+from dotfetch.integrations.frameworks.native import (
+    MODEL_CORRECTABLE_ERRORS as _MODEL_CORRECTABLE_ERRORS,
+)
+from dotfetch.integrations.frameworks.native import (
+    ErrorFormatter,
+    ErrorMode,
+    check_error_mode,
+    failure_text,
+)
+from dotfetch.integrations.frameworks.native import otel_ids as _otel_ids
+from dotfetch.schema.execution import ToolInvocationContext
+
+if TYPE_CHECKING:
+    from dotfetch.core.fetcher import DotFetch
+
+# How a failed dotfetch execution surfaces inside a Pydantic AI run.
+#
+# - ``"model"`` (default) -- Pydantic AI's own control flow: argument
+#   validation errors raise ``ModelRetry`` (the model sees the error and
+#   retries within the tool's retry budget), other failures raise
+#   ``ToolFailed`` (the model sees a terminal failure and adapts), and a
+#   confirmation-gated call raises ``ApprovalRequired``.
+#
+#   The model sees the failure's text (``error_type: message``), as it would
+#   from a hand-written tool -- so an exception message carrying internals
+#   (paths, connection strings) reaches the model and its logs. Raise
+#   model-safe messages from handlers, or use ``"raise"``.
+# - ``"raise"`` -- the cross-framework default contract: the
+#   :class:`~dotfetch.integrations.frameworks.base.ToolExecutionError`
+#   family propagates and ends the run.
+# ``ErrorMode`` / ``ErrorFormatter`` and the failure-text helpers are shared by
+# every first-class adapter; see :mod:`dotfetch.integrations.frameworks.native`.
+
+logger = logging.getLogger(__name__)
+
+FRAMEWORK_NAME = "pydantic_ai"
+
+_INSTALL_HINT = (
+    "Pydantic AI support requires `pydantic-ai` (2.x). Install it with "
+    "`pip install 'dotfetch[pydantic-ai]'` (or `uv add 'dotfetch[pydantic-ai]'`)."
+)
+
+#: Key under ``ToolDefinition.metadata`` carrying dotfetch's identity for a tool.
+METADATA_KEY = "dotfetch"
+
+
+def registry_token(fetcher: DotFetch) -> str:
+    """An in-process identity for ``fetcher``, stored in tool metadata.
+
+    Lets a search strategy tell its own registry's tools from those of another
+    ``DotFetch`` whose deferred toolset sits on the same agent.
+    """
+    return f"{id(fetcher):x}"
+
+
+def invocation_context(ctx: Any) -> ToolInvocationContext:
+    """Describe a Pydantic AI ``RunContext`` for dotfetch tool handlers."""
+    return ToolInvocationContext(
+        framework=FRAMEWORK_NAME,
+        native_context=ctx,
+        deps=getattr(ctx, "deps", None),
+        run_id=getattr(ctx, "run_id", None),
+        tool_call_id=getattr(ctx, "tool_call_id", None),
+        metadata={
+            "retry": getattr(ctx, "retry", 0),
+            "run_step": getattr(ctx, "run_step", None),
+            "tool_call_approved": getattr(ctx, "tool_call_approved", False) is True,
+        },
+    )
+
+
+def current_run_context() -> Any:
+    """The Pydantic AI ``RunContext`` of the tool call executing now, or ``None``.
+
+    Call from inside a dotfetch tool handler to reach ``ctx.deps`` and friends::
+
+        @fetcher.register
+        async def get_balance(account: str) -> str:
+            \"\"\"Fetch an account balance.\"\"\"
+            ctx = current_run_context()
+            return await ctx.deps.bank.balance(account)
+    """
+    from dotfetch.core.invocation import current_tool_invocation
+
+    invocation = current_tool_invocation()
+    if invocation is None or invocation.framework != FRAMEWORK_NAME:
+        return None
+    return invocation.native_context
+
+
+def to_pydantic_ai_exception(
+    spec: ToolSpec,
+    exc: ToolExecutionError,
+    *,
+    error_formatter: ErrorFormatter | None = None,
+) -> Exception | None:
+    """Translate a failed dotfetch execution into Pydantic AI's control flow.
+
+    Returns ``None`` for a terminal failure on a Pydantic AI release without
+    ``ToolFailed``: :func:`execute_for_pydantic_ai` then returns the failure
+    text as the tool's result, which is terminal (no retry loop) on every
+    release. ``ModelRetry`` would make the model repeat a call that cannot
+    succeed until the retry budget ran out and the run failed.
+    """
+    try:
+        from pydantic_ai.exceptions import ApprovalRequired, ModelRetry
+    except ImportError as import_exc:  # pragma: no cover - adapter needs pydantic_ai
+        raise ImportError(_INSTALL_HINT) from import_exc
+
+    if isinstance(exc, ToolConfirmationRequiredError):
+        return ApprovalRequired(
+            metadata={
+                METADATA_KEY: {
+                    "qualified_name": spec.qualified_name,
+                    "reason": exc.error,
+                }
+            }
+        )
+    message = failure_text(exc, error_formatter)
+    if exc.error_type in _MODEL_CORRECTABLE_ERRORS:
+        return ModelRetry(message)
+    try:
+        from pydantic_ai.exceptions import ToolFailed
+    except ImportError:  # 2.x releases before ToolFailed existed
+        return None
+    return ToolFailed(message)
+
+
+async def execute_for_pydantic_ai(
+    spec: ToolSpec,
+    arguments: Any,
+    ctx: Any,
+    *,
+    error_mode: ErrorMode = "model",
+    error_formatter: ErrorFormatter | None = None,
+) -> Any:
+    """Run ``spec`` through ``fetcher.execute`` on behalf of a Pydantic AI tool call.
+
+    - ``ctx.tool_call_approved`` (set by Pydantic AI only when the host
+      approved a deferred call via ``DeferredToolResults``) clears dotfetch's
+      confirmation gate for this one call; every denial check still runs.
+    - ``ctx`` is exposed to the handler via :func:`current_run_context`.
+    - The active OpenTelemetry span is passed on as the call's trace parent.
+    """
+    approved = ctx is not None and getattr(ctx, "tool_call_approved", False) is True
+    trace_id, parent_span_id = _otel_ids()
+    args = _coerce_arguments((), dict(arguments or {}))
+    scope = tool_invocation(invocation_context(ctx)) if ctx is not None else nullcontext()
+    try:
+        with scope:
+            return await spec._ainvoke(
+                args,
+                confirmation_approved=approved,
+                trace_id=trace_id,
+                parent_span_id=parent_span_id,
+            )
+    except ToolExecutionError as exc:
+        if error_mode == "raise":
+            raise
+        mapped = to_pydantic_ai_exception(spec, exc, error_formatter=error_formatter)
+        if mapped is None:
+            return f"Error: {failure_text(exc, error_formatter)}"
+        raise mapped from exc
+
+
+def json_schema_for(spec: ToolSpec) -> dict[str, Any]:
+    """The tool's JSON schema, copied so nothing downstream mutates the registry's."""
+    return copy.deepcopy(spec.parameters) or {"type": "object", "properties": {}}
+
+
+def _spec_to_pydantic_ai(
+    spec: ToolSpec,
+    *,
+    error_mode: ErrorMode = "model",
+    error_formatter: ErrorFormatter | None = None,
+) -> Any:
+    """Wrap a :class:`ToolSpec` as a Pydantic AI ``Tool``.
+
+    Uses ``Tool.from_schema`` so the JSON schema dotfetch already produced is sent
+    verbatim (enums, descriptions, nested objects), with ``takes_ctx=True`` so
+    the ``RunContext`` reaches :func:`execute_for_pydantic_ai`. The context is
+    positional-only, so a schema property called ``ctx`` cannot collide.
+
+    The ``pydantic_ai`` import happens here, lazily, so callers without Pydantic
+    AI installed only hit the error when they actually export a tool.
+    """
+    try:
+        from pydantic_ai.tools import Tool
+    except ImportError as exc:
+        raise ImportError(_INSTALL_HINT) from exc
+
+    async def _call(run_context: Any, /, **kwargs: Any) -> Any:
+        return await execute_for_pydantic_ai(
+            spec, kwargs, run_context, error_mode=error_mode, error_formatter=error_formatter
+        )
+
+    _call.__name__ = _call.__qualname__ = spec.native_name
+    _call.__doc__ = spec.description
+    return Tool.from_schema(
+        function=_call,
+        name=spec.native_name,
+        description=spec.description,
+        json_schema=json_schema_for(spec),
+        takes_ctx=True,
+    )
+
+
+class PydanticAIAdapter(BaseFrameworkAdapter):
+    """Route dotfetch tools into Pydantic AI through its native extension points.
+
+    Static ``Tool`` slices (:meth:`select`), a per-turn ``AbstractToolset``
+    (:meth:`toolset`, also what :meth:`live` returns), semantic tool search
+    (:meth:`deferred_toolset` + :meth:`tool_search`) and a bundled
+    ``Capability`` (:meth:`capability`). All route execution through
+    ``fetcher.execute`` and map outcomes to ``ModelRetry`` / ``ToolFailed`` /
+    ``ApprovalRequired`` (see :data:`ErrorMode`).
+
+    Args:
+        fetcher: The registry to select from and execute against.
+        default_limit: Default selection budget.
+        error_mode: Default :data:`ErrorMode` for every tool this adapter builds.
+        error_formatter: Rewrites failure text before the model sees it, for
+            every tool, toolset and capability this adapter builds (see
+            :data:`ErrorFormatter`). Default: ``error_type: message``, capped.
+    """
+
+    live_tier = "per-turn"
+    _live_delegate = "toolset"
+
+    def __init__(
+        self,
+        fetcher: DotFetch,
+        *,
+        default_limit: int = DEFAULT_TOOL_LIMIT,
+        error_mode: ErrorMode = "model",
+        error_formatter: ErrorFormatter | None = None,
+    ) -> None:
+        super().__init__(fetcher, default_limit=default_limit)
+        self._error_mode = check_error_mode(error_mode)
+        self._error_formatter = error_formatter
+
+    def _mode(self, error_mode: ErrorMode | None) -> ErrorMode:
+        return self._error_mode if error_mode is None else check_error_mode(error_mode)
+
+    @staticmethod
+    def convert(
+        spec: ToolSpec,
+        *,
+        error_mode: ErrorMode = "model",
+        error_formatter: ErrorFormatter | None = None,
+    ) -> Any:
+        """Wrap a single :class:`ToolSpec` as a Pydantic AI ``Tool``."""
+        return _spec_to_pydantic_ai(
+            spec, error_mode=check_error_mode(error_mode), error_formatter=error_formatter
+        )
+
+    async def select(
+        self,
+        query: str,
+        *,
+        limit: int | None = None,
+        score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
+        tools_already_used: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
+        error_mode: ErrorMode | None = None,
+    ) -> list[Any]:
+        """Select tools for ``query`` once, as Pydantic AI ``Tool`` objects.
+
+        Hand the result to ``Agent(model, tools=[...])``. See
+        :meth:`DotFetchToolset.select` for the ``required``/``always_include``
+        pinning contract.
+        """
+        mode = self._mode(error_mode)
+        specs = await DotFetchToolset(self._fetcher).select(
+            query,
+            tools_already_used=tools_already_used,
+            **self._selection_kwargs(limit, score_threshold, namespaces, required, always_include),
+        )
+        return [
+            self.convert(s, error_mode=mode, error_formatter=self._error_formatter) for s in specs
+        ]
+
+    def toolset(
+        self,
+        *,
+        limit: int | None = None,
+        score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
+        error_mode: ErrorMode | None = None,
+        id: str | None = None,  # noqa: A002 - mirrors Pydantic AI's toolset ``id``
+        sticky: bool = True,
+        max_retries: int = 1,
+        query_from_results: bool = True,
+        max_offered: int | None = None,
+    ) -> Any:
+        """A live ``AbstractToolset`` that re-selects tools on every model step.
+
+        Plug into ``Agent(model, toolsets=[...])``. Each step's query is the
+        newest user prompt, or -- after a tool call -- the run's prompt plus
+        the newest tool result, so a chained task surfaces the next tool it
+        needs. Selections are cached per run, and with ``sticky`` (default)
+        tools offered earlier in a run stay available for the rest of it.
+
+        Args:
+            id: Toolset id, unique within an agent (default ``"dotfetch"``);
+                required to differ when an agent uses several dotfetch toolsets,
+                and stable ids are what durable execution keys on.
+            sticky: Keep earlier selections within a run.
+            max_offered: With ``sticky``, the most tools offered in one step
+                (default ``3 * limit``). The current step's selection, pins
+                included, is always offered in full; tools carried over from
+                earlier steps are dropped least recently selected first, so a
+                long run keeps the token savings selection exists for.
+            max_retries: ``ModelRetry`` budget per tool (Pydantic AI's default is 1).
+            query_from_results: Let tool output (its first 2,000 characters)
+                drive the next step's selection. That text is sent to the
+                embedder -- a remote service for OpenAI-style embedders -- so
+                set ``False`` when tool results may hold data that must not
+                leave the process; selection then uses the run's prompt.
+        """
+        from dotfetch.integrations.frameworks.pydantic_ai_live import _fetcher_toolset
+
+        return _fetcher_toolset(
+            self._fetcher,
+            **self._selection_kwargs(limit, score_threshold, namespaces, required, always_include),
+            error_mode=self._mode(error_mode),
+            error_formatter=self._error_formatter,
+            id=id,
+            sticky=sticky,
+            max_retries=max_retries,
+            query_from_results=query_from_results,
+            max_offered=max_offered,
+        )
+
+    def deferred_toolset(
+        self,
+        *,
+        namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
+        error_mode: ErrorMode | None = None,
+        id: str | None = None,  # noqa: A002 - mirrors Pydantic AI's toolset ``id``
+        max_retries: int = 1,
+    ) -> Any:
+        """The whole catalogue as ``defer_loading`` tools, for ``ToolSearch``.
+
+        The model sees none of these tools until it discovers them through
+        Pydantic AI's ``search_tools`` (or the provider's native tool search);
+        pair with :meth:`tool_search` so discovery uses dotfetch's semantic
+        router. ``required``/``always_include`` tools are left visible.
+        """
+        from dotfetch.integrations.frameworks.pydantic_ai_live import _fetcher_deferred_toolset
+
+        return _fetcher_deferred_toolset(
+            self._fetcher,
+            namespaces=namespaces,
+            required=required,
+            always_include=always_include,
+            error_mode=self._mode(error_mode),
+            error_formatter=self._error_formatter,
+            id=id,
+            max_retries=max_retries,
+        )
+
+    def search_strategy(
+        self,
+        *,
+        limit: int | None = None,
+        score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
+    ) -> Any:
+        """A ``ToolSearch`` strategy function backed by dotfetch's semantic router.
+
+        ``ToolSearch(strategy=adapter.search_strategy())``. dotfetch-managed tools
+        are ranked by semantic retrieval. When the agent has other deferred
+        tools too, they are ranked by keyword and fused with the semantic
+        ranking (reciprocal rank fusion) before ``limit`` applies, so both kinds
+        share the result budget fairly.
+        """
+        from dotfetch.integrations.frameworks.pydantic_ai_capability import (
+            fetcher_search_strategy,
+        )
+
+        return fetcher_search_strategy(
+            self._fetcher,
+            **self._selection_kwargs(limit, score_threshold, namespaces, None, None),
+        )
+
+    def tool_search(
+        self,
+        *,
+        limit: int | None = None,
+        score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
+    ) -> Any:
+        """Pydantic AI's ``ToolSearch`` capability using :meth:`search_strategy`."""
+        try:
+            from pydantic_ai.capabilities import ToolSearch
+        except ImportError as exc:
+            raise ImportError(_INSTALL_HINT) from exc
+
+        resolved = self._default_limit if limit is None else limit
+        return ToolSearch(
+            strategy=self.search_strategy(
+                limit=resolved, score_threshold=score_threshold, namespaces=namespaces
+            ),
+            max_results=resolved,
+        )
+
+    def capability(
+        self,
+        *,
+        mode: Literal["per-turn", "search"] = "per-turn",
+        limit: int | None = None,
+        score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
+        error_mode: ErrorMode | None = None,
+        skills: int = 0,
+        skill_namespaces: list[str] | None = None,
+        id: str | None = None,  # noqa: A002 - mirrors Pydantic AI's capability ``id``
+        sticky: bool = True,
+        max_retries: int = 1,
+        query_from_results: bool = True,
+        max_offered: int | None = None,
+    ) -> Any:
+        """One ``Capability`` wiring dotfetch into an agent: ``Agent(model, capabilities=[...])``.
+
+        Args:
+            mode: ``"per-turn"`` pushes a fresh top-k each step
+                (:meth:`toolset`); ``"search"`` defers the whole catalogue and
+                lets the model pull tools in via dotfetch-backed ``ToolSearch``
+                (:meth:`deferred_toolset` + :meth:`tool_search`) -- the tool
+                list stays stable, so provider prompt caching survives.
+            skills: When > 0, inject up to this many dotfetch skills relevant to
+                the current turn as instructions (requires a skills store).
+            skill_namespaces: Restrict injected skills to these namespaces.
+
+        The remaining arguments are as for :meth:`toolset`.
+        """
+        from dotfetch.integrations.frameworks.pydantic_ai_capability import (
+            _fetcher_capability,
+        )
+
+        if mode not in ("per-turn", "search"):
+            raise ValueError(f"mode must be 'per-turn' or 'search', not {mode!r}")
+        if skills < 0:
+            raise ValueError("skills must be >= 0")
+        kwargs = self._selection_kwargs(
+            limit, score_threshold, namespaces, required, always_include
+        )
+        mode_error = self._mode(error_mode)
+        if mode == "per-turn":
+            toolset = self.toolset(
+                **kwargs,
+                error_mode=mode_error,
+                id=id,
+                sticky=sticky,
+                max_retries=max_retries,
+                query_from_results=query_from_results,
+                max_offered=max_offered,
+            )
+            search = None
+        else:
+            toolset = self.deferred_toolset(
+                namespaces=namespaces,
+                required=required,
+                always_include=always_include,
+                error_mode=mode_error,
+                id=id,
+                max_retries=max_retries,
+            )
+            search = self.tool_search(
+                limit=kwargs["limit"], score_threshold=score_threshold, namespaces=namespaces
+            )
+        return _fetcher_capability(
+            self._fetcher,
+            toolset,
+            tool_search=search,
+            skills=skills,
+            skill_namespaces=skill_namespaces,
+            id=id,
+            query_from_results=query_from_results,
+        )

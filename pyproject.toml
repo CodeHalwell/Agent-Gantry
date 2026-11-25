@@ -3,14 +3,14 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "agent-gantry"
-version = "0.26.0"
+name = "dotfetch"
+version = "0.27.0"
 description = "Universal Tool Orchestration Platform - Intelligent, secure tool orchestration for LLM-based agent systems"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10,<3.15"
 authors = [
-    { name = "Agent-Gantry Contributors" }
+    { name = "dotfetch Contributors" }
 ]
 keywords = [
     "llm",
@@ -56,7 +56,7 @@ dev = [
     # tests build real question objects instead of stand-ins — worth having for
     # an SDK this new. Tests still importorskip it, so a resolution failure
     # here skips rather than breaks the suite.
-    "agent-gantry[system-one]",
+    "dotfetch[system-one]",
 ]
 agent-frameworks = [
     # Range: >=1.19.0,<2.0.0.
@@ -66,7 +66,7 @@ agent-frameworks = [
     # override-dependencies, which makes the pre-release "explicit" under the
     # prerelease policy so the resolver stops backtracking. The floor is raised
     # to 1.19.0 because uv will not climb past a satisfied floor on its own.
-    # Full suite passes on 1.19.0 with no Gantry code changes.
+    # Full suite passes on 1.19.0 with no dotfetch code changes.
     #
     # The original diagnosis, kept because it explains the mechanism:
     # IMPORTANT (2026-08-26): the universal uv.lock resolves this combined
@@ -84,10 +84,10 @@ agent-frameworks = [
     # Releases 1.9.0–1.15.0 (2026-06-18 → 2026-08) verified: 1.14.0/1.15.0
     # re-verified 2026-08-26 — the full AF adapter/provider/orchestration
     # suite passes on 1.15.0 standalone. Breaking changes remain confined to
-    # AF's own Skills API (1.11.0 caching restructure — Gantry uses its own
+    # AF's own Skills API (1.11.0 caching restructure — dotfetch uses its own
     # SkillRegistry, unaffected), workflow TOOL_CALL event emission and
     # harness-agent graduation (1.12.0), and fully-replayable workflow
-    # checkpoints (1.13.0). Nothing removes an API Gantry uses. The 1.6.0
+    # checkpoints (1.13.0). Nothing removes an API dotfetch uses. The 1.6.0
     # concurrent-instrumentation ContextVar bug has NO documented fix through
     # 1.15.0 — keep the disable_af_instrumentation shim (see below; fixed
     # 2026-08-26 to call agent_framework.observability.disable_instrumentation,
@@ -97,13 +97,13 @@ agent-frameworks = [
     # skills discovery, progressive tool exposure via FunctionInvocationContext,
     # background-agent harness support, and AgentFileStore / FileAccessProvider
     # for file-access operations.  Bug fixes: resolves message-id collisions in
-    # compaction (benefits GantryContextProvider), fixes unsafe serialisation of
-    # function arguments in AF's observability layer (benefits GantryToolBridge).
+    # compaction (benefits DotFetchContextProvider), fixes unsafe serialisation of
+    # function arguments in AF's observability layer (benefits DotFetchToolBridge).
     # Skill API refactored to async resource / script lookup (experimental — not
-    # used by Gantry, which uses its own SkillRegistry).  Sync tools now execute
-    # off the event loop; Gantry's bridge already wraps all callables as async so
+    # used by dotfetch, which uses its own SkillRegistry).  Sync tools now execute
+    # off the event loop; dotfetch's bridge already wraps all callables as async so
     # no double-wrapping occurs.  Breaking change: github-copilot-sdk upgraded to
-    # v1.0.0 stable (not used by Gantry).  No Gantry code changes required.
+    # v1.0.0 stable (not used by dotfetch).  No dotfetch code changes required.
     # Source: https://pypi.org/pypi/agent-framework/json
     #         https://github.com/microsoft/agent-framework/releases
     #
@@ -111,8 +111,8 @@ agent-frameworks = [
     # harness provider, A2AAgentSession with referenced task IDs, and fixes a
     # streaming memory-growth regression in DevUI and hosted handoff argument
     # serialisation.  Breaking change: "Remove Python-only declarative actions
-    # and rename alias kinds to C# canonical names." Gantry does NOT use
-    # declarative actions (@agent_framework.action), so no Gantry code is
+    # and rename alias kinds to C# canonical names." dotfetch does NOT use
+    # declarative actions (@agent_framework.action), so no dotfetch code is
     # affected.  Checkpoint restoration for MessageRole values is now fixed,
     # which benefits HandoffBuilder workflows that use serialised checkpoints.
     # Source: https://github.com/microsoft/agent-framework/releases
@@ -127,19 +127,19 @@ agent-frameworks = [
     # HandoffBuilder all dispatch one Agent at a time).
     #
     # Workaround for concurrent workflows on AF >=1.6.0:
-    #   from agent_gantry import disable_af_instrumentation
+    #   from dotfetch import disable_af_instrumentation
     #   disable_af_instrumentation()   # call once before agent construction
     # This shim calls agent_framework.telemetry.disable_instrumentation() when
-    # AF >=1.6.0 is detected.  Use GantryObservabilityMiddleware to retain
+    # AF >=1.6.0 is detected.  Use DotFetchObservabilityMiddleware to retain
     # per-invocation tracing without the ContextVar clash.
-    # GantryToolBridge also accepts disable_af_instrumentation=True to apply
+    # DotFetchToolBridge also accepts disable_af_instrumentation=True to apply
     # the shim automatically at bridge construction time.
     #
     # AF 1.5.0 features retained: intermediate output handling,
     # ContextProvider.before_run tools-in-session fix (directly benefits
-    # GantryContextProvider), Azure OpenAI recording, YAML block scalar parsing.
+    # DotFetchContextProvider), Azure OpenAI recording, YAML block scalar parsing.
     # Prior 1.4.0 breaking changes: (1) SkillFrontmatter extraction
-    # (experimental, not used by Gantry); (2) DevUI CORS tightening (not
+    # (experimental, not used by dotfetch); (2) DevUI CORS tightening (not
     # relevant). Prior 1.3.0 breaking changes: (3) skills multi-source
     # restructuring (experimental, not used); (4) bespoke Foundry toolbox
     # helpers removed in favour of MCP (not used). Prior 1.2.2 note retained:
@@ -250,7 +250,7 @@ agent-frameworks = [
 # main test matrix off six heavy dependency trees and keeps real-API drift
 # isolated to one job. Only *resolution* was retested — co-installing them has
 # its own hazards this arrangement avoids (see `disable_af_instrumentation` in
-# agent_gantry/__init__.py for one). Merging them in is a real option now, but
+# dotfetch/__init__.py for one). Merging them in is a real option now, but
 # it is a CI-shape decision rather than a dependency fix.
 #
 # REMOVED in 0.13.0: the smolagents, AutoGen / AG2 and Semantic Kernel adapters,
@@ -259,7 +259,7 @@ agent-frameworks = [
 # google-adk floor move to the 2.x line — see its comment above.
 #
 # EXCEPTION (since 0.21.0): Pydantic AI is a first-class target with its
-# own extra, so `pip install 'agent-gantry[pydantic-ai]'` pins a supported
+# own extra, so `pip install 'dotfetch[pydantic-ai]'` pins a supported
 # version instead of leaving it to the user. The `-slim` distribution keeps the
 # footprint to the core agent (no provider SDKs). Floor 2.0.0: the adapter
 # uses `Tool.from_schema(takes_ctx=True)`, `ApprovalRequired`,
@@ -421,7 +421,7 @@ embeddings = [
 openai = [
     # 2.53.0 (latest stable, 2026-08-03): adds gpt-5.5 and tool name/namespace
     # in Responses types. No breaking changes documented anywhere in
-    # 2.41.1 → 2.53.0 (2.49.0 enforces Python >=3.10, matching Gantry);
+    # 2.41.1 → 2.53.0 (2.49.0 enforces Python >=3.10, matching dotfetch);
     # Chat Completions / Responses / tool-calling surfaces intact.
     # Floor bumped 2.41.0 → 2.45.0 because langchain-openai 1.4.x and
     # openai-agents 0.19.x both require openai>=2.45.0,<3.
@@ -433,8 +433,8 @@ openai = [
 cohere = [
     # cohere 7.0.8 (latest stable 2026-07-23) — patch releases only since 7.0.3;
     # AsyncClientV2.rerank() unchanged. Breaking change in 7.0.0: minimum
-    # Python version raised from ^3.8 to ^3.10 — compatible with Gantry's
-    # requires-python = ">=3.10". Gantry's CohereReranker import
+    # Python version raised from ^3.8 to ^3.10 — compatible with dotfetch's
+    # requires-python = ">=3.10". dotfetch's CohereReranker import
     # (from cohere import AsyncClientV2) continues to work without modification.
     # Source: https://github.com/cohere-ai/cohere-python/releases (verified 2026-08-03)
     #         https://docs.cohere.com/v2/reference/rerank
@@ -459,9 +459,9 @@ system-one = [
     "typesafe-sdk>=0.7.0",
 ]
 # Pre-0.23.0 name of `system-one`, kept so existing installs and lockfiles
-# that ask for `agent-gantry[jev]` keep resolving. Same dependency set.
+# that ask for `dotfetch[jev]` keep resolving. Same dependency set.
 jev = [
-    "agent-gantry[system-one]",
+    "dotfetch[system-one]",
 ]
 # Individual vector store providers
 qdrant = [
@@ -482,7 +482,7 @@ lancedb = [
 # Combined vector stores
 vector-stores = [
     "qdrant-client>=1.7.0",
-    "agent-gantry[chroma]",
+    "dotfetch[chroma]",
     "asyncpg>=0.29.0",
 ]
 nomic = [
@@ -491,7 +491,7 @@ nomic = [
     "einops>=0.8.1",
 ]
 mcp = [
-    # Range <3: Gantry supports BOTH mcp 1.x and 2.x through one code path
+    # Range <3: dotfetch supports BOTH mcp 1.x and 2.x through one code path
     # (added 2026-08-03, verified by running the test suite against 1.28.1 and
     # 2.0.0). The client surface (`ClientSession` / `StdioServerParameters` /
     # `stdio_client`) survives unchanged in 2.0.0; the two real breaks are
@@ -505,7 +505,7 @@ mcp = [
     # (v1 client <-> v2 server). Note the combined `all` extra still locks
     # mcp 1.x because openai-agents pins mcp>=1.19,<2 and
     # agent-framework-core[all] pins mcp>=1.24,<2; standalone
-    # `agent-gantry[mcp]` installs may resolve 2.x.
+    # `dotfetch[mcp]` installs may resolve 2.x.
     # Source: https://pypi.org/pypi/mcp/json (verified 2026-08-03)
     "mcp>=1.27.2,<3",
 ]
@@ -517,14 +517,14 @@ a2a = [
 # LLM provider SDK dependencies
 anthropic = [
     # 0.120.2 (latest stable, 2026-07-28). 19 additive releases since 0.107.1;
-    # no breaking changes to Messages API or tool-use surfaces used by Gantry.
+    # no breaking changes to Messages API or tool-use surfaces used by dotfetch.
     # Integration-surface notes: 0.119.0 adds stop reason
     # `model_context_window_exceeded` (exhaustive stop_reason matching must
     # tolerate it); 0.120.0 adds tool addition/removal content blocks and
     # `tool_change` stream events (streaming handlers should ignore unknown
     # event types); 0.120.1 pins the SDK's mcp extra to <2, 0.120.2 supports
     # mcp v2 alongside v1.
-    # Note: claude-opus-4-1 retires 2026-08-05 — not referenced in Gantry's
+    # Note: claude-opus-4-1 retires 2026-08-05 — not referenced in dotfetch's
     # source or examples.
     # Source: https://pypi.org/pypi/anthropic/json (verified 2026-08-03)
     #         https://github.com/anthropics/anthropic-sdk-python/releases
@@ -549,14 +549,14 @@ google-vertexai = [
 mistral = [
     # Update 2026-08-03: the PyPI quarantine of mistralai (imposed 2026-05-12
     # after a malicious 2.4.6 upload) has been LIFTED — releases resumed
-    # 2026-06-03 and the latest is 2.8.0 (2026-07-28). Gantry deliberately
+    # 2026-06-03 and the latest is 2.8.0 (2026-07-28). dotfetch deliberately
     # keeps the OpenAI-compatible path: Mistral's chat endpoint works with the
     # OpenAI SDK via base_url="https://api.mistral.ai/v1" on AsyncOpenAI(),
-    # and the MistralAdapter in agent_gantry.adapters.tool_spec translates
+    # and the MistralAdapter in dotfetch.adapters.tool_spec translates
     # tool schemas correctly for this pattern. Reinstating the native SDK
     # (mistralai>=2.5.0, i.e. post-incident) is possible but would require
     # adapter code changes — tracked as a possible follow-up, not done here.
-    # Install with: pip install "agent-gantry[mistral]"
+    # Install with: pip install "dotfetch[mistral]"
     "openai>=2.45.0",
 ]
 groq = [
@@ -571,24 +571,24 @@ llm-providers = [
     # resolves to openai>=2.36.0 (Mistral is OpenAI-compatible). Including it
     # here ensures [all] users inherit the mistral path and any future
     # Mistral-specific dependencies are picked up automatically.
-    "agent-gantry[openai,anthropic,google-genai,google-vertexai,mistral,groq]",
+    "dotfetch[openai,anthropic,google-genai,google-vertexai,mistral,groq]",
 ]
 all = [
-    "agent-gantry[dev,embeddings,openai,cohere,system-one,vector-stores,lancedb,nomic,mcp,a2a,llm-providers,agent-frameworks,pydantic-ai,example-tools]",
+    "dotfetch[dev,embeddings,openai,cohere,system-one,vector-stores,lancedb,nomic,mcp,a2a,llm-providers,agent-frameworks,pydantic-ai,example-tools]",
 ]
 
 [project.scripts]
-agent-gantry = "agent_gantry.cli:main"
+dotfetch = "dotfetch.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/CodeHalwell/Agent-Gantry"
 Repository = "https://github.com/CodeHalwell/Agent-Gantry"
 
 [tool.hatch.build.targets.wheel]
-packages = ["agent_gantry"]
+packages = ["dotfetch"]
 
 [tool.hatch.build.targets.wheel.shared-data]
-"agent_gantry/skills/agent-gantry" = "share/claude/skills/agent-gantry"
+"dotfetch/skills/dotfetch" = "share/claude/skills/dotfetch"
 
 [tool.hatch.build]
 # Make sure SKILL.md and the references/ tree ship inside the wheel
@@ -597,11 +597,16 @@ packages = ["agent_gantry"]
 # find the skill via the standard discovery path
 # (``$VENV/share/claude/skills/`` is searched at startup).
 include = [
-    "agent_gantry/py.typed",
-    "agent_gantry/**/*.py",
-    "agent_gantry/**/*.md",
-    "agent_gantry/**/*.txt",
-    "agent_gantry/skills/**/*",
+    "dotfetch/py.typed",
+    "dotfetch/**/*.py",
+    "dotfetch/**/*.md",
+    "dotfetch/**/*.txt",
+    "dotfetch/skills/**/*",
+]
+# The legacy ``agent-gantry`` shim package lives in shim/agent-gantry/ and is
+# built and released on its own; keep it out of the dotfetch sdist and wheel.
+exclude = [
+    "shim/",
 ]
 
 [tool.ruff]

@@ -12,8 +12,8 @@ import types
 
 import pytest
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
 
 
 class _FakeStructuredTool:
@@ -47,8 +47,8 @@ def fake_langchain(monkeypatch):
 
 
 @pytest.fixture
-async def gantry():
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+async def fetcher():
+    g = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
     @g.register(tags=["email"])
     def send_email(to: str, body: str = "") -> str:
@@ -64,11 +64,11 @@ async def gantry():
     return g
 
 
-async def test_spec_to_langchain_builds_native_tool(fake_langchain, gantry):
-    from agent_gantry.integrations.frameworks.base import GantryToolset
-    from agent_gantry.langchain import LangChainAdapter
+async def test_spec_to_langchain_builds_native_tool(fake_langchain, fetcher):
+    from dotfetch.integrations.frameworks.base import DotFetchToolset
+    from dotfetch.langchain import LangChainAdapter
 
-    specs = await GantryToolset(gantry).select("send an email", limit=1)
+    specs = await DotFetchToolset(fetcher).select("send an email", limit=1)
     spec = specs[0]
     tool = LangChainAdapter.convert(spec)
 
@@ -77,14 +77,14 @@ async def test_spec_to_langchain_builds_native_tool(fake_langchain, gantry):
     assert tool.args_schema == spec.parameters
     assert tool.args_schema["properties"]["to"]["type"] == "string"
 
-    # The captured coroutine routes through gantry.execute and returns the result.
+    # The captured coroutine routes through fetcher.execute and returns the result.
     assert await tool.coroutine(to="boss@x.com") == "sent:boss@x.com"
 
 
-async def test_for_langchain_returns_tool_list(fake_langchain, gantry):
-    from agent_gantry.langchain import LangChainAdapter
+async def test_for_langchain_returns_tool_list(fake_langchain, fetcher):
+    from dotfetch.langchain import LangChainAdapter
 
-    tools = await LangChainAdapter(gantry).select("send an email", limit=2)
+    tools = await LangChainAdapter(fetcher).select("send an email", limit=2)
 
     assert isinstance(tools, list)
     assert len(tools) >= 1
@@ -92,7 +92,7 @@ async def test_for_langchain_returns_tool_list(fake_langchain, gantry):
     assert "send_email" in names
 
 
-async def test_missing_langchain_raises_helpful_error(monkeypatch, gantry):
+async def test_missing_langchain_raises_helpful_error(monkeypatch, fetcher):
     # Ensure the lazy import fails even if a real package is somehow present.
     # Null BOTH the parent package and the submodule the adapter imports —
     # nulling only the parent doesn't force failure when `langchain_core.tools`
@@ -100,9 +100,9 @@ async def test_missing_langchain_raises_helpful_error(monkeypatch, gantry):
     monkeypatch.setitem(sys.modules, "langchain_core", None)
     monkeypatch.setitem(sys.modules, "langchain_core.tools", None)
 
-    from agent_gantry.integrations.frameworks.base import GantryToolset
-    from agent_gantry.langchain import LangChainAdapter
+    from dotfetch.integrations.frameworks.base import DotFetchToolset
+    from dotfetch.langchain import LangChainAdapter
 
-    specs = await GantryToolset(gantry).select("send an email", limit=1)
-    with pytest.raises(ImportError, match=r"agent-gantry\[langchain\]"):
+    specs = await DotFetchToolset(fetcher).select("send an email", limit=1)
+    with pytest.raises(ImportError, match=r"dotfetch\[langchain\]"):
         LangChainAdapter.convert(specs[0])

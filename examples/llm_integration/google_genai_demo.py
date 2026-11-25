@@ -1,7 +1,7 @@
 """
-Google GenAI (Gemini) + Agent-Gantry integration demo.
+Google GenAI (Gemini) + dotfetch integration demo.
 
-Shows three ways to hand Gantry-selected tools to Gemini: manual ``retrieve``
+Shows three ways to hand dotfetch-selected tools to Gemini: manual ``retrieve``
 + ``to_dialect("gemini")`` with the full function-call / function-response
 round trip, the ``@with_semantic_tools(dialect="gemini")`` decorator, and the
 typed ``GeminiAdapter``.
@@ -9,7 +9,7 @@ typed ``GeminiAdapter``.
 Requires GOOGLE_API_KEY; exits with a message if it is missing.
 
 Install:
-    pip install "agent-gantry[google-genai]"
+    pip install "dotfetch[google-genai]"
 """
 
 import asyncio
@@ -17,16 +17,16 @@ import os
 
 from dotenv import load_dotenv
 
-from agent_gantry import AgentGantry, set_default_gantry, with_semantic_tools
-from agent_gantry.schema.execution import ToolCall
-from agent_gantry.schema.query import ConversationContext, ToolQuery
+from dotfetch import DotFetch, set_default_fetcher, with_semantic_tools
+from dotfetch.schema.execution import ToolCall
+from dotfetch.schema.query import ConversationContext, ToolQuery
 
 # Load environment variables
 load_dotenv()
 
 
 async def main():
-    print("=== Agent-Gantry + Google GenAI (Gemini) Integration Demo ===\n")
+    print("=== dotfetch + Google GenAI (Gemini) Integration Demo ===\n")
 
     # 1. Check for API Key
     api_key = os.environ.get("GOOGLE_API_KEY")
@@ -35,13 +35,13 @@ async def main():
         print("   Please set it in your .env file.")
         return
 
-    # 2. Initialize Gantry
-    gantry = AgentGantry()
-    set_default_gantry(gantry)  # Set default for decorator usage
+    # 2. Initialize dotfetch
+    fetcher = DotFetch()
+    set_default_fetcher(fetcher)  # Set default for decorator usage
 
     try:
         # 3. Register Tools
-        @gantry.register(
+        @fetcher.register(
             tags=["search"],
             examples=["find documents about project alpha", "search the knowledge base for onboarding"],
         )
@@ -49,8 +49,8 @@ async def main():
             """Search the internal knowledge base for documents."""
             return f"Found 2 documents for '{query}': [Doc A, Doc B]"
 
-        await gantry.sync()
-        print(f"✅ Registered {gantry.tool_count} tools\n")
+        await fetcher.sync()
+        print(f"✅ Registered {fetcher.tool_count} tools\n")
 
         # 4. Initialize Google GenAI
         from google import genai
@@ -64,7 +64,7 @@ async def main():
         print(f"User Query: '{user_query}'")
 
         # A. Retrieve Tools
-        retrieval_result = await gantry.retrieve(
+        retrieval_result = await fetcher.retrieve(
             ToolQuery(context=ConversationContext(query=user_query), limit=1, score_threshold=0.0)
         )
 
@@ -86,7 +86,7 @@ async def main():
         else:
             config = None
 
-        print(f"Gantry retrieved {len(gemini_tools)} tool(s)")
+        print(f"dotfetch retrieved {len(gemini_tools)} tool(s)")
 
         # C. Call Gemini asynchronously via client.aio
         response = await client.aio.models.generate_content(
@@ -105,8 +105,8 @@ async def main():
             for fn in response.function_calls:
                 print(f"Gemini decided to call: {fn.name}({fn.args})")
 
-                # Execute securely via Gantry
-                result = await gantry.execute(ToolCall(tool_name=fn.name, arguments=dict(fn.args)))
+                # Execute securely via dotfetch
+                result = await fetcher.execute(ToolCall(tool_name=fn.name, arguments=dict(fn.args)))
                 print(f"Execution Result: {result.result}")
 
                 # Build the function response Part using the SDK helper; include
@@ -137,7 +137,7 @@ async def main():
         # --- Scenario: Using the Decorator ---
         print("\n--- Scenario: Using @with_semantic_tools Decorator (RECOMMENDED) ---")
 
-        # The decorator uses the default gantry set above and automatically
+        # The decorator uses the default fetcher set above and automatically
         # converts tools to Gemini format via dialect="gemini".
         # With dialect="gemini", each injected tool dict has the shape:
         #   {"name": "...", "description": "...", "parameters": {...}}
@@ -175,17 +175,17 @@ async def main():
                 print(f"Gemini decided to call: {fn.name}")
 
         # --- Scenario: Typed GeminiAdapter (provider-specific convenience) ---
-        # GeminiAdapter(gantry).tools(query, limit=n) bakes in dialect="gemini" and
+        # GeminiAdapter(fetcher).tools(query, limit=n) bakes in dialect="gemini" and
         # returns {"name", "description", "parameters"} dicts ready to feed straight
         # into types.FunctionDeclaration — no retrieve + to_dialect("gemini") needed.
         print("\n--- Scenario: Typed GeminiAdapter ---")
-        from agent_gantry.gemini import GeminiAdapter
+        from dotfetch.gemini import GeminiAdapter
 
         query_adapter = "Find documents about project gamma"
         print(f"User Query: '{query_adapter}'")
 
-        tool_dicts = await GeminiAdapter(gantry).tools(query_adapter, limit=1)
-        print(f"Gantry retrieved {len(tool_dicts)} tool(s)")
+        tool_dicts = await GeminiAdapter(fetcher).tools(query_adapter, limit=1)
+        print(f"dotfetch retrieved {len(tool_dicts)} tool(s)")
 
         if tool_dicts:
             decls = [
@@ -204,7 +204,7 @@ async def main():
                 for fn in response_adapter.function_calls:
                     print(f"Gemini (via adapter) called: {fn.name}")
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 if __name__ == "__main__":

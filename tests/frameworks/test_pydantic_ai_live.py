@@ -1,10 +1,10 @@
 """Tests for the deep, per-turn Pydantic AI (pydantic-ai) dynamic-tool provider.
 
-Exercises :class:`GantryToolset` against the *real* installed ``pydantic_ai``
+Exercises :class:`DotFetchToolset` against the *real* installed ``pydantic_ai``
 :class:`~pydantic_ai.toolsets.AbstractToolset` contract: it must be a usable
-toolset whose ``get_tools`` re-selects from Gantry each run (so the available
+toolset whose ``get_tools`` re-selects from dotfetch each run (so the available
 tool definitions change run-to-run as the query changes) and whose ``call_tool``
-routes execution through Gantry and returns the tool's result.
+routes execution through dotfetch and returns the tool's result.
 
 A minimal-but-real ``RunContext`` is constructed (deps/model/usage plus the
 run's ``prompt``/``messages``) so the context-derived per-turn query path is
@@ -24,15 +24,15 @@ from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.usage import RunUsage
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-from agent_gantry.integrations.frameworks.pydantic_ai_live import GantryToolset
-from agent_gantry.pydantic_ai import PydanticAIAdapter
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
+from dotfetch.integrations.frameworks.pydantic_ai_live import DotFetchToolset
+from dotfetch.pydantic_ai import PydanticAIAdapter
 
 
 @pytest.fixture
-async def gantry():
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+async def fetcher():
+    g = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
     @g.register(tags=["weather", "forecast"])
     def get_weather(city: str) -> str:
@@ -64,16 +64,16 @@ def _ctx(prompt: str) -> RunContext:
     )
 
 
-async def test_toolset_is_real_abstract_toolset(gantry):
-    ts = PydanticAIAdapter(gantry).toolset(limit=5)
+async def test_toolset_is_real_abstract_toolset(fetcher):
+    ts = PydanticAIAdapter(fetcher).toolset(limit=5)
     assert isinstance(ts, AbstractToolset)
-    assert isinstance(ts, GantryToolset)
+    assert isinstance(ts, DotFetchToolset)
     # Required abstract member.
-    assert ts.id == "agent-gantry"
+    assert ts.id == "dotfetch"
 
 
-async def test_get_tools_reselects_per_turn_from_context(gantry):
-    ts = PydanticAIAdapter(gantry).toolset(limit=2)
+async def test_get_tools_reselects_per_turn_from_context(fetcher):
+    ts = PydanticAIAdapter(fetcher).toolset(limit=2)
 
     # Run 1: a weather-focused prompt surfaces the weather tool def.
     weather_tools = await ts.get_tools(_ctx("what is the weather forecast for the city"))
@@ -94,8 +94,8 @@ async def test_get_tools_reselects_per_turn_from_context(gantry):
     assert isinstance(email_tools["send_email"], ToolsetTool)
 
 
-async def test_get_tools_honours_explicit_query_override(gantry):
-    ts = PydanticAIAdapter(gantry).toolset(limit=2)
+async def test_get_tools_honours_explicit_query_override(fetcher):
+    ts = PydanticAIAdapter(fetcher).toolset(limit=2)
     ts.set_query("send an email message to a recipient")
 
     # The explicit override wins even though the context prompt is about math.
@@ -103,19 +103,19 @@ async def test_get_tools_honours_explicit_query_override(gantry):
     assert "send_email" in tools
 
 
-async def test_call_tool_executes_through_gantry(gantry):
-    ts = PydanticAIAdapter(gantry).toolset(limit=3)
+async def test_call_tool_executes_through_fetcher(fetcher):
+    ts = PydanticAIAdapter(fetcher).toolset(limit=3)
     ctx = _ctx("what is the weather forecast for the city")
     tools = await ts.get_tools(ctx)
 
     result = await ts.call_tool("get_weather", {"city": "Paris"}, ctx, tools["get_weather"])
 
-    # The result reflects the actual gantry execution.
+    # The result reflects the actual fetcher execution.
     assert result == "weather:Paris:sunny"
 
 
-async def test_call_tool_without_prior_get_tools_reselects(gantry):
-    ts = PydanticAIAdapter(gantry).toolset(limit=3)
+async def test_call_tool_without_prior_get_tools_reselects(fetcher):
+    ts = PydanticAIAdapter(fetcher).toolset(limit=3)
     ctx = _ctx("send an email message to a recipient")
 
     # No prior get_tools; call_tool runs a fresh selection from the context.

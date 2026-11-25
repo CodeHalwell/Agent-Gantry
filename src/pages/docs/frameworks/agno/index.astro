@@ -2,40 +2,40 @@
 import DocsLayout from '../../../../layouts/DocsLayout.astro';
 import CodeBlock from '../../../../components/CodeBlock.astro';
 ---
-<DocsLayout title="Agno guide | Agent-Gantry" description="Integrate Agent-Gantry with Agno: one agent that re-selects tools for every run, failed tool results the model can read, approval through requires_confirmation, and the RunContext.">
+<DocsLayout title="Agno guide | dotfetch" description="Integrate dotfetch with Agno: one agent that re-selects tools for every run, failed tool results the model can read, approval through requires_confirmation, and the RunContext.">
   <p class="eyebrow">Framework guide</p>
   <h1>Agno</h1>
-  <p class="lead">Agent-Gantry plugs into Agno's own mechanisms: a callable <code>tools</code> factory that picks each run's tools, failed tool results for errors, <code>requires_confirmation</code> for human approval, and the <code>RunContext</code> for your run state.</p>
+  <p class="lead">dotfetch plugs into Agno's own mechanisms: a callable <code>tools</code> factory that picks each run's tools, failed tool results for errors, <code>requires_confirmation</code> for human approval, and the <code>RunContext</code> for your run state.</p>
   <p><a class="pill" href="/Agent-Gantry/docs/frameworks/agno/advanced/">Advanced Agno usage →</a></p>
 
   <h2>Install</h2>
-  <CodeBlock lang="bash" code={`uv add "agent-gantry[agno]"   # agno >= 2.6.10`} />
+  <CodeBlock lang="bash" code={`uv add "dotfetch[agno]"   # agno >= 2.6.10`} />
 
   <h2>Basic page: tools picked every run</h2>
-  <CodeBlock lang="python" code={`from agent_gantry import AgentGantry
-from agent_gantry.agno import AgnoAdapter
+  <CodeBlock lang="python" code={`from dotfetch import DotFetch
+from dotfetch.agno import AgnoAdapter
 from agno.models.openai import OpenAIChat
 
-gantry = AgentGantry()
+fetcher = DotFetch()
 
-@gantry.register(examples=["where is my order", "has order 4471 shipped"])
+@fetcher.register(examples=["where is my order", "has order 4471 shipped"])
 def get_order_status(order_id: str) -> str:
     """Return the current shipping status for an order."""
     return "in_transit"
 
-await gantry.sync()
-agent = AgnoAdapter(gantry).agent(model=OpenAIChat(id="gpt-5.5"), limit=5)
+await fetcher.sync()
+agent = AgnoAdapter(fetcher).agent(model=OpenAIChat(id="gpt-5.5"), limit=5)
 run = await agent.arun("Has order 4471 shipped?")     # agent.run(...) works too`} />
   <p>For a fixed set, pass <code>Agent(tools=await adapter.select(query))</code> instead.</p>
 
   <h2>What the model sees when a tool fails</h2>
   <p>A failed call raises <code>AgnoToolError</code>, which Agno records as the tool's failed result (<code>tool_call_error=True</code>) with the text <code>"&lt;type&gt;: &lt;message&gt;"</code>, capped at 2,000 characters, so the model can correct a bad argument or try something else.</p>
-  <div class="callout"><strong>Redact or opt out:</strong> <code>AgnoAdapter(gantry, error_formatter=redact)</code> rewrites the text; <code>error_mode="raise"</code> raises the plain <code>ToolExecutionError</code> instead.</div>
+  <div class="callout"><strong>Redact or opt out:</strong> <code>AgnoAdapter(fetcher, error_formatter=redact)</code> rewrites the text; <code>error_mode="raise"</code> raises the plain <code>ToolExecutionError</code> instead.</div>
 
-  <h2>Reading run state from a Gantry tool</h2>
-  <CodeBlock lang="python" code={`from agent_gantry.agno import current_run_context
+  <h2>Reading run state from a dotfetch tool</h2>
+  <CodeBlock lang="python" code={`from dotfetch.agno import current_run_context
 
-@gantry.register
+@fetcher.register
 def get_balance(account: str) -> str:
     """Fetch an account balance for the signed-in user."""
     ctx = current_run_context()            # Agno RunContext, or None outside a run

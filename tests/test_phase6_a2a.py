@@ -11,34 +11,34 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agent_gantry import AgentGantry
-from agent_gantry.providers.a2a_client import A2AClient
-from agent_gantry.schema.a2a import AgentCard, AgentSkill
-from agent_gantry.schema.config import A2AAgentConfig
-from agent_gantry.schema.tool import ToolDefinition, ToolSource
-from agent_gantry.servers.a2a_server import create_a2a_server, generate_agent_card
+from dotfetch import DotFetch
+from dotfetch.providers.a2a_client import A2AClient
+from dotfetch.schema.a2a import AgentCard, AgentSkill
+from dotfetch.schema.config import A2AAgentConfig
+from dotfetch.schema.tool import ToolDefinition, ToolSource
+from dotfetch.servers.a2a_server import create_a2a_server, generate_agent_card
 
 
 class TestAgentCard:
     """Tests for Agent Card generation."""
 
     @pytest.mark.asyncio
-    async def test_generate_agent_card(self, gantry: AgentGantry) -> None:
-        """Test agent card generation from gantry instance."""
+    async def test_generate_agent_card(self, fetcher: DotFetch) -> None:
+        """Test agent card generation from fetcher instance."""
 
         # Register a few tools
-        @gantry.register
+        @fetcher.register
         def test_tool(x: int) -> int:
             """A test tool for agent card generation."""
             return x * 2
 
-        await gantry.sync()
+        await fetcher.sync()
 
         # Generate agent card
-        card = generate_agent_card(gantry, "http://localhost:8080")
+        card = generate_agent_card(fetcher, "http://localhost:8080")
 
         assert isinstance(card, AgentCard)
-        assert card.name == "AgentGantry"
+        assert card.name == "dotfetch"
         assert "tool" in card.description.lower()
         assert card.url == "http://localhost:8080"
         assert card.version == "1.0.0"
@@ -310,29 +310,29 @@ class TestA2AServer:
     """Tests for A2A server functionality."""
 
     @pytest.mark.asyncio
-    async def test_create_a2a_server(self, gantry: AgentGantry) -> None:
+    async def test_create_a2a_server(self, fetcher: DotFetch) -> None:
         """Test creating A2A server FastAPI app."""
         try:
-            app = create_a2a_server(gantry, base_url="http://localhost:8080")
+            app = create_a2a_server(fetcher, base_url="http://localhost:8080")
             assert app is not None
-            assert app.title == "AgentGantry A2A Server"
+            assert app.title == "dotfetch A2A Server"
         except ImportError:
             pytest.skip("FastAPI not installed")
 
     @pytest.mark.asyncio
-    async def test_agent_card_endpoint(self, gantry: AgentGantry) -> None:
+    async def test_agent_card_endpoint(self, fetcher: DotFetch) -> None:
         """Test /.well-known/agent.json endpoint."""
         try:
             from fastapi.testclient import TestClient
 
-            app = create_a2a_server(gantry, base_url="http://localhost:8080")
+            app = create_a2a_server(fetcher, base_url="http://localhost:8080")
             client = TestClient(app)
 
             response = client.get("/.well-known/agent.json")
             assert response.status_code == 200
             data = response.json()
 
-            assert data["name"] == "AgentGantry"
+            assert data["name"] == "dotfetch"
             assert data["url"] == "http://localhost:8080"
             assert "skills" in data
             assert len(data["skills"]) == 2
@@ -341,20 +341,20 @@ class TestA2AServer:
             pytest.skip("FastAPI not installed")
 
     @pytest.mark.asyncio
-    async def test_tasks_send_endpoint_tool_discovery(self, gantry: AgentGantry) -> None:
+    async def test_tasks_send_endpoint_tool_discovery(self, fetcher: DotFetch) -> None:
         """Test tasks/send endpoint with tool_discovery skill."""
         try:
             from fastapi.testclient import TestClient
 
             # Register a test tool
-            @gantry.register
+            @fetcher.register
             def calculate_sum(a: int, b: int) -> int:
                 """Calculate the sum of two numbers for testing."""
                 return a + b
 
-            await gantry.sync()
+            await fetcher.sync()
 
-            app = create_a2a_server(gantry, base_url="http://localhost:8080")
+            app = create_a2a_server(fetcher, base_url="http://localhost:8080")
             client = TestClient(app)
 
             # Send JSON-RPC request
@@ -393,8 +393,8 @@ class TestA2AIntegration:
     """Tests for end-to-end A2A integration."""
 
     @pytest.mark.asyncio
-    async def test_add_a2a_agent_to_gantry(self, gantry: AgentGantry) -> None:
-        """Test adding A2A agent to AgentGantry."""
+    async def test_add_a2a_agent_to_fetcher(self, fetcher: DotFetch) -> None:
+        """Test adding A2A agent to DotFetch."""
         config = A2AAgentConfig(
             name="test-agent",
             url="http://test-agent.example.com",
@@ -427,12 +427,12 @@ class TestA2AIntegration:
             mock_instance.get = AsyncMock(return_value=mock_response)
             mock_client.return_value = mock_instance
 
-            count = await gantry.add_a2a_agent(config)
+            count = await fetcher.add_a2a_agent(config)
 
             assert count == 1
 
             # Check that tool was added
-            tools = await gantry.list_tools(namespace="external")
+            tools = await fetcher.list_tools(namespace="external")
             assert len(tools) == 1
             assert tools[0].source == ToolSource.A2A_AGENT
             assert "translation" in tools[0].name
@@ -480,16 +480,16 @@ class TestA2AServerEnvelope:
     """The JSON-RPC envelope reports execution failures and malformed params."""
 
     @pytest.mark.asyncio
-    async def test_tasks_send_reports_execution_failures(self, gantry: AgentGantry) -> None:
+    async def test_tasks_send_reports_execution_failures(self, fetcher: DotFetch) -> None:
         testclient = pytest.importorskip("fastapi.testclient")
 
-        @gantry.register
+        @fetcher.register
         def boom(x: int) -> int:
             """Raise an error, to test the A2A envelope."""
             raise RuntimeError("kaboom")
 
-        await gantry.sync()
-        client = testclient.TestClient(create_a2a_server(gantry))
+        await fetcher.sync()
+        client = testclient.TestClient(create_a2a_server(fetcher))
         text = json.dumps({"tool_name": "boom", "arguments": {"x": 1}})
         data = client.post("/tasks/send", json=_task_request("tool_execution", text)).json()
         assert data["id"] == 7
@@ -497,9 +497,9 @@ class TestA2AServerEnvelope:
         assert "kaboom" in data["result"]["error"]
 
     @pytest.mark.asyncio
-    async def test_tasks_send_rejects_malformed_params(self, gantry: AgentGantry) -> None:
+    async def test_tasks_send_rejects_malformed_params(self, fetcher: DotFetch) -> None:
         testclient = pytest.importorskip("fastapi.testclient")
-        client = testclient.TestClient(create_a2a_server(gantry))
+        client = testclient.TestClient(create_a2a_server(fetcher))
         for params in (
             "not-an-object",
             {"messages": []},

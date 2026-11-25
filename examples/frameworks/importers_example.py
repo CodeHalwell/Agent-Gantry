@@ -1,12 +1,12 @@
-"""Reverse direction: register existing framework-native tools INTO Gantry.
+"""Reverse direction: register existing framework-native tools INTO dotfetch.
 
 ``universal_adapters_example.py`` (next to this file) shows the well-trodden
-direction — select Gantry tools, export them as a framework's native object.
+direction — select dotfetch tools, export them as a framework's native object.
 This example is the other half: you already have tools built with LangChain /
-CrewAI / LlamaIndex, and you want them in Gantry's registry so they gain
+CrewAI / LlamaIndex, and you want them in dotfetch's registry so they gain
 semantic routing, the security policy, retries, and telemetry — and become
 re-exportable to *any other* framework via the existing export adapters.
-"Register once, use anywhere" only holds if tools can enter Gantry from
+"Register once, use anywhere" only holds if tools can enter dotfetch from
 outside it, not just leave it.
 
 Each framework is optional and imported lazily: if a framework isn't
@@ -31,20 +31,20 @@ import os
 os.environ.setdefault("CREWAI_DISABLE_TELEMETRY", "true")
 os.environ.setdefault("OTEL_SDK_DISABLED", "true")
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-from agent_gantry.integrations.importers import (
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
+from dotfetch.integrations.importers import (
     register_crewai_tools,
     register_langchain_tools,
     register_llamaindex_tools,
 )
-from agent_gantry.schema.execution import ExecutionStatus, ToolCall
+from dotfetch.schema.execution import ExecutionStatus, ToolCall
 
 
-def build_gantry() -> AgentGantry:
-    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=128))
+def build_fetcher() -> DotFetch:
+    fetcher = DotFetch(embedder=SimpleEmbedder(dimension=128))
 
-    @gantry.register(
+    @fetcher.register(
         tags=["notes"],
         examples=["jot this down for me", "save a note that the meeting moved to 3pm"],
     )
@@ -52,10 +52,10 @@ def build_gantry() -> AgentGantry:
         """Save a short text note for later reference."""
         return f"saved: {text}"
 
-    return gantry
+    return fetcher
 
 
-async def import_from_langchain(gantry: AgentGantry) -> None:
+async def import_from_langchain(fetcher: DotFetch) -> None:
     try:
         from langchain_core.tools import tool as lc_tool
     except ImportError:
@@ -67,11 +67,11 @@ async def import_from_langchain(gantry: AgentGantry) -> None:
         """Get the current weather for a city."""
         return f"Sunny and 21C in {city}"
 
-    count = await register_langchain_tools(gantry, [get_weather], tags=["weather"])
+    count = await register_langchain_tools(fetcher, [get_weather], tags=["weather"])
     print(f"  [ok]   registered {count} LangChain tool(s): get_weather")
 
 
-async def import_from_crewai(gantry: AgentGantry) -> None:
+async def import_from_crewai(fetcher: DotFetch) -> None:
     try:
         from crewai.tools import BaseTool as CrewAIBaseTool
     except ImportError:
@@ -93,11 +93,11 @@ async def import_from_crewai(gantry: AgentGantry) -> None:
         def _run(self, amount: float, frm: str, to: str) -> str:
             return f"{amount} {frm} = {amount * 1.1:.2f} {to}"
 
-    count = await register_crewai_tools(gantry, [ConvertCurrencyTool()], tags=["finance"])
+    count = await register_crewai_tools(fetcher, [ConvertCurrencyTool()], tags=["finance"])
     print(f"  [ok]   registered {count} CrewAI tool(s): convert_currency")
 
 
-async def import_from_llamaindex(gantry: AgentGantry) -> None:
+async def import_from_llamaindex(fetcher: DotFetch) -> None:
     try:
         from llama_index.core.tools import FunctionTool
     except ImportError:
@@ -113,27 +113,27 @@ async def import_from_llamaindex(gantry: AgentGantry) -> None:
         name="search_flights",
         description="Search for available flights between two airports.",
     )
-    count = await register_llamaindex_tools(gantry, [native], tags=["travel"])
+    count = await register_llamaindex_tools(fetcher, [native], tags=["travel"])
     print(f"  [ok]   registered {count} LlamaIndex tool(s): search_flights")
 
 
 async def main() -> None:
-    gantry = build_gantry()
+    fetcher = build_fetcher()
 
     try:
         print("Importing native tools from each framework (skips cleanly if not installed):")
-        await import_from_langchain(gantry)
-        await import_from_crewai(gantry)
-        await import_from_llamaindex(gantry)
+        await import_from_langchain(fetcher)
+        await import_from_crewai(fetcher)
+        await import_from_llamaindex(fetcher)
 
-        await gantry.sync()
-        print(f"\nGantry now knows {gantry.tool_count} tool(s) total (native + imported).")
+        await fetcher.sync()
+        print(f"\nDotFetch now knows {fetcher.tool_count} tool(s) total (native + imported).")
 
         # Every imported tool is a first-class registry citizen: retrievable via
         # semantic search, transcodable to any provider dialect, and executable
-        # through the normal gantry.execute() path (security policy, retries,
-        # circuit breakers, telemetry) exactly like a @gantry.register-ed tool.
-        print("\nRetrieve + execute an imported tool through the normal gantry.execute() path:")
+        # through the normal fetcher.execute() path (security policy, retries,
+        # circuit breakers, telemetry) exactly like a @fetcher.register-ed tool.
+        print("\nRetrieve + execute an imported tool through the normal fetcher.execute() path:")
         for query, tool_name, args in [
             ("what's the weather like", "get_weather", {"city": "Paris"}),
             (
@@ -147,21 +147,21 @@ async def main() -> None:
             # under SimpleEmbedder's coarse hash-based similarity -- a real
             # embedder would rank the right tool near the top with a much
             # smaller limit.
-            found = await gantry.retrieve_tools(query, limit=10)
+            found = await fetcher.retrieve_tools(query, limit=10)
             names = [t["function"]["name"] for t in found]
             if tool_name not in names:
                 continue  # that framework wasn't installed, so it was never imported
-            result = await gantry.execute(ToolCall(tool_name=tool_name, arguments=args))
+            result = await fetcher.execute(ToolCall(tool_name=tool_name, arguments=args))
             status = "OK" if result.status == ExecutionStatus.SUCCESS else result.status.value
             print(f"  {tool_name:<18} status={status:<8} result={result.result!r}")
 
         print(
             "\nEvery imported tool also re-exports to any OTHER framework via the "
-            "existing adapters (agent_gantry.integrations.frameworks) -- import "
+            "existing adapters (dotfetch.integrations.frameworks) -- import "
             "once, use anywhere."
         )
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 if __name__ == "__main__":

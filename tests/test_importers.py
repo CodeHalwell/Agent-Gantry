@@ -1,4 +1,4 @@
-"""Tests for ``agent_gantry.integrations.importers`` (framework -> Gantry).
+"""Tests for ``dotfetch.integrations.importers`` (framework -> dotfetch).
 
 Stub-based tests build a minimal fake module for ``langchain_core.tools`` /
 ``crewai.tools`` / ``llama_index.core.tools`` via ``sys.modules`` (mirroring
@@ -28,19 +28,19 @@ from pydantic import BaseModel, Field
 os.environ.setdefault("CREWAI_DISABLE_TELEMETRY", "true")
 os.environ.setdefault("OTEL_SDK_DISABLED", "true")
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-from agent_gantry.integrations.importers import (
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
+from dotfetch.integrations.importers import (
     _normalize_tool_name,
     register_crewai_tools,
     register_langchain_tools,
     register_llamaindex_tools,
 )
-from agent_gantry.observability.console import NoopTelemetryAdapter
-from agent_gantry.schema.execution import ExecutionStatus, ToolCall
-from agent_gantry.schema.tool import ToolSource
+from dotfetch.observability.console import NoopTelemetryAdapter
+from dotfetch.schema.execution import ExecutionStatus, ToolCall
+from dotfetch.schema.tool import ToolSource
 
-_IMPORTERS_LOGGER = "agent_gantry.integrations.importers"
+_IMPORTERS_LOGGER = "dotfetch.integrations.importers"
 
 
 class _RecordingTelemetry(NoopTelemetryAdapter):
@@ -54,9 +54,9 @@ class _RecordingTelemetry(NoopTelemetryAdapter):
 
 
 @pytest.fixture
-def gantry() -> AgentGantry:
-    """A fresh AgentGantry with a deterministic offline embedder + telemetry recorder."""
-    return AgentGantry(embedder=SimpleEmbedder(dimension=64), telemetry=_RecordingTelemetry())
+def fetcher() -> DotFetch:
+    """A fresh DotFetch with a deterministic offline embedder + telemetry recorder."""
+    return DotFetch(embedder=SimpleEmbedder(dimension=64), telemetry=_RecordingTelemetry())
 
 
 # --------------------------------------------------------------------------- #
@@ -141,7 +141,7 @@ def fake_langchain(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
 
 
 class TestLangChainImporterStub:
-    async def test_schema_and_metadata_fidelity(self, fake_langchain, gantry: AgentGantry) -> None:
+    async def test_schema_and_metadata_fidelity(self, fake_langchain, fetcher: DotFetch) -> None:
         tool = _FakeLCBaseTool(
             name="Get Weather",
             description="Get the current weather for a city.",
@@ -149,11 +149,11 @@ class TestLangChainImporterStub:
             return_direct=True,
             fn=lambda city: f"sunny in {city}",
         )
-        count = await register_langchain_tools(gantry, [tool], tags=["weather"])
+        count = await register_langchain_tools(fetcher, [tool], tags=["weather"])
         assert count == 1
-        await gantry.sync()
+        await fetcher.sync()
 
-        gtool = await gantry.get_tool("get_weather", "langchain")
+        gtool = await fetcher.get_tool("get_weather", "langchain")
         assert gtool is not None
         assert gtool.description == "Get the current weather for a city."
         assert gtool.parameters_schema["properties"]["city"]["type"] == "string"
@@ -166,21 +166,21 @@ class TestLangChainImporterStub:
         assert gtool.metadata["framework"] == "langchain"
 
     async def test_tool_without_args_schema_falls_back_to_empty_object(
-        self, fake_langchain, gantry: AgentGantry
+        self, fake_langchain, fetcher: DotFetch
     ) -> None:
         tool = _FakeLCBaseTool(
             name="ping", description="Ping with no arguments at all.", fn=lambda: "pong"
         )
-        count = await register_langchain_tools(gantry, [tool])
+        count = await register_langchain_tools(fetcher, [tool])
         assert count == 1
-        await gantry.sync()
+        await fetcher.sync()
 
-        gtool = await gantry.get_tool("ping", "langchain")
+        gtool = await fetcher.get_tool("ping", "langchain")
         assert gtool is not None
         assert gtool.parameters_schema == {"type": "object", "properties": {}}
 
     async def test_sync_and_async_native_tools_both_execute(
-        self, fake_langchain, gantry: AgentGantry
+        self, fake_langchain, fetcher: DotFetch
     ) -> None:
         sync_tool = _FakeLCBaseTool(
             name="sync_add",
@@ -199,20 +199,20 @@ class TestLangChainImporterStub:
             afn=_amul,
         )
 
-        count = await register_langchain_tools(gantry, [sync_tool, async_tool])
+        count = await register_langchain_tools(fetcher, [sync_tool, async_tool])
         assert count == 2
-        await gantry.sync()
+        await fetcher.sync()
 
-        r1 = await gantry.execute(ToolCall(tool_name="sync_add", arguments={"a": 2, "b": 3}))
+        r1 = await fetcher.execute(ToolCall(tool_name="sync_add", arguments={"a": 2, "b": 3}))
         assert r1.status == ExecutionStatus.SUCCESS
         assert r1.result == 5
 
-        r2 = await gantry.execute(ToolCall(tool_name="async_mul", arguments={"a": 2, "b": 3}))
+        r2 = await fetcher.execute(ToolCall(tool_name="async_mul", arguments={"a": 2, "b": 3}))
         assert r2.status == ExecutionStatus.SUCCESS
         assert r2.result == 6
 
-    async def test_execution_routes_through_gantry_execute_and_telemetry(
-        self, fake_langchain, gantry: AgentGantry
+    async def test_execution_routes_through_fetcher_execute_and_telemetry(
+        self, fake_langchain, fetcher: DotFetch
     ) -> None:
         tool = _FakeLCBaseTool(
             name="echo",
@@ -220,49 +220,49 @@ class TestLangChainImporterStub:
             args_schema=_ValueArg,
             fn=lambda value: value,
         )
-        await register_langchain_tools(gantry, [tool])
-        await gantry.sync()
+        await register_langchain_tools(fetcher, [tool])
+        await fetcher.sync()
 
-        result = await gantry.execute(ToolCall(tool_name="echo", arguments={"value": "hi"}))
+        result = await fetcher.execute(ToolCall(tool_name="echo", arguments={"value": "hi"}))
         assert result.status == ExecutionStatus.SUCCESS
         assert result.result == "hi"
 
-        telemetry: _RecordingTelemetry = gantry._telemetry  # type: ignore[assignment]
+        telemetry: _RecordingTelemetry = fetcher._telemetry  # type: ignore[assignment]
         assert len(telemetry.executions) == 1
         recorded_call, recorded_result = telemetry.executions[0]
         assert recorded_call.tool_name == "echo"
         assert recorded_result.status == ExecutionStatus.SUCCESS
 
     async def test_skips_non_base_tool_objects_with_warning(
-        self, fake_langchain, gantry: AgentGantry, caplog: pytest.LogCaptureFixture
+        self, fake_langchain, fetcher: DotFetch, caplog: pytest.LogCaptureFixture
     ) -> None:
         valid = _FakeLCBaseTool(
             name="valid_tool", description="A valid tool for testing.", fn=lambda: "ok"
         )
         with caplog.at_level(logging.WARNING, logger=_IMPORTERS_LOGGER):
-            count = await register_langchain_tools(gantry, [valid, object(), "not-a-tool"])
+            count = await register_langchain_tools(fetcher, [valid, object(), "not-a-tool"])
         assert count == 1
         assert sum("is not a langchain_core BaseTool" in m for m in caplog.messages) == 2
 
     async def test_skips_tool_that_fails_conversion_with_warning(
-        self, fake_langchain, gantry: AgentGantry, caplog: pytest.LogCaptureFixture
+        self, fake_langchain, fetcher: DotFetch, caplog: pytest.LogCaptureFixture
     ) -> None:
-        # "register" collides with one of Gantry's reserved tool names, so
+        # "register" collides with one of dotfetch's reserved tool names, so
         # ToolDefinition construction raises -- this must be caught and
         # skipped, not propagated out of register_langchain_tools().
         bad = _FakeLCBaseTool(
-            name="register", description="Uses a reserved Gantry tool name.", fn=lambda: "x"
+            name="register", description="Uses a reserved dotfetch tool name.", fn=lambda: "x"
         )
         good = _FakeLCBaseTool(
             name="fine_tool", description="A perfectly fine tool.", fn=lambda: "ok"
         )
         with caplog.at_level(logging.WARNING, logger=_IMPORTERS_LOGGER):
-            count = await register_langchain_tools(gantry, [bad, good])
+            count = await register_langchain_tools(fetcher, [bad, good])
         assert count == 1
         assert any("conversion failed" in m for m in caplog.messages)
 
     async def test_duplicate_normalized_names_collide_and_second_is_skipped(
-        self, fake_langchain, gantry: AgentGantry, caplog: pytest.LogCaptureFixture
+        self, fake_langchain, fetcher: DotFetch, caplog: pytest.LogCaptureFixture
     ) -> None:
         t1 = _FakeLCBaseTool(
             name="Get Weather", description="First get weather tool.", fn=lambda: "a"
@@ -273,21 +273,21 @@ class TestLangChainImporterStub:
             fn=lambda: "b",
         )
         with caplog.at_level(logging.WARNING, logger=_IMPORTERS_LOGGER):
-            count = await register_langchain_tools(gantry, [t1, t2])
+            count = await register_langchain_tools(fetcher, [t1, t2])
         assert count == 1
         assert any("collides with another" in m for m in caplog.messages)
 
-    async def test_empty_tools_raises(self, fake_langchain, gantry: AgentGantry) -> None:
+    async def test_empty_tools_raises(self, fake_langchain, fetcher: DotFetch) -> None:
         with pytest.raises(ValueError, match="requires at least one tool"):
-            await register_langchain_tools(gantry, [])
+            await register_langchain_tools(fetcher, [])
 
     async def test_missing_langchain_raises_import_error(
-        self, monkeypatch: pytest.MonkeyPatch, gantry: AgentGantry
+        self, monkeypatch: pytest.MonkeyPatch, fetcher: DotFetch
     ) -> None:
         monkeypatch.setitem(sys.modules, "langchain_core", None)
         monkeypatch.setitem(sys.modules, "langchain_core.tools", None)
         with pytest.raises(ImportError, match="langchain-core"):
-            await register_langchain_tools(gantry, [object()])
+            await register_langchain_tools(fetcher, [object()])
 
 
 # --------------------------------------------------------------------------- #
@@ -345,7 +345,7 @@ def fake_crewai(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
 
 class TestCrewAIImporterStub:
     async def test_composite_description_is_recovered(
-        self, fake_crewai, gantry: AgentGantry
+        self, fake_crewai, fetcher: DotFetch
     ) -> None:
         # Mirrors the composite string crewai.tools.BaseTool._generate_description
         # actually produces at construction time.
@@ -360,11 +360,11 @@ class TestCrewAIImporterStub:
             args_schema=_MulArgs,
             impl=lambda x, y: x * y,
         )
-        count = await register_crewai_tools(gantry, [tool])
+        count = await register_crewai_tools(fetcher, [tool])
         assert count == 1
-        await gantry.sync()
+        await fetcher.sync()
 
-        gtool = await gantry.get_tool("multiply_numbers", "crewai")
+        gtool = await fetcher.get_tool("multiply_numbers", "crewai")
         assert gtool is not None
         assert gtool.description == "Multiply two integers together for testing."
         assert gtool.parameters_schema["properties"]["x"]["type"] == "integer"
@@ -373,34 +373,34 @@ class TestCrewAIImporterStub:
         assert gtool.metadata["framework"] == "crewai"
 
     async def test_description_without_marker_falls_back_to_raw_string(
-        self, fake_crewai, gantry: AgentGantry
+        self, fake_crewai, fetcher: DotFetch
     ) -> None:
         tool = _FakeCrewBaseTool(
             name="plain", description="A perfectly plain description.", impl=lambda: "x"
         )
-        count = await register_crewai_tools(gantry, [tool])
+        count = await register_crewai_tools(fetcher, [tool])
         assert count == 1
-        await gantry.sync()
+        await fetcher.sync()
 
-        gtool = await gantry.get_tool("plain", "crewai")
+        gtool = await fetcher.get_tool("plain", "crewai")
         assert gtool is not None
         assert gtool.description == "A perfectly plain description."
 
-    async def test_sync_run_executes(self, fake_crewai, gantry: AgentGantry) -> None:
+    async def test_sync_run_executes(self, fake_crewai, fetcher: DotFetch) -> None:
         tool = _FakeCrewBaseTool(
             name="sync_tool",
             description="A synchronous tool for testing.",
             args_schema=_XArg,
             impl=lambda x: x * 2,
         )
-        await register_crewai_tools(gantry, [tool])
-        await gantry.sync()
+        await register_crewai_tools(fetcher, [tool])
+        await fetcher.sync()
 
-        result = await gantry.execute(ToolCall(tool_name="sync_tool", arguments={"x": 5}))
+        result = await fetcher.execute(ToolCall(tool_name="sync_tool", arguments={"x": 5}))
         assert result.status == ExecutionStatus.SUCCESS
         assert result.result == 10
 
-    async def test_async_run_is_awaited_directly(self, fake_crewai, gantry: AgentGantry) -> None:
+    async def test_async_run_is_awaited_directly(self, fake_crewai, fetcher: DotFetch) -> None:
         async def _double(x: int) -> int:
             return x * 2
 
@@ -410,27 +410,27 @@ class TestCrewAIImporterStub:
             args_schema=_XArg,
             impl=_double,
         )
-        await register_crewai_tools(gantry, [tool])
-        await gantry.sync()
+        await register_crewai_tools(fetcher, [tool])
+        await fetcher.sync()
 
-        result = await gantry.execute(ToolCall(tool_name="async_tool", arguments={"x": 5}))
+        result = await fetcher.execute(ToolCall(tool_name="async_tool", arguments={"x": 5}))
         assert result.status == ExecutionStatus.SUCCESS
         assert result.result == 10
 
     async def test_skips_non_base_tool_with_warning(
-        self, fake_crewai, gantry: AgentGantry, caplog: pytest.LogCaptureFixture
+        self, fake_crewai, fetcher: DotFetch, caplog: pytest.LogCaptureFixture
     ) -> None:
         valid = _FakeCrewBaseTool(
             name="valid", description="A valid crewai tool for testing.", impl=lambda: "ok"
         )
         with caplog.at_level(logging.WARNING, logger=_IMPORTERS_LOGGER):
-            count = await register_crewai_tools(gantry, [valid, 123])
+            count = await register_crewai_tools(fetcher, [valid, 123])
         assert count == 1
         assert any("is not a crewai.tools.BaseTool" in m for m in caplog.messages)
 
-    async def test_empty_tools_raises(self, fake_crewai, gantry: AgentGantry) -> None:
+    async def test_empty_tools_raises(self, fake_crewai, fetcher: DotFetch) -> None:
         with pytest.raises(ValueError, match="requires at least one tool"):
-            await register_crewai_tools(gantry, [])
+            await register_crewai_tools(fetcher, [])
 
 
 # --------------------------------------------------------------------------- #
@@ -512,22 +512,22 @@ def fake_llamaindex(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
 
 class TestLlamaIndexImporterStub:
     async def test_schema_and_raw_output_unwrapping(
-        self, fake_llamaindex, gantry: AgentGantry
+        self, fake_llamaindex, fetcher: DotFetch
     ) -> None:
         metadata = _FakeToolMetadata(
             name="li_add", description="Add two numbers together for testing.", fn_schema=_AddArgs
         )
         tool = _FakeFunctionTool(metadata, fn=lambda a, b: a + b)
-        count = await register_llamaindex_tools(gantry, [tool])
+        count = await register_llamaindex_tools(fetcher, [tool])
         assert count == 1
-        await gantry.sync()
+        await fetcher.sync()
 
-        gtool = await gantry.get_tool("li_add", "llamaindex")
+        gtool = await fetcher.get_tool("li_add", "llamaindex")
         assert gtool is not None
         assert gtool.parameters_schema["properties"]["a"]["type"] == "integer"
         assert gtool.source == ToolSource.FRAMEWORK
 
-        result = await gantry.execute(ToolCall(tool_name="li_add", arguments={"a": 2, "b": 3}))
+        result = await fetcher.execute(ToolCall(tool_name="li_add", arguments={"a": 2, "b": 3}))
         assert result.status == ExecutionStatus.SUCCESS
         # The raw Python int, unwrapped from ToolOutput.raw_output -- not a
         # stringified ToolOutput.content.
@@ -535,21 +535,21 @@ class TestLlamaIndexImporterStub:
         assert isinstance(result.result, int)
 
     async def test_no_fn_schema_falls_back_to_default_input_schema(
-        self, fake_llamaindex, gantry: AgentGantry
+        self, fake_llamaindex, fetcher: DotFetch
     ) -> None:
         metadata = _FakeToolMetadata(
             name="generic", description="A tool without a typed schema at all.", fn_schema=None
         )
         tool = _FakeFunctionTool(metadata, fn=lambda input: input.upper())
-        count = await register_llamaindex_tools(gantry, [tool])
+        count = await register_llamaindex_tools(fetcher, [tool])
         assert count == 1
-        await gantry.sync()
+        await fetcher.sync()
 
-        gtool = await gantry.get_tool("generic", "llamaindex")
+        gtool = await fetcher.get_tool("generic", "llamaindex")
         assert gtool is not None
         assert gtool.parameters_schema["properties"]["input"]["type"] == "string"
 
-    async def test_async_fn_executes(self, fake_llamaindex, gantry: AgentGantry) -> None:
+    async def test_async_fn_executes(self, fake_llamaindex, fetcher: DotFetch) -> None:
         async def _amul(a: int, b: int) -> int:
             return a * b
 
@@ -559,28 +559,28 @@ class TestLlamaIndexImporterStub:
             fn_schema=_AddArgs,
         )
         tool = _FakeFunctionTool(metadata, afn=_amul)
-        await register_llamaindex_tools(gantry, [tool])
-        await gantry.sync()
+        await register_llamaindex_tools(fetcher, [tool])
+        await fetcher.sync()
 
-        result = await gantry.execute(ToolCall(tool_name="li_mul", arguments={"a": 3, "b": 4}))
+        result = await fetcher.execute(ToolCall(tool_name="li_mul", arguments={"a": 3, "b": 4}))
         assert result.status == ExecutionStatus.SUCCESS
         assert result.result == 12
 
     async def test_skips_non_function_tool_with_warning(
-        self, fake_llamaindex, gantry: AgentGantry, caplog: pytest.LogCaptureFixture
+        self, fake_llamaindex, fetcher: DotFetch, caplog: pytest.LogCaptureFixture
     ) -> None:
         metadata = _FakeToolMetadata(
             name="valid", description="A valid llamaindex tool for testing."
         )
         valid = _FakeFunctionTool(metadata, fn=lambda: "ok")
         with caplog.at_level(logging.WARNING, logger=_IMPORTERS_LOGGER):
-            count = await register_llamaindex_tools(gantry, [valid, "nope"])
+            count = await register_llamaindex_tools(fetcher, [valid, "nope"])
         assert count == 1
         assert any("is not a" in m and "FunctionTool" in m for m in caplog.messages)
 
-    async def test_empty_tools_raises(self, fake_llamaindex, gantry: AgentGantry) -> None:
+    async def test_empty_tools_raises(self, fake_llamaindex, fetcher: DotFetch) -> None:
         with pytest.raises(ValueError, match="requires at least one tool"):
-            await register_llamaindex_tools(gantry, [])
+            await register_llamaindex_tools(fetcher, [])
 
 
 # --------------------------------------------------------------------------- #
@@ -596,7 +596,7 @@ class TestRealPackages:
     a minimal environment without the ``agent-frameworks`` extra.
     """
 
-    async def test_langchain_real_tool_round_trip(self, gantry: AgentGantry) -> None:
+    async def test_langchain_real_tool_round_trip(self, fetcher: DotFetch) -> None:
         pytest.importorskip("langchain_core", reason="langchain-core not installed")
         from langchain_core.tools import tool as lc_tool
 
@@ -605,30 +605,30 @@ class TestRealPackages:
             """Get the current weather for a city."""
             return f"sunny in {city}"
 
-        count = await register_langchain_tools(gantry, [get_weather], tags=["weather"])
+        count = await register_langchain_tools(fetcher, [get_weather], tags=["weather"])
         assert count == 1
-        await gantry.sync()
+        await fetcher.sync()
 
-        # Executable through gantry.execute -- security/retries/telemetry --
-        # exactly like a @gantry.register-ed tool.
-        result = await gantry.execute(
+        # Executable through fetcher.execute -- security/retries/telemetry --
+        # exactly like a @fetcher.register-ed tool.
+        result = await fetcher.execute(
             ToolCall(tool_name="get_weather", arguments={"city": "Paris"})
         )
         assert result.status == ExecutionStatus.SUCCESS
         assert result.result == "sunny in Paris"
 
-        telemetry: _RecordingTelemetry = gantry._telemetry  # type: ignore[assignment]
+        telemetry: _RecordingTelemetry = fetcher._telemetry  # type: ignore[assignment]
         assert any(c.tool_name == "get_weather" for c, _ in telemetry.executions)
 
         # Retrievable via semantic search after sync(), and re-exportable as
         # a provider dialect schema -- the full "register once, use
         # anywhere" round trip.
-        found = await gantry.retrieve_tools("what's the weather like", limit=5)
+        found = await fetcher.retrieve_tools("what's the weather like", limit=5)
         matching = [t for t in found if t["function"]["name"] == "get_weather"]
         assert matching, "imported LangChain tool was not retrievable after sync()"
         assert matching[0]["function"]["parameters"]["properties"]["city"]["type"] == "string"
 
-    async def test_langchain_import_then_reexport_to_llamaindex(self, gantry: AgentGantry) -> None:
+    async def test_langchain_import_then_reexport_to_llamaindex(self, fetcher: DotFetch) -> None:
         """Full loop: import a LangChain tool, then re-export it as a native
         LlamaIndex FunctionTool via the existing export adapter, and execute
         *that* -- proving an imported tool is a first-class registry citizen,
@@ -642,19 +642,19 @@ class TestRealPackages:
             """Send an email to a recipient with an optional subject."""
             return f"sent to {to}: {subject}"
 
-        count = await register_langchain_tools(gantry, [send_email])
+        count = await register_langchain_tools(fetcher, [send_email])
         assert count == 1
-        await gantry.sync()
+        await fetcher.sync()
 
-        from agent_gantry.integrations.frameworks.llamaindex import LlamaIndexAdapter
+        from dotfetch.integrations.frameworks.llamaindex import LlamaIndexAdapter
 
-        native_tools = await LlamaIndexAdapter(gantry).select("send an email", limit=1)
+        native_tools = await LlamaIndexAdapter(fetcher).select("send an email", limit=1)
         assert native_tools, "re-export produced no LlamaIndex tools"
 
         output = await native_tools[0].acall(to="a@b.com", subject="hi")
         assert output.raw_output == "sent to a@b.com: hi"
 
-    async def test_crewai_real_tool(self, gantry: AgentGantry) -> None:
+    async def test_crewai_real_tool(self, fetcher: DotFetch) -> None:
         pytest.importorskip("crewai", reason="crewai not installed")
         from crewai.tools import BaseTool as CrewBaseTool
 
@@ -666,22 +666,22 @@ class TestRealPackages:
             def _run(self, x: int, y: int) -> int:
                 return x * y
 
-        count = await register_crewai_tools(gantry, [MultiplyTool()])
+        count = await register_crewai_tools(fetcher, [MultiplyTool()])
         assert count == 1
-        await gantry.sync()
+        await fetcher.sync()
 
-        gtool = await gantry.get_tool("multiply_numbers", "crewai")
+        gtool = await fetcher.get_tool("multiply_numbers", "crewai")
         assert gtool is not None
         assert gtool.description == "Multiply two integers together."
         assert gtool.parameters_schema["properties"]["x"]["type"] == "integer"
 
-        result = await gantry.execute(
+        result = await fetcher.execute(
             ToolCall(tool_name="multiply_numbers", arguments={"x": 6, "y": 7})
         )
         assert result.status == ExecutionStatus.SUCCESS
         assert result.result == 42
 
-    async def test_llamaindex_real_tool(self, gantry: AgentGantry) -> None:
+    async def test_llamaindex_real_tool(self, fetcher: DotFetch) -> None:
         pytest.importorskip("llama_index.core", reason="llama-index-core not installed")
         from llama_index.core.tools import FunctionTool
 
@@ -692,31 +692,31 @@ class TestRealPackages:
         native = FunctionTool.from_defaults(
             fn=add, name="li_add", description="Add two numbers together."
         )
-        count = await register_llamaindex_tools(gantry, [native])
+        count = await register_llamaindex_tools(fetcher, [native])
         assert count == 1
-        await gantry.sync()
+        await fetcher.sync()
 
-        result = await gantry.execute(ToolCall(tool_name="li_add", arguments={"a": 10, "b": 15}))
+        result = await fetcher.execute(ToolCall(tool_name="li_add", arguments={"a": 10, "b": 15}))
         assert result.status == ExecutionStatus.SUCCESS
         assert result.result == 25
 
 
 class TestAddToolHandlerWiring:
-    """Regression tests for ``AgentGantry.add_tool(..., handler=...)`` wiring."""
+    """Regression tests for ``DotFetch.add_tool(..., handler=...)`` wiring."""
 
     async def test_handler_backed_tool_executable_before_sync(self) -> None:
         """A handler-backed tool must be executable immediately, pre-sync.
 
         With ``auto_sync=False`` (the batching mode used when importing many
         framework tools), ``add_tool(..., handler=...)`` must register the
-        definition in the registry right away — matching ``@gantry.register`` —
+        definition in the registry right away — matching ``@fetcher.register`` —
         rather than parking it in the pending queue until the next ``sync()``.
         """
-        from agent_gantry.schema.config import AgentGantryConfig
-        from agent_gantry.schema.tool import ToolDefinition
+        from dotfetch.schema.config import DotFetchConfig
+        from dotfetch.schema.tool import ToolDefinition
 
-        g = AgentGantry(
-            config=AgentGantryConfig(auto_sync=False),
+        g = DotFetch(
+            config=DotFetchConfig(auto_sync=False),
             embedder=SimpleEmbedder(dimension=64),
         )
         tool = ToolDefinition(
@@ -740,11 +740,11 @@ class TestAddToolHandlerWiring:
 
     async def test_handlers_do_not_clobber_across_namespaces(self) -> None:
         """Same-named tools in different namespaces keep distinct handlers."""
-        from agent_gantry.schema.config import AgentGantryConfig
-        from agent_gantry.schema.tool import ToolDefinition
+        from dotfetch.schema.config import DotFetchConfig
+        from dotfetch.schema.tool import ToolDefinition
 
-        g = AgentGantry(
-            config=AgentGantryConfig(auto_sync=False),
+        g = DotFetch(
+            config=DotFetchConfig(auto_sync=False),
             embedder=SimpleEmbedder(dimension=64),
         )
         schema = {"type": "object", "properties": {}}
@@ -781,7 +781,7 @@ def _reimport_mcp_server(monkeypatch: pytest.MonkeyPatch) -> None:
     """Drop the cached server module so the next import actually re-runs."""
     import sys
 
-    for cached in [k for k in sys.modules if k.startswith("agent_gantry.servers.mcp_server")]:
+    for cached in [k for k in sys.modules if k.startswith("dotfetch.servers.mcp_server")]:
         monkeypatch.delitem(sys.modules, cached)
 
 
@@ -796,20 +796,20 @@ def test_the_latch_helper_is_absent_rather_than_exploding_without_the_mcp_extra(
     helper is precisely how a caller reaches for this one, since a host that
     does not serve MCP has no reason to depend on the extra.
     """
-    import agent_gantry
+    import dotfetch
 
     # None in sys.modules makes ``import mcp`` fail the way a bare install
     # does, with ``ImportError.name == "mcp"``.
     monkeypatch.setitem(sys.modules, "mcp", None)
     _reimport_mcp_server(monkeypatch)
 
-    assert hasattr(agent_gantry, "reset_sse_shutdown_latch") is False
+    assert hasattr(dotfetch, "reset_sse_shutdown_latch") is False
 
     with pytest.raises(AttributeError) as caught:
-        agent_gantry.reset_sse_shutdown_latch
+        dotfetch.reset_sse_shutdown_latch
 
     message = str(caught.value)
-    assert "agent-gantry[mcp]" in message, f"must name the extra to install, got: {message}"
+    assert "dotfetch[mcp]" in message, f"must name the extra to install, got: {message}"
 
 
 def test_a_broken_mcp_install_reports_itself_instead_of_blaming_the_extra(
@@ -823,22 +823,22 @@ def test_a_broken_mcp_install_reports_itself_instead_of_blaming_the_extra(
     the caller would simply skip the helper and never learn their MCP stack is
     unusable.
     """
-    import agent_gantry
+    import dotfetch
 
     # Stands in for a dependency of the MCP stack being broken rather than
     # absent: an import inside mcp_server.py that fails naming something other
     # than ``mcp``. A missing ``mcp.<submodule>`` is deliberately *not* this
     # case — that means the installed distribution is incomplete, and pointing
     # at the extra is the right advice there.
-    monkeypatch.setitem(sys.modules, "agent_gantry.utils.render", None)
+    monkeypatch.setitem(sys.modules, "dotfetch.utils.render", None)
     _reimport_mcp_server(monkeypatch)
 
     with pytest.raises(ImportError) as caught:
-        agent_gantry.reset_sse_shutdown_latch
+        dotfetch.reset_sse_shutdown_latch
 
     assert not isinstance(caught.value, AttributeError), (
         "a broken dependency must stay an ImportError, not become a missing attribute"
     )
-    assert "agent-gantry[mcp]" not in str(caught.value), (
+    assert "dotfetch[mcp]" not in str(caught.value), (
         "must not tell the user to install an extra they already have"
     )

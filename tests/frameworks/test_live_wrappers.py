@@ -1,7 +1,7 @@
 """Tests for the best-effort "live" per-run wrappers (``live_wrappers``).
 
 CrewAI, Agno and Haystack all freeze an agent's tool list at
-construction time, so the wrappers re-run Gantry selection for the query of
+construction time, so the wrappers re-run dotfetch selection for the query of
 *each* top-level call and (re)build the agent / tool set for that call. These
 tests exercise that per-run re-selection against the **real** installed
 frameworks (each is ``pytest.importorskip``-ed): for every wrapper, selecting
@@ -9,7 +9,7 @@ for a weather query must surface the weather tool, and selecting for an email
 query must surface the email tool.
 
 Where building a full agent would need an LLM/model, only the *tools* are built
-and inspected (via the wrapper's ``select_tools`` / the ``gantry_*_tools``
+and inspected (via the wrapper's ``select_tools`` / the ``fetcher_*_tools``
 helper) — never a live agent run.
 """
 
@@ -27,13 +27,13 @@ os.environ.setdefault("OPENAI_API_KEY", "sk-test-not-used")
 
 import pytest
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-from agent_gantry.crewai import CrewAIAdapter
-from agent_gantry.haystack import HaystackAdapter
-from agent_gantry.integrations.frameworks.live_wrappers import (
-    GantryLiveAgnoAgent,
-    GantryLiveCrewAgent,
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
+from dotfetch.crewai import CrewAIAdapter
+from dotfetch.haystack import HaystackAdapter
+from dotfetch.integrations.frameworks.live_wrappers import (
+    DotFetchLiveAgnoAgent,
+    DotFetchLiveCrewAgent,
 )
 
 WEATHER_QUERY = "what is the weather forecast for the city today"
@@ -41,8 +41,8 @@ EMAIL_QUERY = "send an email message to a recipient"
 
 
 @pytest.fixture
-async def gantry():
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+async def fetcher():
+    g = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
     @g.register(tags=["weather", "forecast"])
     def get_weather(city: str) -> str:
@@ -70,10 +70,10 @@ def _names(tools) -> set[str]:
 # --------------------------------------------------------------------------- #
 # CrewAI
 # --------------------------------------------------------------------------- #
-async def test_crewai_reselects_tools_per_turn(gantry):
+async def test_crewai_reselects_tools_per_turn(fetcher):
     pytest.importorskip("crewai")
 
-    agent_builder = GantryLiveCrewAgent(gantry, limit=1)
+    agent_builder = DotFetchLiveCrewAgent(fetcher, limit=1)
 
     weather_tools = await agent_builder.select_tools(WEATHER_QUERY)
     assert "get_weather" in _names(weather_tools)
@@ -82,20 +82,20 @@ async def test_crewai_reselects_tools_per_turn(gantry):
     assert "send_email" in _names(email_tools)
 
 
-async def test_crewai_helper_alias_reselects(gantry):
+async def test_crewai_helper_alias_reselects(fetcher):
     pytest.importorskip("crewai")
 
-    weather_tools = await CrewAIAdapter(gantry).live_tools(WEATHER_QUERY, limit=1)
+    weather_tools = await CrewAIAdapter(fetcher).live_tools(WEATHER_QUERY, limit=1)
     assert "get_weather" in _names(weather_tools)
 
-    email_tools = await CrewAIAdapter(gantry).live_tools(EMAIL_QUERY, limit=1)
+    email_tools = await CrewAIAdapter(fetcher).live_tools(EMAIL_QUERY, limit=1)
     assert "send_email" in _names(email_tools)
 
 
-async def test_crewai_build_constructs_fresh_agent(gantry):
+async def test_crewai_build_constructs_fresh_agent(fetcher):
     crewai = pytest.importorskip("crewai")
 
-    agent_builder = GantryLiveCrewAgent(gantry, limit=1)
+    agent_builder = DotFetchLiveCrewAgent(fetcher, limit=1)
     agent = await agent_builder.build(WEATHER_QUERY)
 
     assert isinstance(agent, crewai.Agent)
@@ -105,10 +105,10 @@ async def test_crewai_build_constructs_fresh_agent(gantry):
 # --------------------------------------------------------------------------- #
 # Agno
 # --------------------------------------------------------------------------- #
-async def test_agno_reselects_tools_per_turn(gantry):
+async def test_agno_reselects_tools_per_turn(fetcher):
     pytest.importorskip("agno")
 
-    agent_builder = GantryLiveAgnoAgent(gantry, limit=1)
+    agent_builder = DotFetchLiveAgnoAgent(fetcher, limit=1)
 
     weather_tools = await agent_builder.select_tools(WEATHER_QUERY)
     assert "get_weather" in _names(weather_tools)
@@ -120,11 +120,11 @@ async def test_agno_reselects_tools_per_turn(gantry):
 # --------------------------------------------------------------------------- #
 # Haystack
 # --------------------------------------------------------------------------- #
-async def test_haystack_reselects_tools_per_turn(gantry):
+async def test_haystack_reselects_tools_per_turn(fetcher):
     pytest.importorskip("haystack")
 
-    weather_tools = await HaystackAdapter(gantry).live_tools(WEATHER_QUERY, limit=1)
+    weather_tools = await HaystackAdapter(fetcher).live_tools(WEATHER_QUERY, limit=1)
     assert "get_weather" in _names(weather_tools)
 
-    email_tools = await HaystackAdapter(gantry).live_tools(EMAIL_QUERY, limit=1)
+    email_tools = await HaystackAdapter(fetcher).live_tools(EMAIL_QUERY, limit=1)
     assert "send_email" in _names(email_tools)

@@ -1,5 +1,5 @@
 """
-OpenAI + Agent-Gantry integration demo.
+OpenAI + dotfetch integration demo.
 
 Demonstrates five scenarios:
 A. Responses API – recommended for agentic workloads (OpenAI's primary surface)
@@ -7,7 +7,7 @@ B. Dynamic retrieval via Chat Completions (still supported)
 C. Static tool list (small toolsets)
 D. Decorator-based automatic injection (recommended for wrappers)
 E. The typed ``OpenAIAdapter`` – a thin, provider-specific wrapper around
-   ``gantry.retrieve_tools(..., dialect="openai")``
+   ``fetcher.retrieve_tools(..., dialect="openai")``
 
 OpenAI positioned the Responses API as the forward direction for agents and
 retired the Assistants API in August 2026. Scenario A shows the current
@@ -16,7 +16,7 @@ preferred pattern using client.responses.create().
 Requires OPENAI_API_KEY; exits with a message if it is missing.
 
 Install:
-    pip install "agent-gantry[openai]"
+    pip install "dotfetch[openai]"
 """
 
 import asyncio
@@ -26,14 +26,14 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from agent_gantry import AgentGantry, set_default_gantry, with_semantic_tools
-from agent_gantry.schema.execution import ToolCall
+from dotfetch import DotFetch, set_default_fetcher, with_semantic_tools
+from dotfetch.schema.execution import ToolCall
 
 load_dotenv()
 
 
 async def main() -> None:
-    print("=== Agent-Gantry + OpenAI Integration Demo ===\n")
+    print("=== dotfetch + OpenAI Integration Demo ===\n")
 
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
@@ -42,19 +42,19 @@ async def main() -> None:
         return
 
     try:
-        from agent_gantry.adapters.embedders.nomic import NomicEmbedder
+        from dotfetch.adapters.embedders.nomic import NomicEmbedder
 
-        gantry = AgentGantry(embedder=NomicEmbedder())
+        fetcher = DotFetch(embedder=NomicEmbedder())
         print("✅ Initialized with Nomic Embeddings")
     except ImportError:
-        gantry = AgentGantry()
+        fetcher = DotFetch()
         print(
-            f"⚠️  Initialized with the default embedder ({type(gantry.embedder).__name__}); "
-            "install 'agent-gantry[nomic]' for Nomic"
+            f"⚠️  Initialized with the default embedder ({type(fetcher.embedder).__name__}); "
+            "install 'dotfetch[nomic]' for Nomic"
         )
 
     try:
-        @gantry.register(
+        @fetcher.register(
             tags=["weather"],
             examples=["what's the weather in Tokyo", "is it cold in Berlin right now"],
         )
@@ -62,7 +62,7 @@ async def main() -> None:
             """Get the current weather for a location."""
             return f"Weather in {location}: 22°{unit.upper()}, Sunny"
 
-        @gantry.register(
+        @fetcher.register(
             tags=["finance"],
             examples=["what is the stock price of AAPL", "how is Tesco stock doing"],
         )
@@ -70,8 +70,8 @@ async def main() -> None:
             """Get the current stock price."""
             return f"{ticker.upper()}: $150.00"
 
-        await gantry.sync()
-        print(f"✅ Registered {gantry.tool_count} tools\n")
+        await fetcher.sync()
+        print(f"✅ Registered {fetcher.tool_count} tools\n")
 
         from openai import AsyncOpenAI
 
@@ -86,10 +86,10 @@ async def main() -> None:
         print(f"User Query: '{query_a}'")
 
         # Retrieve tools in openai_responses dialect (flat schema)
-        tools_responses = await gantry.retrieve_tools(
+        tools_responses = await fetcher.retrieve_tools(
             query_a, limit=1, dialect="openai_responses"
         )
-        print(f"Gantry retrieved {len(tools_responses)} tool(s): {[t['name'] for t in tools_responses]}")
+        print(f"dotfetch retrieved {len(tools_responses)} tool(s): {[t['name'] for t in tools_responses]}")
 
         response_a = await client.responses.create(
             model="gpt-4.1",
@@ -104,7 +104,7 @@ async def main() -> None:
         for item in function_calls:
             print(f"LLM decided to call: {item.name}({item.arguments})")
             args = json.loads(item.arguments) if isinstance(item.arguments, str) else item.arguments
-            result = await gantry.execute(ToolCall(tool_name=item.name, arguments=args))
+            result = await fetcher.execute(ToolCall(tool_name=item.name, arguments=args))
             print(f"Execution Result: {result.result}")
 
             # Send tool result back using previous_response_id — avoids resending
@@ -127,8 +127,8 @@ async def main() -> None:
         query_b = "What's the weather in Tokyo?"
         print(f"User Query: '{query_b}'")
 
-        tools_cc = await gantry.retrieve_tools(query_b, limit=1)
-        print(f"Gantry retrieved {len(tools_cc)} tool(s): {[t['function']['name'] for t in tools_cc]}")
+        tools_cc = await fetcher.retrieve_tools(query_b, limit=1)
+        print(f"dotfetch retrieved {len(tools_cc)} tool(s): {[t['function']['name'] for t in tools_cc]}")
 
         response_b = await client.chat.completions.create(
             model="gpt-5.5",
@@ -141,7 +141,7 @@ async def main() -> None:
         if tool_calls:
             for tc in tool_calls:
                 print(f"LLM decided to call: {tc.function.name}({tc.function.arguments})")
-                result = await gantry.execute(
+                result = await fetcher.execute(
                     ToolCall(
                         tool_name=tc.function.name, arguments=json.loads(tc.function.arguments)
                     )
@@ -152,7 +152,7 @@ async def main() -> None:
 
         # --- Scenario C: Static Tool List (small toolsets) ---
         print("\n--- Scenario C: Static Tool List (for small toolsets) ---")
-        all_tools = [t.to_dialect("openai") for t in await gantry.list_tools()]
+        all_tools = [t.to_dialect("openai") for t in await fetcher.list_tools()]
         print(
             f"Built schemas for all {len(all_tools)} tools — the static list you would pass "
             "when the catalogue is small enough to send whole (not sent here)."
@@ -161,7 +161,7 @@ async def main() -> None:
         # --- Scenario D: Decorator-based automatic injection (RECOMMENDED for wrappers) ---
         print("\n--- Scenario D: @with_semantic_tools Decorator (RECOMMENDED) ---")
 
-        set_default_gantry(gantry)
+        set_default_fetcher(fetcher)
 
         @with_semantic_tools(limit=1, dialect="openai")
         async def chat_with_tools(
@@ -187,14 +187,14 @@ async def main() -> None:
             print("LLM did not call any tools.")
 
         # --- Scenario E: Typed OpenAIAdapter (provider-specific convenience) ---
-        # OpenAIAdapter(gantry).tools(query, limit=n) is exactly equivalent to
-        # gantry.retrieve_tools(query, limit=n, dialect="openai") — the dialect is
+        # OpenAIAdapter(fetcher).tools(query, limit=n) is exactly equivalent to
+        # fetcher.retrieve_tools(query, limit=n, dialect="openai") — the dialect is
         # baked in, so you get OpenAI chat-completions schemas with no string param.
         # Use .responses_tools(...) for the flat Responses API schema (Scenario A).
         print("\n--- Scenario E: Typed OpenAIAdapter ---")
-        from agent_gantry.openai import OpenAIAdapter
+        from dotfetch.openai import OpenAIAdapter
 
-        adapter = OpenAIAdapter(gantry)
+        adapter = OpenAIAdapter(fetcher)
         query_e = "What's the weather in Berlin?"
         print(f"User Query: '{query_e}'")
 
@@ -204,7 +204,7 @@ async def main() -> None:
         tools_resp_e = await adapter.responses_tools(query_e, limit=1)
         print(f"  responses schema:        {[t['name'] for t in tools_resp_e]}")
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 if __name__ == "__main__":

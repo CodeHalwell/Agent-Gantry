@@ -1,6 +1,6 @@
 # Benchmarks
 
-Runnable performance and quality benchmarks for Agent-Gantry.
+Runnable performance and quality benchmarks for dotfetch.
 
 | Script | Measures |
 |---|---|
@@ -56,7 +56,7 @@ runs the same comparison. That baseline is measured with `SimpleEmbedder`
 because it is deterministic; it catches a pipeline that broke, not an embedding
 that got worse. A change meant to move the numbers rewrites it with
 `--update-baseline` in the same commit. To score your own registry, build
-`RetrievalCase`s and call `agent_gantry.evaluation.evaluate_retrieval`.
+`RetrievalCase`s and call `dotfetch.evaluation.evaluate_retrieval`.
 
 `all-MiniLM-L6-v2`, in-memory store, `k=5`, `score_threshold=0.0`, as of the
 commit that added the eval:

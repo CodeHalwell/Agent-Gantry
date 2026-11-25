@@ -16,8 +16,8 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
-from agent_gantry import AgentGantry
-from agent_gantry.integrations.anthropic_skills import (
+from dotfetch import DotFetch
+from dotfetch.integrations.anthropic_skills import (
     Skill,
     SkillRegistry,
     SkillsClient,
@@ -188,11 +188,11 @@ class TestSkillsClient:
         assert client is not None
         assert isinstance(client.skills, SkillRegistry)
 
-    def test_client_with_gantry(self):
-        """Test client initialization with AgentGantry."""
-        gantry = MagicMock(spec=AgentGantry)
-        client = SkillsClient(api_key="test-key", gantry=gantry)
-        assert client._gantry == gantry
+    def test_client_with_fetcher(self):
+        """Test client initialization with DotFetch."""
+        fetcher = MagicMock(spec=DotFetch)
+        client = SkillsClient(api_key="test-key", fetcher=fetcher)
+        assert client._fetcher == fetcher
 
     def test_client_with_custom_registry(self):
         """Test client with custom skill registry."""
@@ -214,16 +214,16 @@ class TestSkillsClient:
     @pytest.mark.asyncio
     async def test_execute_tool_calls(self):
         """Test executing tool calls from response."""
-        gantry = MagicMock(spec=AgentGantry)
+        fetcher = MagicMock(spec=DotFetch)
         mock_result = MagicMock()
         mock_result.status = "success"
         mock_result.result = "Tool executed"
-        gantry.execute = AsyncMock(return_value=mock_result)
+        fetcher.execute = AsyncMock(return_value=mock_result)
         # The formatting/concurrency logic now lives in the facade; bind the
         # real method to the mock so this still exercises the whole path.
-        gantry.execute_tool_calls = partial(AgentGantry.execute_tool_calls, gantry)
+        fetcher.execute_tool_calls = partial(DotFetch.execute_tool_calls, fetcher)
 
-        client = SkillsClient(api_key="test-key", gantry=gantry)
+        client = SkillsClient(api_key="test-key", fetcher=fetcher)
 
         # Mock response with tool use
         response = MagicMock()
@@ -244,16 +244,16 @@ class TestSkillsClient:
     @pytest.mark.asyncio
     async def test_execute_tool_calls_failure_sets_is_error(self):
         """Test that a failed tool execution sets is_error=True."""
-        gantry = MagicMock(spec=AgentGantry)
+        fetcher = MagicMock(spec=DotFetch)
         mock_result = MagicMock()
         mock_result.status = "failure"
         mock_result.error = "Downstream service unavailable"
-        gantry.execute = AsyncMock(return_value=mock_result)
+        fetcher.execute = AsyncMock(return_value=mock_result)
         # The formatting/concurrency logic now lives in the facade; bind the
         # real method to the mock so this still exercises the whole path.
-        gantry.execute_tool_calls = partial(AgentGantry.execute_tool_calls, gantry)
+        fetcher.execute_tool_calls = partial(DotFetch.execute_tool_calls, fetcher)
 
-        client = SkillsClient(api_key="test-key", gantry=gantry)
+        client = SkillsClient(api_key="test-key", fetcher=fetcher)
 
         response = MagicMock()
         tool_block = MagicMock()
@@ -272,16 +272,16 @@ class TestSkillsClient:
     @pytest.mark.asyncio
     async def test_execute_tool_calls_success_omits_is_error(self):
         """Test that a successful tool execution omits is_error."""
-        gantry = MagicMock(spec=AgentGantry)
+        fetcher = MagicMock(spec=DotFetch)
         mock_result = MagicMock()
         mock_result.status = "success"
         mock_result.result = {"order_id": "ORD-42", "status": "shipped"}
-        gantry.execute = AsyncMock(return_value=mock_result)
+        fetcher.execute = AsyncMock(return_value=mock_result)
         # The formatting/concurrency logic now lives in the facade; bind the
         # real method to the mock so this still exercises the whole path.
-        gantry.execute_tool_calls = partial(AgentGantry.execute_tool_calls, gantry)
+        fetcher.execute_tool_calls = partial(DotFetch.execute_tool_calls, fetcher)
 
-        client = SkillsClient(api_key="test-key", gantry=gantry)
+        client = SkillsClient(api_key="test-key", fetcher=fetcher)
 
         response = MagicMock()
         tool_block = MagicMock()
@@ -298,19 +298,19 @@ class TestSkillsClient:
         assert tool_results[0]["content"] == '{"order_id": "ORD-42", "status": "shipped"}'
 
     @pytest.mark.asyncio
-    async def test_execute_tool_calls_without_gantry(self):
-        """Test that execute_tool_calls requires gantry."""
+    async def test_execute_tool_calls_without_fetcher(self):
+        """Test that execute_tool_calls requires fetcher."""
         client = SkillsClient(api_key="test-key")
         response = MagicMock()
 
-        with pytest.raises(ValueError, match="AgentGantry instance required"):
+        with pytest.raises(ValueError, match="DotFetch instance required"):
             await client.execute_tool_calls(response)
 
-    def test_register_skill_from_gantry_tools(self):
-        """Test registering skill from Agent-Gantry tools."""
+    def test_register_skill_from_fetcher_tools(self):
+        """Test registering skill from dotfetch tools."""
         client = SkillsClient(api_key="test-key")
 
-        skill = client.register_skill_from_gantry_tools(
+        skill = client.register_skill_from_fetcher_tools(
             skill_name="math",
             description="Math operations",
             instructions="Use these tools for math",
@@ -336,11 +336,11 @@ class TestCreateSkillsClient:
         assert isinstance(client.skills, SkillRegistry)
 
     @pytest.mark.asyncio
-    async def test_create_client_with_gantry(self):
-        """Test creating client with AgentGantry."""
-        gantry = MagicMock(spec=AgentGantry)
-        client = await create_skills_client(api_key="test-key", gantry=gantry)
-        assert client._gantry == gantry
+    async def test_create_client_with_fetcher(self):
+        """Test creating client with DotFetch."""
+        fetcher = MagicMock(spec=DotFetch)
+        client = await create_skills_client(api_key="test-key", fetcher=fetcher)
+        assert client._fetcher == fetcher
 
 
 class TestSkillsIntegration:

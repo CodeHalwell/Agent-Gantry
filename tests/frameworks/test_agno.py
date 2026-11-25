@@ -14,8 +14,8 @@ import types
 
 import pytest
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
 
 
 class _FakeFunction:
@@ -48,8 +48,8 @@ def fake_agno(monkeypatch):
 
 
 @pytest.fixture
-async def gantry():
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+async def fetcher():
+    g = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
     @g.register(tags=["email"])
     def send_email(to: str, body: str = "") -> str:
@@ -65,11 +65,11 @@ async def gantry():
     return g
 
 
-async def test_spec_to_agno_builds_native_tool(fake_agno, gantry):
-    from agent_gantry.agno import AgnoAdapter
-    from agent_gantry.integrations.frameworks.base import GantryToolset
+async def test_spec_to_agno_builds_native_tool(fake_agno, fetcher):
+    from dotfetch.agno import AgnoAdapter
+    from dotfetch.integrations.frameworks.base import DotFetchToolset
 
-    specs = await GantryToolset(gantry).select("send an email", limit=1)
+    specs = await DotFetchToolset(fetcher).select("send an email", limit=1)
     spec = specs[0]
     fn = AgnoAdapter.convert(spec)
 
@@ -80,15 +80,15 @@ async def test_spec_to_agno_builds_native_tool(fake_agno, gantry):
 
     # entrypoint is a sync wrapper (spec.invoke), so Agno calls it from
     # synchronous code with the tool arguments as keyword args. Run it off the
-    # event loop here to mimic that, routing through gantry.execute.
+    # event loop here to mimic that, routing through fetcher.execute.
     result = await asyncio.to_thread(fn.entrypoint, to="boss@x.com")
     assert result == "sent:boss@x.com"
 
 
-async def test_for_agno_returns_function_list(fake_agno, gantry):
-    from agent_gantry.agno import AgnoAdapter
+async def test_for_agno_returns_function_list(fake_agno, fetcher):
+    from dotfetch.agno import AgnoAdapter
 
-    tools = await AgnoAdapter(gantry).select("send an email", limit=2)
+    tools = await AgnoAdapter(fetcher).select("send an email", limit=2)
 
     assert isinstance(tools, list)
     assert len(tools) >= 1
@@ -96,13 +96,13 @@ async def test_for_agno_returns_function_list(fake_agno, gantry):
     assert "send_email" in names
 
 
-async def test_missing_agno_raises_helpful_error(monkeypatch, gantry):
+async def test_missing_agno_raises_helpful_error(monkeypatch, fetcher):
     # Ensure the lazy import fails even if a real package is somehow present.
     monkeypatch.setitem(sys.modules, "agno.tools.function", None)
 
-    from agent_gantry.agno import AgnoAdapter
-    from agent_gantry.integrations.frameworks.base import GantryToolset
+    from dotfetch.agno import AgnoAdapter
+    from dotfetch.integrations.frameworks.base import DotFetchToolset
 
-    specs = await GantryToolset(gantry).select("send an email", limit=1)
-    with pytest.raises(ImportError, match=r"agent-gantry\[agno\]"):
+    specs = await DotFetchToolset(fetcher).select("send an email", limit=1)
+    with pytest.raises(ImportError, match=r"dotfetch\[agno\]"):
         AgnoAdapter.convert(specs[0])

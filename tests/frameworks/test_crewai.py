@@ -14,8 +14,8 @@ import types
 
 import pytest
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
 
 
 class _FakeBaseTool:
@@ -49,8 +49,8 @@ def fake_crewai(monkeypatch):
 
 
 @pytest.fixture
-async def gantry():
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+async def fetcher():
+    g = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
     @g.register(tags=["email"])
     def send_email(to: str, body: str = "") -> str:
@@ -66,11 +66,11 @@ async def gantry():
     return g
 
 
-async def test_spec_to_crewai_builds_native_tool(fake_crewai, gantry):
-    from agent_gantry.crewai import CrewAIAdapter
-    from agent_gantry.integrations.frameworks.base import GantryToolset
+async def test_spec_to_crewai_builds_native_tool(fake_crewai, fetcher):
+    from dotfetch.crewai import CrewAIAdapter
+    from dotfetch.integrations.frameworks.base import DotFetchToolset
 
-    specs = await GantryToolset(gantry).select("send an email", limit=1)
+    specs = await DotFetchToolset(fetcher).select("send an email", limit=1)
     spec = specs[0]
     tool = CrewAIAdapter.convert(spec)
 
@@ -87,10 +87,10 @@ async def test_spec_to_crewai_builds_native_tool(fake_crewai, gantry):
     assert result == "sent:boss@x.com"
 
 
-async def test_for_crewai_returns_tool_list(fake_crewai, gantry):
-    from agent_gantry.crewai import CrewAIAdapter
+async def test_for_crewai_returns_tool_list(fake_crewai, fetcher):
+    from dotfetch.crewai import CrewAIAdapter
 
-    tools = await CrewAIAdapter(gantry).select("send an email", limit=2)
+    tools = await CrewAIAdapter(fetcher).select("send an email", limit=2)
 
     assert isinstance(tools, list)
     assert len(tools) >= 1
@@ -98,14 +98,14 @@ async def test_for_crewai_returns_tool_list(fake_crewai, gantry):
     assert "send_email" in names
 
 
-async def test_missing_crewai_raises_helpful_error(monkeypatch, gantry):
+async def test_missing_crewai_raises_helpful_error(monkeypatch, fetcher):
     # Ensure the lazy import fails even if a real package is somehow present.
     monkeypatch.setitem(sys.modules, "crewai", None)
     monkeypatch.setitem(sys.modules, "crewai.tools", None)
 
-    from agent_gantry.crewai import CrewAIAdapter
-    from agent_gantry.integrations.frameworks.base import GantryToolset
+    from dotfetch.crewai import CrewAIAdapter
+    from dotfetch.integrations.frameworks.base import DotFetchToolset
 
-    specs = await GantryToolset(gantry).select("send an email", limit=1)
-    with pytest.raises(ImportError, match=r"agent-gantry\[crewai\]"):
+    specs = await DotFetchToolset(fetcher).select("send an email", limit=1)
+    with pytest.raises(ImportError, match=r"dotfetch\[crewai\]"):
         CrewAIAdapter.convert(specs[0])

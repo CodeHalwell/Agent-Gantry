@@ -1,21 +1,21 @@
 """
-Dynamic MCP Server Selection Demo for Agent-Gantry.
+Dynamic MCP Server Selection Demo for dotfetch.
 
 Registers four MCP servers by metadata only (``register_mcp_server`` does not
 connect), syncs that metadata into the vector store, and uses
 ``retrieve_mcp_servers`` to pick the server a prompt needs. Connecting to the
 chosen server (``discover_tools_from_server``) is shown but not run, since the
-servers here are not installed. No API key; needs ``agent-gantry[mcp]``.
+servers here are not installed. No API key; needs ``dotfetch[mcp]``.
 
 Run with::
 
-    pip install agent-gantry[mcp]
+    pip install dotfetch[mcp]
     python examples/protocols/dynamic_mcp_selection_demo.py
 """
 
 import asyncio
 
-from agent_gantry import AgentGantry
+from dotfetch import DotFetch
 
 
 async def demo_dynamic_mcp_selection():
@@ -31,11 +31,11 @@ async def demo_dynamic_mcp_selection():
     print("Dynamic MCP Server Selection Demo")
     print("=" * 70)
 
-    # Initialize Agent-Gantry
-    gantry = AgentGantry()
-    if gantry._mcp_registry is None:
-        print("MCP support is not installed: pip install agent-gantry[mcp]")
-        await gantry.close()
+    # Initialize dotfetch
+    fetcher = DotFetch()
+    if fetcher._mcp_registry is None:
+        print("MCP support is not installed: pip install dotfetch[mcp]")
+        await fetcher.close()
         return
 
     try:
@@ -45,7 +45,7 @@ async def demo_dynamic_mcp_selection():
         print("\n📝 Step 1: Registering MCP servers with metadata...\n")
 
         # Register filesystem server
-        gantry.register_mcp_server(
+        fetcher.register_mcp_server(
             name="filesystem",
             command=["npx", "-y", "@modelcontextprotocol/server-filesystem"],
             description="Provides comprehensive tools for reading and writing files on the local filesystem. Supports file operations, directory listing, and path management.",
@@ -62,7 +62,7 @@ async def demo_dynamic_mcp_selection():
         print("✅ Registered: filesystem (file operations)")
 
         # Register database server
-        gantry.register_mcp_server(
+        fetcher.register_mcp_server(
             name="postgresql",
             command=["python", "-m", "mcp_postgresql"],
             description="Access PostgreSQL databases for querying, inserting, updating, and managing data. Supports SQL operations and transaction management.",
@@ -79,7 +79,7 @@ async def demo_dynamic_mcp_selection():
         print("✅ Registered: postgresql (database operations)")
 
         # Register web API server
-        gantry.register_mcp_server(
+        fetcher.register_mcp_server(
             name="rest_api",
             command=["node", "mcp-rest-api-server.js"],
             description="Provides tools for making REST API calls to external services. Supports GET, POST, PUT, DELETE with authentication and error handling.",
@@ -97,7 +97,7 @@ async def demo_dynamic_mcp_selection():
         print("✅ Registered: rest_api (HTTP/REST operations)")
 
         # Register email server
-        gantry.register_mcp_server(
+        fetcher.register_mcp_server(
             name="email",
             command=["python", "-m", "mcp_email"],
             description="Send and manage emails through various providers. Supports SMTP, templates, attachments, and scheduling.",
@@ -113,7 +113,7 @@ async def demo_dynamic_mcp_selection():
         )
         print("✅ Registered: email (email operations)")
 
-        print(f"\n📊 Total servers registered: {gantry._mcp_registry.server_count}")
+        print(f"\n📊 Total servers registered: {fetcher._mcp_registry.server_count}")
 
         # =========================================================================
         # Step 2: Sync server metadata to vector store
@@ -121,7 +121,7 @@ async def demo_dynamic_mcp_selection():
         print("\n🔄 Step 2: Syncing server metadata to vector store...\n")
 
         # Sync servers for semantic search (embeds descriptions, tags, examples)
-        synced_count = await gantry.sync_mcp_servers()
+        synced_count = await fetcher.sync_mcp_servers()
         print(f"✅ Synced {synced_count} servers to vector store")
 
         # =========================================================================
@@ -141,7 +141,7 @@ async def demo_dynamic_mcp_selection():
 
             # Semantic search over the synced metadata: description, tags,
             # examples. Nothing is connected yet.
-            servers = await gantry.retrieve_mcp_servers(query, limit=2)
+            servers = await fetcher.retrieve_mcp_servers(query, limit=2)
             for server in servers:
                 print(f"   ✓ {server.name}: {server.description[:50]}...")
 
@@ -151,14 +151,14 @@ async def demo_dynamic_mcp_selection():
         print("\n\n🔧 Step 4: Discovering tools on-demand from selected server...\n")
 
         # Take the top server for the first query and connect to that one only.
-        chosen = (await gantry.retrieve_mcp_servers(queries[0], limit=1))[0]
+        chosen = (await fetcher.retrieve_mcp_servers(queries[0], limit=1))[0]
         print(f"💭 '{queries[0]}' → Selected: {chosen.name} server")
 
         # This is the call that spawns the server process and imports its tools.
         # It is not run here because `npx @modelcontextprotocol/server-filesystem`
         # may not be installed; uncomment it on a machine that has it.
         #
-        # count = await gantry.discover_tools_from_server(chosen.name)
+        # count = await fetcher.discover_tools_from_server(chosen.name)
         # print(f"✅ Discovered {count} tools from {chosen.name} server")
 
         print("🔌 discover_tools_from_server() would connect to it now (not run in this demo)\n")
@@ -213,7 +213,7 @@ async def demo_dynamic_mcp_selection():
         print("Demo complete! 🎉")
         print("=" * 70)
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def demo_workflow_example():
@@ -225,16 +225,16 @@ async def demo_workflow_example():
     print("💡 Complete Workflow Example")
     print("=" * 70 + "\n")
 
-    # Create gantry
-    gantry = AgentGantry()
-    if gantry._mcp_registry is None:
-        print("MCP support is not installed: pip install agent-gantry[mcp]")
-        await gantry.close()
+    # Create fetcher
+    fetcher = DotFetch()
+    if fetcher._mcp_registry is None:
+        print("MCP support is not installed: pip install dotfetch[mcp]")
+        await fetcher.close()
         return
 
     try:
         # Register servers with rich metadata
-        gantry.register_mcp_server(
+        fetcher.register_mcp_server(
             name="files",
             command=["npx", "-y", "@modelcontextprotocol/server-filesystem"],
             description="Local filesystem operations for reading and writing files",
@@ -245,20 +245,20 @@ async def demo_workflow_example():
         )
 
         # Sync to enable semantic search
-        await gantry.sync_mcp_servers()
+        await fetcher.sync_mcp_servers()
 
         # Find relevant servers
-        servers = await gantry.retrieve_mcp_servers("I need to read a log file", limit=2)
+        servers = await fetcher.retrieve_mcp_servers("I need to read a log file", limit=2)
         print(f"Selected for 'I need to read a log file': {[s.name for s in servers]}")
 
         # The remaining steps need the server installed, so they are shown only:
-        # count = await gantry.discover_tools_from_server("files")   # connect, import tools
-        # tools = await gantry.retrieve_tools("read my config.yaml")  # route as usual
-        # result = await gantry.execute(...)
+        # count = await fetcher.discover_tools_from_server("files")   # connect, import tools
+        # tools = await fetcher.retrieve_tools("read my config.yaml")  # route as usual
+        # result = await fetcher.execute(...)
 
         print("✅ Remaining steps (connect, route, execute) shown in the comments above")
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def main():

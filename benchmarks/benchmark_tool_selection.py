@@ -1,6 +1,6 @@
 """Semantic tool-selection benchmark: pick the best top-3 tools out of 50.
 
-This benchmark measures how well Agent-Gantry's semantic router surfaces the
+This benchmark measures how well dotfetch's semantic router surfaces the
 *right* tools when the registry is large (50 tools) and only a small slice
 (top-3) is injected into the prompt. It reports retrieval-quality metrics and
 latency, plus the context-window saving versus dumping all 50 schemas.
@@ -34,7 +34,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from agent_gantry import AgentGantry
+from dotfetch import DotFetch
 
 # --------------------------------------------------------------------------- #
 # 50-tool registry across 10 domains. Each entry: (name, description, tags).
@@ -166,17 +166,17 @@ def build_embedder(kind: str):
     for k in order:
         try:
             if k == "sentence-transformers":
-                from agent_gantry.adapters.embedders.sentence_transformers import (
+                from dotfetch.adapters.embedders.sentence_transformers import (
                     SentenceTransformersEmbedder,
                 )
 
                 return SentenceTransformersEmbedder("all-MiniLM-L6-v2"), "sentence-transformers/all-MiniLM-L6-v2"
             if k == "nomic":
-                from agent_gantry.adapters.embedders.nomic import NomicEmbedder
+                from dotfetch.adapters.embedders.nomic import NomicEmbedder
 
                 return NomicEmbedder(), "nomic-embed-text-v1.5"
             if k == "simple":
-                from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+                from dotfetch.adapters.embedders.simple import SimpleEmbedder
 
                 return SimpleEmbedder(dimension=256), "SimpleEmbedder(hash, toy)"
         except Exception as exc:  # noqa: BLE001
@@ -196,13 +196,13 @@ def _percentile(values: list[float], pct: float) -> float:
 async def run(limit: int, embedder_kind: str) -> dict[str, Any]:
     embedder, label = build_embedder(embedder_kind)
     print(f"Embedder: {label}")
-    gantry = AgentGantry(embedder=embedder)
+    fetcher = DotFetch(embedder=embedder)
 
     for name, desc, tags in TOOLS:
-        gantry.register(_make_tool(name, desc), tags=tags)
+        fetcher.register(_make_tool(name, desc), tags=tags)
 
     t0 = time.perf_counter()
-    count = await gantry.sync()
+    count = await fetcher.sync()
     sync_s = time.perf_counter() - t0
     print(f"Registered + embedded {count} tools in {sync_s:.2f}s\n")
 
@@ -216,7 +216,7 @@ async def run(limit: int, embedder_kind: str) -> dict[str, Any]:
         # score_threshold=0.0 measures pure ranking quality. NOTE: the library
         # default is 0.5, which silently drops correct tools with any embedder
         # whose cosine scores sit below 0.5 (e.g. MiniLM) — see review finding.
-        tools = await gantry.retrieve_tools(query, limit=limit, score_threshold=0.0)
+        tools = await fetcher.retrieve_tools(query, limit=limit, score_threshold=0.0)
         latencies_ms.append((time.perf_counter() - t) * 1000.0)
 
         names = [t["function"]["name"] for t in tools]
@@ -234,9 +234,9 @@ async def run(limit: int, embedder_kind: str) -> dict[str, Any]:
 
     n = len(QUERIES)
     # Token-savings estimate: full 50-tool schema dump vs. top-3.
-    all_schemas = await gantry.retrieve_tools(QUERIES[0][0], limit=len(TOOLS), score_threshold=0.0)
+    all_schemas = await fetcher.retrieve_tools(QUERIES[0][0], limit=len(TOOLS), score_threshold=0.0)
     full_tokens = len(json.dumps(all_schemas)) // 4  # ~4 chars/token heuristic
-    topk_schemas = await gantry.retrieve_tools(QUERIES[0][0], limit=limit, score_threshold=0.0)
+    topk_schemas = await fetcher.retrieve_tools(QUERIES[0][0], limit=limit, score_threshold=0.0)
     topk_tokens = len(json.dumps(topk_schemas)) // 4
     savings = 1.0 - (topk_tokens / full_tokens) if full_tokens else 0.0
 

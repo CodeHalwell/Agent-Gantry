@@ -1,0 +1,1533 @@
+"""Shared base for native per-framework tool adapters.
+
+dotfetch's job is to *select* a small, relevant slice of tools from a large
+registry. To hand those tools to a concrete agent framework (LangChain,
+LlamaIndex, CrewAI, Pydantic AI, OpenAI Agents SDK, Haystack, Agno, …) they
+must be wrapped as that framework's *native* tool object — a callable
+that the framework can introspect (name, description, JSON-schema parameters)
+and invoke.
+
+Every adapter in this subpackage follows the same shape:
+
+    toolset = DotFetchToolset(fetcher)
+    specs   = await toolset.select(query, limit=3)      # ranked ToolSpec list
+    native  = [spec.to_<framework>() ...]               # framework-specific
+
+``ToolSpec`` is the framework-neutral handle. It exposes the metadata a
+framework needs plus two invocation entry points that both route through
+``fetcher.execute`` (so retries, timeouts, circuit breakers, and the security
+policy all still apply):
+
+- :meth:`ToolSpec.ainvoke` — async, ``**kwargs`` or a single dict.
+- :meth:`ToolSpec.invoke`  — sync wrapper, safe to call even from inside a
+  running event loop (it runs the coroutine on a shared bridge loop and blocks).
+
+The adapters are intentionally dependency-free at import time: the third-party
+framework is imported lazily inside the ``to_*`` builder, so ``import
+dotfetch`` never requires LangChain et al. to be installed.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import copy
+import datetime
+import functools
+import hashlib
+import inspect
+import keyword
+import logging
+import re
+import threading
+import uuid
+from collections import Counter
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
+
+from pydantic import ValidationError
+
+from dotfetch._deprecation import RenamedValue
+from dotfetch.integrations.frameworks.errors import MissingRequiredToolError
+from dotfetch.schema.base import RECONSTRUCTED_STRING_FORMATS, schema_declares_null
+from dotfetch.schema.execution import ExecutionStatus, ToolCall
+from dotfetch.schema.query import ConversationContext, ToolQuery
+
+if TYPE_CHECKING:
+    from dotfetch.core.fetcher import DotFetch
+    from dotfetch.schema.tool import ToolDefinition
+
+logger = logging.getLogger(__name__)
+
+
+#: Default number of tools surfaced per selection call, shared by every static
+#: adapter (:class:`DotFetchToolset`, :class:`BaseFrameworkAdapter`) and every
+#: live/deep per-turn provider (``live_wrappers.py``, ``frameworks/*_live.py``,
+#: :class:`~dotfetch.integrations.agent_framework_adapter.AgentFrameworkAdapter`).
+#: A single named constant keeps the two families from drifting apart again —
+#: they previously disagreed (static adapters defaulted to 3, live paths to 5).
+DEFAULT_TOOL_LIMIT = 5
+
+#: The deepest dynamic tool re-selection tier a framework adapter supports,
+#: surfaced uniformly as ``adapter.live_tier``. See
+#: :attr:`BaseFrameworkAdapter.live_tier` and
+#: ``integrations/frameworks/README.md`` for the full per-framework table.
+#:
+#: - ``"per-turn"`` — the framework calls back into dotfetch (directly, or via a
+#:   dotfetch-built hook/toolset/provider) on every model turn / reasoning step,
+#:   so the tool surface can change *mid-run* (LangGraph, LlamaIndex,
+#:   Pydantic AI, OpenAI Agents SDK, Google ADK, Strands, Microsoft Agent
+#:   Framework).
+#: - ``"per-run"`` — the framework fixes its tool list at agent-construction
+#:   time with no native mid-run hook, so the deepest dotfetch can do is rebuild
+#:   a fresh agent/tool list before each new top-level run (LangChain,
+#:   CrewAI, Agno, Haystack — see ``live_wrappers.py``).
+#:
+#: One vocabulary across the library: a *turn* is one model step, a *run* one
+#: top-level invocation, as in ``DotFetchContextProvider(query_strategy=
+#: "per_turn" | "per_run")``. ``"per-run"`` was spelled ``"per-call"`` before
+#: 0.24.0, when ``query_strategy="per_call"`` meant the opposite granularity
+#: (every model step); comparing a tier with ``"per-call"`` still matches,
+#: with a ``DeprecationWarning`` (see :data:`PER_RUN_TIER`).
+LiveTier = Literal["per-turn", "per-run"]
+
+#: The ``"per-run"`` tier as adapters declare it: equal to ``"per-run"``, and
+#: still equal to the pre-0.24.0 ``"per-call"`` with a ``DeprecationWarning``.
+PER_RUN_TIER: LiveTier = RenamedValue(  # type: ignore[assignment]
+    "per-run", old="per-call", what="live_tier"
+)
+
+
+class ToolExecutionError(RuntimeError):
+    """Raised when a dotfetch-backed tool invocation does not succeed.
+
+    Two subclasses distinguish the "never executed by design" outcomes so a
+    framework caller can branch without string-matching the status:
+    :class:`ToolConfirmationRequiredError` (the tool is confirmation-gated and was
+    not run — approve by re-issuing with ``ToolCall(require_confirmation=
+    False)``) and :class:`ToolPermissionDeniedError` (the security policy refused
+    it). Catching :class:`ToolExecutionError` still catches every outcome.
+    """
+
+    def __init__(
+        self, tool_name: str, status: str, error: str | None, error_type: str | None = None
+    ) -> None:
+        self.tool_name = tool_name
+        self.status = status
+        self.error = error
+        self.error_type = error_type
+        super().__init__(f"Tool {tool_name!r} failed (status={status}): {error or 'no detail'}")
+
+
+class ToolConfirmationRequiredError(ToolExecutionError):
+    """The tool requires human confirmation and was deliberately not executed."""
+
+
+class ToolPermissionDeniedError(ToolExecutionError):
+    """The security policy denied the tool call; it was not executed."""
+
+
+@dataclass(frozen=True)
+class ToolSpec:
+    """Framework-neutral handle to one selected dotfetch tool.
+
+    Attributes:
+        name: The tool's bare execution name.
+        native_name: The framework-facing name, disambiguated across namespaces.
+        qualified_name: ``namespace.name`` — unique within a registry.
+        description: Human/LLM-facing description.
+        parameters: JSON-Schema object describing the arguments.
+        requires_confirmation: Whether the underlying tool is high-risk.
+        score: The semantic score from selection (0.0 if unknown).
+        tool: The registry definition this spec was built from, when known.
+    """
+
+    name: str
+    qualified_name: str
+    description: str
+    parameters: dict[str, Any]
+    requires_confirmation: bool
+    score: float
+    _fetcher: DotFetch
+    _namespace: str
+    tool: ToolDefinition | None = None
+    _native_name: str | None = None
+
+    @property
+    def native_name(self) -> str:
+        """Name exposed to frameworks; disambiguated when namespaces share a name.
+
+        ``name`` and ``_namespace`` always identify the original execution target.
+        Native names stay stable when a query selects a different subset of the
+        registry, so framework tool indexes never shadow a same-named tool.
+        """
+        return self._native_name or self.name
+
+    # -- invocation -------------------------------------------------------- #
+    async def ainvoke(self, *args: Any, **kwargs: Any) -> Any:
+        """Execute the tool through dotfetch and return its raw result.
+
+        Accepts either a single positional mapping (``ainvoke({"a": 1})``) or
+        keyword arguments (``ainvoke(a=1)``). Raises :class:`ToolExecutionError`
+        on any non-success status so framework error handling kicks in.
+
+        ``None``-valued arguments for *optional* parameters are dropped: several
+        frameworks (CrewAI, Pydantic-schema validators, …) materialize every
+        declared optional field as ``None`` when the model didn't supply it,
+        but the tool's JSON schema types those params (e.g. ``string``) and the
+        executor rejects ``None``. Dropping them lets the tool's own default
+        apply — ``None`` for a required param is kept so the error stays clear.
+
+        A ``None`` the schema *declares* is kept too, and for the same reason
+        the executor's own normalization keeps it: ``x: int | None = 5``
+        advertises ``["integer", "null"]``, so an explicit null is a distinct
+        choice rather than "not provided", and dropping it handed the handler
+        ``5`` where the caller asked for ``None``. Both paths share one
+        predicate so they cannot disagree about which nulls are meaningful.
+        """
+        return await self._ainvoke(_coerce_arguments(args, kwargs))
+
+    async def _ainvoke(
+        self,
+        arguments: dict[str, Any],
+        *,
+        confirmation_approved: bool = False,
+        trace_id: str | None = None,
+        parent_span_id: str | None = None,
+    ) -> Any:
+        """Shared invocation; native approval clears only the confirmation gate.
+
+        ``trace_id``/``parent_span_id`` link dotfetch's execution telemetry to the
+        calling framework's trace (e.g. the active OpenTelemetry tool span).
+        """
+        required = set(self.parameters.get("required") or [])
+        properties = self.parameters.get("properties") or {}
+        arguments = {
+            k: v
+            for k, v in arguments.items()
+            if v is not None
+            or k in required
+            or schema_declares_null(properties.get(k))
+        }
+        arguments = {
+            key: _json_native(value, properties.get(key))
+            for key, value in arguments.items()
+        }
+        # Pass the namespace: selection resolved this spec to one specific
+        # tool, and a bare-name execute would prefer ``default.<name>`` if
+        # another namespace registers the same name.
+        call = ToolCall(tool_name=self.name, namespace=self._namespace, arguments=arguments)
+        if trace_id:
+            call.trace_id = trace_id
+        if parent_span_id:
+            call.parent_span_id = parent_span_id
+        if confirmation_approved:
+            call.require_confirmation = False
+        result = await self._fetcher.execute(call)
+        if result.status != ExecutionStatus.SUCCESS:
+            exc_cls = ToolExecutionError
+            if result.status == ExecutionStatus.PENDING_CONFIRMATION:
+                exc_cls = ToolConfirmationRequiredError
+            elif result.status == ExecutionStatus.PERMISSION_DENIED:
+                exc_cls = ToolPermissionDeniedError
+            raise exc_cls(
+                self.name,
+                getattr(result.status, "value", str(result.status)),
+                result.error,
+                result.error_type,
+            )
+        return result.result
+
+    def invoke(self, *args: Any, **kwargs: Any) -> Any:
+        """Synchronous wrapper around :meth:`ainvoke`.
+
+        Safe to call from synchronous framework code (CrewAI ``_run``,
+        Haystack/Agno function entrypoints, …) whether or not an event loop is
+        already running on the current thread. When a
+        loop is running, the coroutine is executed on a dedicated worker thread
+        and this call blocks for the result — mirroring how those frameworks
+        invoke a synchronous tool. Prefer :meth:`ainvoke` directly in async code.
+        """
+        return _run_coroutine_sync(self.ainvoke(*args, **kwargs))
+
+    def callable_for_signature(
+        self,
+        *,
+        type_matched_defaults: bool = False,
+    ) -> Callable[..., Any]:
+        """Return a plain async function that calls this tool by keyword.
+
+        Frameworks that build their own tool object from a function (Agno,
+        Pydantic AI, OpenAI Agents SDK) can wrap this. The returned function
+        carries ``__name__`` / ``__doc__`` **and a real ``__signature__``**
+        derived from :attr:`parameters`, so frameworks that introspect the
+        signature to build the LLM tool schema see the actual parameters
+        instead of a bare ``**kwargs`` (which would surface as a no-argument
+        tool).
+
+        ``type_matched_defaults`` (Google ADK) is an opt-in signature tweak —
+        see :meth:`python_signature`.
+
+        Properties that cannot be parameter names (``user-id``, ``from``,
+        ``_token``) appear in the signature under the aliases of
+        :meth:`parameter_aliases`. A call made with those aliases — what a
+        signature-reading framework sends — is mapped back to the schema's
+        own property names before the tool runs; a call made with the
+        original names passes through unchanged.
+        """
+        aliases = self.parameter_aliases()
+
+        async def _fn(**kwargs: Any) -> Any:
+            if aliases:
+                kwargs = {aliases.get(key, key): value for key, value in kwargs.items()}
+            return await self.ainvoke(**kwargs)
+
+        _fn.__name__ = self.native_name
+        _fn.__doc__ = self.description
+        _fn.__signature__ = self.python_signature(  # type: ignore[attr-defined]
+            type_matched_defaults=type_matched_defaults,
+        )
+        _fn.__annotations__ = {
+            p.name: p.annotation
+            for p in _fn.__signature__.parameters.values()
+            if p.annotation is not inspect.Parameter.empty
+        }
+        return _fn
+
+    def python_signature(
+        self,
+        *,
+        type_matched_defaults: bool = False,
+    ) -> inspect.Signature:
+        """Build an :class:`inspect.Signature` from the JSON-Schema parameters.
+
+        Each property becomes a keyword-only parameter; required properties have
+        no default. Optional properties default to the schema's own ``default``
+        when it declares one, else ``None``. Array properties with a typed
+        ``items`` schema annotate as ``list[T]`` so signature-introspecting
+        frameworks surface the item type. One opt-in mode adapts the signature
+        for a stricter framework:
+
+        - ``type_matched_defaults``: for optional params with no schema
+          ``default``, default to a type-matched empty value (``""`` / ``0`` /
+          ``False`` / ``[]`` / ``{}``) instead of ``None`` (Google ADK's
+          automatic function calling rejects both union types and a ``None``
+          default whose type mismatches the annotation).
+
+        A property whose name cannot be a Python parameter is exposed under
+        an identifier alias — see :meth:`parameter_aliases`.
+        """
+        properties = self.parameters.get("properties") or {}
+        required = set(self.parameters.get("required") or [])
+        params: list[inspect.Parameter] = []
+        for python_name, name in self._signature_names():
+            prop = properties[name]
+            prop = prop if isinstance(prop, dict) else {}
+            json_type = prop.get("type")
+            annotation = _annotation_for_prop(prop)
+            if name in required:
+                default = inspect.Parameter.empty
+                if not type_matched_defaults and schema_declares_null(prop):
+                    # Required means the value must be *present*, not that it
+                    # must be non-null. ``def f(x: int | None)`` emits
+                    # ``{"type": ["integer", "null"]}`` in ``required``, and
+                    # annotating it a bare ``int`` told a signature-reading
+                    # framework to advertise a non-nullable parameter — so the
+                    # model could not produce the null the executor accepts.
+                    # Skipped under ``type_matched_defaults``: Google ADK's
+                    # fallback path rejects union annotations outright, and a
+                    # rejected tool is worse than an under-specified one.
+                    annotation = annotation | None
+            else:
+                if not type_matched_defaults and schema_declares_null(prop):
+                    annotation = annotation | None
+                schema_default = prop.get("default")
+                if schema_default is not None and _matches_json_type(
+                    schema_default, json_type
+                ):
+                    # The schema's own default is the most faithful signal —
+                    # surface it instead of a synthetic placeholder.
+                    default = schema_default
+                elif type_matched_defaults:
+                    # Derived from the *final* annotation, not the raw JSON
+                    # type. Those diverged once a formatted string became a
+                    # ``datetime`` and an enum a ``Literal``: the placeholder
+                    # stayed ``""``, recreating the annotation/default mismatch
+                    # this mode exists to avoid, and ADK rejects such a tool
+                    # during signature processing.
+                    default = _default_for_annotation(annotation, json_type)
+                else:
+                    default = None
+            params.append(
+                inspect.Parameter(
+                    python_name,
+                    inspect.Parameter.KEYWORD_ONLY,
+                    default=default,
+                    annotation=annotation,
+                )
+            )
+        return inspect.Signature(params)
+
+    def parameter_aliases(self) -> dict[str, str]:
+        """Signature parameter name → schema property, for the properties renamed.
+
+        A JSON-Schema property may legally be called ``user-id``, ``from`` or
+        ``_token``, but :class:`inspect.Parameter` refuses non-identifiers
+        and keywords, and the Pydantic models that signature-reading
+        frameworks derive from the signature make no field from a leading
+        underscore — the same names
+        :func:`~dotfetch.integrations.frameworks.schema_bridge.pydantic_model_from_schema`
+        declines. One such property used to make :meth:`python_signature`,
+        and so every adapter built on :meth:`callable_for_signature`, raise
+        for the *whole* tool. Such properties are exposed under a valid
+        identifier instead (``user_id``, ``from_``, ``token``); properties
+        that are already valid names are absent from the map.
+        """
+        return {alias: name for alias, name in self._signature_names() if alias != name}
+
+    def aliased_parameters(self) -> dict[str, Any]:
+        """:attr:`parameters` with each renamed property under its signature alias.
+
+        For frameworks that advertise a JSON schema verbatim *and* validate or
+        filter the model's arguments against the callable's signature (Google
+        ADK, Strands): both must use the alias names, or a renamed property
+        can never be supplied. Returns :attr:`parameters` itself when nothing
+        is renamed.
+        """
+        renames = {name: alias for alias, name in self.parameter_aliases().items()}
+        if not renames:
+            return self.parameters
+        schema = dict(self.parameters)
+        properties = self.parameters.get("properties") or {}
+        schema["properties"] = {renames.get(k, k): v for k, v in properties.items()}
+        if isinstance(schema.get("required"), list):
+            schema["required"] = [renames.get(n, n) for n in schema["required"]]
+        return schema
+
+    def _signature_names(self) -> list[tuple[str, str]]:
+        """``(python_name, property_name)`` pairs in schema order.
+
+        See :meth:`parameter_aliases` for which names are rewritten.
+        """
+        properties = self.parameters.get("properties") or {}
+        # Seeded with every property so an alias never shadows a real one:
+        # ``user-id`` beside ``user_id`` becomes ``user_id_2``.
+        taken = set(properties)
+        pairs: list[tuple[str, str]] = []
+        for name in properties:
+            if name.isidentifier() and not name.startswith("_") and not keyword.iskeyword(name):
+                pairs.append((name, name))
+                continue
+            alias = _identifier_alias(name, taken)
+            taken.add(alias)
+            pairs.append((alias, name))
+        return pairs
+
+
+def _identifier_alias(name: str, taken: set[str]) -> str:
+    """A valid, unreserved Python identifier to stand in for property ``name``.
+
+    Characters that cannot appear in an identifier become ``_`` and leading
+    underscores are dropped; a result that is empty or starts with a digit
+    gets a ``p_`` prefix, a keyword a trailing ``_``, and a ``_2``, ``_3``…
+    suffix keeps it distinct from ``taken``. ``user-id`` → ``user_id``,
+    ``from`` → ``from_``, ``_token`` → ``token``, ``1st`` → ``p_1st``.
+    """
+    # ``("_" + ch).isidentifier()`` is exactly "may ``ch`` continue an
+    # identifier"; a regex word-character substitution would keep
+    # alphanumerics such as ``²`` that identifiers reject.
+    alias = "".join(ch if ("_" + ch).isidentifier() else "_" for ch in name).lstrip("_")
+    if not alias.isidentifier():
+        alias = f"p_{alias}"
+    if keyword.iskeyword(alias):
+        alias = f"{alias}_"
+    candidate, n = alias, 2
+    while candidate in taken:
+        candidate = f"{alias}_{n}"
+        n += 1
+    return candidate
+
+
+_JSON_TO_PYTHON: dict[str, Any] = {
+    "string": str,
+    "integer": int,
+    "number": float,
+    "boolean": bool,
+    "array": list,
+    "object": dict,
+}
+
+# Scalar "empty" default per JSON-Schema type, used to mark an optional
+# parameter without a None default (which strict validators like Google ADK
+# reject as incompatible with a non-Optional annotation).
+_SCALAR_DEFAULTS: dict[str, Any] = {
+    "string": "",
+    "integer": 0,
+    "number": 0.0,
+    "boolean": False,
+}
+
+
+def _typed_default(json_type: Any) -> Any:
+    """Return a fresh, type-matched empty default for an optional parameter."""
+    if isinstance(json_type, list):  # e.g. ["string", "null"]
+        json_type = next((t for t in json_type if t != "null"), None)
+    if json_type == "array":
+        return []
+    if json_type == "object":
+        return {}
+    return _SCALAR_DEFAULTS.get(json_type, "")
+
+
+def _json_type_to_python(json_type: Any) -> Any:
+    """Map a JSON-Schema ``type`` to a Python annotation (default ``str``)."""
+    if isinstance(json_type, list):  # e.g. ["string", "null"]
+        json_type = next((t for t in json_type if t != "null"), None)
+    return _JSON_TO_PYTHON.get(json_type, str)
+
+
+def _literal_members(prop: dict[str, Any]) -> tuple[Any, ...] | None:
+    """The ``Literal`` members a schema's ``enum``/``const`` pins it to.
+
+    ``None`` when the schema constrains nothing, or names a value no
+    ``Literal`` can hold — there the caller keeps the plain type annotation
+    rather than inventing one.
+    """
+    if "const" in prop:
+        values: list[Any] = [prop["const"]]
+    else:
+        enum_values = prop.get("enum")
+        if not isinstance(enum_values, list) or not enum_values:
+            return None
+        values = enum_values
+    # Floats are admitted for the same reason the schema bridge admits them:
+    # PEP 586 disallows a float member statically, but ``typing`` and every
+    # framework validator downstream enforce it correctly at runtime, and the
+    # alternative is advertising no constraint at all.
+    if not all(isinstance(v, (str, int, bool, float)) or v is None for v in values):
+        return None
+    return tuple(values)
+
+
+def _default_for_annotation(annotation: Any, json_type: Any) -> Any:
+    """A placeholder value an annotation will actually accept.
+
+    Google ADK's fallback path rejects a default whose type mismatches the
+    annotation, so the two have to be derived together. A ``Literal`` takes
+    its own first member; a reconstructed string format takes a real value of
+    that type; everything else falls back to the type-matched empty value.
+    """
+    import typing
+
+    if typing.get_origin(annotation) is Literal:
+        members = typing.get_args(annotation)
+        if members:
+            return members[0]
+    if annotation is datetime.datetime:
+        return datetime.datetime(1970, 1, 1)
+    if annotation is datetime.date:
+        return datetime.date(1970, 1, 1)
+    if annotation is datetime.time:
+        return datetime.time(0, 0)
+    if annotation is uuid.UUID:
+        return uuid.UUID(int=0)
+    return _typed_default(json_type)
+
+
+#: Recursion bound for :func:`_json_native`. Argument values are small and
+#: their schemas are already ``$ref``-inlined, so this only exists so a
+#: pathologically self-referential imported schema cannot spin.
+_MAX_NATIVE_DEPTH = 16
+
+
+def _json_native(value: Any, prop: Any, _depth: int = 0) -> Any:
+    """Return ``value`` in the JSON form its schema declares.
+
+    The executor validates against the *canonical* schema, which types a
+    ``datetime``/``date``/``time``/``UUID`` parameter as a formatted string.
+    A framework that reads this spec's signature — where those properties are
+    annotated with the Python type, so the framework advertises the format —
+    may parse the model's answer before handing it back, and a real
+    ``datetime`` object then fails ``_matches_type`` against ``"string"``,
+    rejecting a *valid* call. Serializing here keeps the dispatch boundary
+    JSON-native whichever framework is in play.
+
+    Applied at every depth the annotation can carry a format to, not only at
+    the top: ``_annotation_for_prop`` advertises ``list[datetime]`` from
+    ``items`` and ``dict[str, datetime]`` from ``additionalProperties``, so a
+    framework hands back a *container* of real ``datetime`` objects and
+    inspecting only the parent schema's ``format`` left every one of them to
+    be rejected item by item.
+
+    Still only where the schema actually declares one of those formats, so a
+    parameter genuinely typed ``object`` or ``array`` — or a free-form
+    ``dict`` whose values happen to be temporal — is untouched. The container
+    branches return ``value`` *itself* when nothing changed, which is what
+    lets the combinator fallback below tell "no branch applied" from "a
+    branch applied and produced an equal value".
+    """
+    if not isinstance(prop, dict) or _depth > _MAX_NATIVE_DEPTH:
+        return value
+
+    if isinstance(value, (datetime.datetime, datetime.date, datetime.time, uuid.UUID)):
+        if prop.get("format") in RECONSTRUCTED_STRING_FORMATS:
+            if isinstance(value, uuid.UUID):
+                return str(value)
+            return value.isoformat()
+        return _json_native_via_branches(value, prop, _depth)
+
+    if isinstance(value, (list, tuple)):
+        prefix = prop.get("prefixItems")
+        items = prop.get("items")
+        # Most framework arguments already contain JSON-native values. Copy
+        # only when a child changes (or the framework supplied a tuple).
+        restored = list(value) if isinstance(value, tuple) else None
+        if not isinstance(prefix, list) and not isinstance(items, dict):
+            return restored if restored is not None else _json_native_via_branches(value, prop, _depth)
+        for index, item in enumerate(value):
+            sub: Any = None
+            if isinstance(prefix, list) and index < len(prefix):
+                sub = prefix[index]
+            elif isinstance(items, dict):
+                sub = items
+            new_item = _json_native(item, sub, _depth + 1) if isinstance(sub, dict) else item
+            if new_item is not item:
+                if restored is None:
+                    restored = list(value)
+                restored[index] = new_item
+        if restored is not None:
+            return restored
+        return _json_native_via_branches(value, prop, _depth)
+
+    if isinstance(value, dict):
+        properties = prop.get("properties")
+        patterns = prop.get("patternProperties")
+        additional = prop.get("additionalProperties")
+        if not properties and not patterns and not isinstance(additional, dict):
+            return _json_native_via_branches(value, prop, _depth)
+        rebuilt: dict[Any, Any] | None = None
+        for key, item in value.items():
+            new_item = item
+            declared = isinstance(properties, dict) and key in properties
+            if declared:
+                new_item = _json_native(new_item, properties[key], _depth + 1)
+            # Not ``elif``: JSON Schema applies ``properties`` and
+            # ``patternProperties`` *both*, and so does the executor —
+            # ``_check_pattern_properties`` runs every pattern over every key
+            # and the object branch then checks the declared ones against
+            # ``properties`` as well. Treating them as alternatives here left
+            # a ``format`` that lives only on a matching pattern unapplied
+            # whenever the key was also declared, which is the same
+            # unserialized-datetime-against-``type: string`` rejection one
+            # level along (PR #386 review).
+            if isinstance(patterns, dict) and isinstance(key, str):
+                for sub in _pattern_subschemas(patterns, key):
+                    declared = True
+                    new_item = _json_native(new_item, sub, _depth + 1)
+            if not declared and isinstance(additional, dict):
+                # ``additionalProperties`` governs only the keys neither
+                # ``properties`` nor ``patternProperties`` claimed.
+                new_item = _json_native(new_item, additional, _depth + 1)
+            if new_item is not item:
+                if rebuilt is None:
+                    rebuilt = value.copy()
+                rebuilt[key] = new_item
+        if rebuilt is not None:
+            return rebuilt
+        return _json_native_via_branches(value, prop, _depth)
+
+    return value
+
+
+def _pattern_subschemas(patterns: dict[str, Any], key: str) -> list[Any]:
+    """Every ``patternProperties`` schema whose regex matches ``key``.
+
+    All of them apply — JSON Schema intersects the matching patterns rather
+    than picking one — and the caller folds ``_json_native`` through them in
+    turn. Returning only the *first* match dropped the restoration a later one
+    asked for: ``{"^a": {"type": "string"}, "_at$": {"format": "date-time"}}``
+    covers ``a_created_at`` twice, and a ``datetime`` under that key reached
+    the executor unserialized, to be rejected against ``type: string``
+    (PR #385 review).
+
+    Folding is safe because ``_json_native`` converts only a temporal or UUID
+    value under a matching ``format``; once one pattern — or the key's own
+    ``properties`` entry, which the caller folds alongside these — has turned
+    it into a string, the rest pass it through untouched. So order does not
+    matter and no schema can undo another's work.
+
+    ``re.search`` and the fail-open on an uncompilable pattern both mirror the
+    executor's ``_check_pattern_properties``, so the two cannot disagree about
+    which keys a pattern covers.
+    """
+    matched: list[Any] = []
+    for regex, subschema in patterns.items():
+        if not isinstance(regex, str):
+            continue
+        try:
+            if re.search(regex, key):
+                matched.append(subschema)
+        except re.error:
+            continue
+    return matched
+
+
+def _json_native_via_branches(value: Any, prop: dict[str, Any], depth: int) -> Any:
+    """Retry ``value`` against each combinator branch, keeping the first hit.
+
+    ``list[datetime] | None`` is spelled ``{"anyOf": [{"type": "array",
+    "items": {"format": "date-time", …}}, {"type": "null"}]}``, so the format
+    lives one level below the property the argument is keyed by. A branch that
+    does not apply returns the value unchanged, so the first *changed* result
+    is the branch that matched.
+    """
+    for key in ("anyOf", "oneOf", "allOf"):
+        branches = prop.get(key)
+        if not isinstance(branches, list):
+            continue
+        for branch in branches:
+            if not isinstance(branch, dict) or not branch:
+                continue
+            restored = _json_native(value, branch, depth + 1)
+            if restored is not value:
+                return restored
+    return value
+
+
+def _composite_choice_type(prop: dict[str, Any]) -> Any:
+    """The container type a non-scalar ``enum``/``const`` pins a value to.
+
+    ``None`` unless every member is a JSON array, or every member is a JSON
+    object. Only consulted when the schema declares no ``type`` of its own —
+    an explicit ``type`` is the author's statement and outranks whatever the
+    members suggest, even when the two disagree. Membership itself is not
+    enforced here: a Python signature can
+    carry the type but not the value set (that is what ``Literal`` is for,
+    and these members can't be ``Literal`` members), so the frameworks
+    reading this signature see the right *type* and the executor still
+    enforces the *values* at dispatch.
+    """
+    values = [prop["const"]] if "const" in prop else prop.get("enum")
+    if not isinstance(values, list) or not values:
+        return None
+    if all(isinstance(v, list) for v in values):
+        return list
+    if all(isinstance(v, dict) for v in values):
+        return dict
+    return None
+
+
+def _positional_annotation(prop: dict[str, Any]) -> Any:
+    """``tuple[...]`` for an array whose length *and* positions are pinned.
+
+    ``tuple[int, str]`` is introspected as ``prefixItems`` plus equal
+    ``minItems``/``maxItems``, but this builder read only ``items`` — so the
+    frameworks that rebuild their LLM schema from the signature (Semantic
+    Google ADK's fallback path) published a bare ``list``, dropping
+    both the positional types and the arity, and the model could answer with
+    an array the executor then rejects.
+
+    Returns ``None`` unless every position can actually be typed, so a partly
+    described array keeps the bare container rather than gaining an assertion
+    the schema never made. The bare-``str`` guard is the same one the ``items``
+    branch uses: it is the fallback for an untyped subschema, not a claim.
+
+    A ``tuple`` annotation is safe here only because ``_json_native``
+    normalizes one back to a JSON array at the dispatch boundary — the
+    executor's validator accepts a ``list`` and nothing else, so a framework
+    materializing this annotation would otherwise have its correct value
+    refused. The framework *bridge* declines the same conversion for exactly
+    that reason, having no such boundary of its own.
+    """
+    low, high = prop.get("minItems"), prop.get("maxItems")
+    if not (
+        isinstance(low, int)
+        and isinstance(high, int)
+        and not isinstance(low, bool)
+        and not isinstance(high, bool)
+        and low == high
+        and low >= 0
+    ):
+        return None
+    if low == 0:
+        return tuple[()]
+    prefix = prop.get("prefixItems")
+    items = prop.get("items")
+    members: list[Any] = []
+    for index in range(low):
+        if isinstance(prefix, list) and index < len(prefix):
+            sub = prefix[index]
+        else:
+            sub = items
+        if not isinstance(sub, dict) or not sub:
+            return None
+        member = _annotation_for_prop(sub)
+        if member is str and sub.get("type") != "string":
+            return None
+        members.append(member)
+    return tuple[tuple(members)]
+
+
+def _annotation_for_prop(prop: dict[str, Any]) -> Any:
+    """Python annotation for one property schema, recursively.
+
+    Frameworks that rebuild their LLM schema from the signature rather than
+    from ``parameters_schema`` — Google ADK's fallback
+    path — see only what this returns, so anything it drops is invisible to
+    the model. ``{"type": "array", "items": {"type": "string"}}`` annotates
+    as ``list[str]`` rather than a bare ``list``; an ``enum``/``const``
+    becomes a ``Literal`` rather than a bare ``str``, which previously let
+    those frameworks advertise ``Literal["fast", "slow"]`` as unconstrained
+    text; and a typed mapping keeps its value type.
+
+    An object with declared ``properties`` still degrades to a bare ``dict``.
+    Rebuilding it as a nested model (what CrewAI and LlamaIndex get from
+    ``pydantic_model_from_schema``) would change what these frameworks
+    introspect in a way this codebase can't exercise against their real
+    schema derivation, so it stays a documented gap rather than an untested
+    behaviour change.
+    """
+    literal = _literal_members(prop)
+    if literal is not None:
+        return Literal[literal]
+
+    composite = _composite_choice_type(prop) if "type" not in prop else None
+    if composite is not None:
+        # A tuple-valued ``Enum`` emits ``{"enum": [[0, 0], [1, 1]]}`` — no
+        # ``type``, because its members share none of the scalar kinds. With
+        # no ``Literal`` to build and no ``type`` to read, this fell all the
+        # way to ``_json_type_to_python``'s ``str`` fallback and advertised a
+        # *string* for an array-valued parameter, so the string the model
+        # produced was rejected by the executor. The members themselves name
+        # the type even when they can't name a ``Literal``.
+        return composite
+
+    json_type = prop.get("type")
+    if json_type is None:
+        # ``{"anyOf": [{"type": "integer"}, {"type": "null"}]}`` is what
+        # Pydantic and OpenAPI emit for ``int | None``, so it arrives from
+        # every imported schema and every inlined nested model. With no
+        # ``type`` to read this fell through to ``_json_type_to_python``'s
+        # ``str`` fallback and advertised a *string* for an integer parameter.
+        # The non-null branch carries the real type; nullability is added
+        # separately by the caller, which is what ``schema_declares_null``
+        # decides.
+        for key in ("anyOf", "oneOf"):
+            branches = prop.get(key)
+            if not isinstance(branches, list):
+                continue
+            for branch in branches:
+                if not isinstance(branch, dict) or not branch:
+                    continue
+                if branch.get("type") == "null":
+                    continue
+                return _annotation_for_prop(branch)
+
+    if json_type == "null" or (isinstance(json_type, list) and set(json_type) == {"null"}):
+        # ``_json_type_to_python`` falls back to ``str`` for anything it
+        # doesn't recognize, so a parameter annotated ``None`` — which
+        # introspection now emits as ``{"type": "null"}`` — was advertised as
+        # a string, and the string the model dutifully produced was then
+        # rejected by the executor.
+        return type(None)
+
+    if json_type == "string":
+        # ``{"type": "string", "format": "date-time"}`` is what introspection
+        # emits for a ``datetime`` parameter. Reducing it to a bare ``str``
+        # dropped the format from the schema Google
+        # ADK's fallback path rebuild off this signature, so they advertised a
+        # free-form string and the model could answer with one the handler
+        # can't take. Only the formats dotfetch emits and reconstructs are
+        # mapped; ``email``/``uri`` and friends stay ``str``.
+        formatted = RECONSTRUCTED_STRING_FORMATS.get(prop.get("format"))
+        if formatted is not None:
+            return formatted
+
+    annotation = _json_type_to_python(json_type)
+
+    if annotation is list:
+        positional = _positional_annotation(prop)
+        if positional is not None:
+            return positional
+        items = prop.get("items")
+        if isinstance(items, dict) and items:
+            item_annotation = _annotation_for_prop(items)
+            # A bare ``str`` here is the fallback for an untyped item schema,
+            # not a real annotation — keep the bare container instead of
+            # asserting an item type the schema never declared.
+            if item_annotation is not str or items.get("type") == "string":
+                return list[item_annotation]
+        return annotation
+
+    if annotation is dict:
+        additional = prop.get("additionalProperties")
+        properties = prop.get("properties")
+        if isinstance(additional, dict) and additional and not properties:
+            return dict[str, _annotation_for_prop(additional)]
+        return annotation
+
+    return annotation
+
+
+def _matches_json_type(value: Any, json_type: Any) -> bool:
+    """Whether a schema ``default`` is usable for its declared JSON type.
+
+    Guards against surfacing a mistyped default (e.g. ``default: "5"`` on an
+    ``integer`` property) as a Python signature default, where a strict
+    framework validator would then reject the tool outright.
+    """
+    if isinstance(json_type, list):
+        json_type = next((t for t in json_type if t != "null"), None)
+    if json_type is None:
+        return True
+    if json_type == "boolean":
+        return isinstance(value, bool)
+    if json_type == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if json_type == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if json_type == "string":
+        return isinstance(value, str)
+    if json_type == "array":
+        return isinstance(value, list)
+    if json_type == "object":
+        return isinstance(value, dict)
+    return True
+
+
+#: One long-lived event loop, on a daemon thread, that every sync bridge call
+#: runs on. A fresh ``asyncio.run`` per call would close its loop on return,
+#: so loop-affine state (an MCP session, an HTTP client pool) had to be torn
+#: down and rebuilt on every sync tool call.
+_BRIDGE_LOOP: asyncio.AbstractEventLoop | None = None
+_BRIDGE_LOOP_LOCK = threading.Lock()
+
+
+def _bridge_loop() -> asyncio.AbstractEventLoop:
+    """Return the shared bridge loop, starting it once."""
+    global _BRIDGE_LOOP
+    if _BRIDGE_LOOP is None:
+        with _BRIDGE_LOOP_LOCK:
+            if _BRIDGE_LOOP is None:
+                loop = asyncio.new_event_loop()
+                threading.Thread(
+                    target=loop.run_forever, name="fetcher-sync-bridge", daemon=True
+                ).start()
+                _BRIDGE_LOOP = loop
+    return _BRIDGE_LOOP
+
+
+def _run_coroutine_sync(coro: Any) -> Any:
+    """Run an awaitable to completion from synchronous code and block for it.
+
+    The coroutine runs on the shared bridge loop (:func:`_bridge_loop`)
+    whether or not a loop is running on the calling thread, so a framework
+    that calls a sync tool from inside its async agent loop never hits
+    "loop already running", and resources a tool call opens survive across
+    calls. A fetcher that is *also* driven directly from another loop switches
+    loops once per direction — an MCP session reconnects on each switch, not
+    on each call.
+
+    A call made *from* the bridge loop itself (a tool handler that calls
+    ``ToolSpec.invoke``) cannot wait on that loop, so it runs the coroutine on
+    a throwaway thread with its own loop instead.
+    """
+    try:
+        running: asyncio.AbstractEventLoop | None = asyncio.get_running_loop()
+    except RuntimeError:
+        running = None
+    if running is not None and running is _BRIDGE_LOOP:
+        result: dict[str, Any] = {}
+
+        def _runner() -> None:
+            try:
+                result["value"] = asyncio.run(coro)
+            except BaseException as exc:  # re-raised on the calling thread
+                result["error"] = exc
+
+        thread = threading.Thread(target=_runner, name="fetcher-sync-bridge-nested", daemon=True)
+        thread.start()
+        thread.join()
+        if "error" in result:
+            raise result["error"]
+        return result.get("value")
+    return asyncio.run_coroutine_threadsafe(coro, _bridge_loop()).result()
+
+
+async def _maybe_await(value: Any) -> Any:
+    """Await ``value`` when it is awaitable, otherwise return it unchanged."""
+    if inspect.isawaitable(value):
+        return await value
+    return value
+
+
+def _coerce_arguments(args: tuple[Any, ...], kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Normalize ``(*args, **kwargs)`` into a single argument dict."""
+    if args:
+        if len(args) == 1 and isinstance(args[0], dict) and not kwargs:
+            return dict(args[0])
+        raise TypeError(
+            "Tool invocation accepts a single mapping positional argument or "
+            "keyword arguments, not both / multiple positionals."
+        )
+    return dict(kwargs)
+
+
+def spec_from_tool(
+    fetcher: DotFetch,
+    tool: ToolDefinition,
+    score: float = 0.0,
+    *,
+    native_name: str | None = None,
+) -> ToolSpec:
+    """Build a :class:`ToolSpec` from a dotfetch :class:`ToolDefinition`."""
+    qualified = getattr(tool, "qualified_name", None) or f"{tool.namespace}.{tool.name}"
+    # SDKs may normalize schemas in place. A selected spec is a snapshot:
+    # exporting or editing it must not change registry validation or later turns.
+    params = copy.deepcopy(tool.parameters_schema) if tool.parameters_schema else {"type": "object", "properties": {}}
+    return ToolSpec(
+        name=tool.name,
+        qualified_name=qualified,
+        description=tool.description or tool.name,
+        parameters=params,
+        requires_confirmation=bool(getattr(tool, "requires_confirmation", False)),
+        score=float(score),
+        _fetcher=fetcher,
+        _namespace=tool.namespace,
+        tool=tool,
+        _native_name=native_name,
+    )
+
+
+def _native_tool_names(definitions: Sequence[ToolDefinition]) -> dict[str, str]:
+    """Stable, unique framework names for a registry, preserving ordinary names.
+
+    Frameworks index tools by name alone. Namespace-qualified aliases include a
+    digest so namespaces that normalize identically cannot collide. Reserve all
+    authored names too: a generated alias must never hide a real tool. The
+    64-character bound works with the common model-provider function APIs.
+    """
+    identities = tuple(dict.fromkeys((tool.namespace, tool.name) for tool in definitions))
+    return _native_names_for(identities)
+
+
+@functools.lru_cache(maxsize=16)
+def _native_names_for(identities: tuple[tuple[str, str], ...]) -> dict[str, str]:
+    """Cache only names, bounded across registry churn; never retain tools or DotFetch instances."""
+    counts = Counter(name for _, name in identities)
+    taken = {name for _, name in identities}
+    names: dict[str, str] = {}
+    aliases: list[tuple[str, str]] = []
+    for namespace, name in identities:
+        key = f"{namespace}.{name}"
+        if counts[name] == 1 and len(name) <= 64:
+            names[key] = name
+            continue
+        aliases.append((namespace, name))
+    for namespace, name in sorted(aliases):
+        key = f"{namespace}.{name}"
+        stem = re.sub(r"[^a-z0-9_]", "_", f"{namespace}__{name}".lower())
+        if not stem[0].isalpha():
+            stem = f"tool_{stem}"
+        attempt = 0
+        while True:
+            identity = key if attempt == 0 else f"{key}:{attempt}"
+            digest = hashlib.sha256(identity.encode()).hexdigest()[:8]
+            alias = f"{stem[:55]}_{digest}"
+            if alias not in taken:
+                break
+            attempt += 1
+        names[key] = alias
+        taken.add(alias)
+    return names
+
+
+def _with_native_names(fetcher: DotFetch, specs: list[ToolSpec]) -> list[ToolSpec]:
+    """Name a selection against the full registry, including pins and imports."""
+    if not specs:
+        return specs
+    definitions = fetcher.list_tools_sync() + [s.tool for s in specs if s.tool is not None]
+    names = _native_tool_names(definitions)
+    named: list[ToolSpec] = []
+    for spec in specs:
+        native = names.get(f"{spec._namespace}.{spec.name}", spec.name)
+        named.append(replace(spec, _native_name=native) if native != spec.native_name else spec)
+    return named
+
+
+def _bare_qualified_name(tool: ToolDefinition) -> str:
+    """Return a tool's ``namespace.name`` string — no version suffix.
+
+    This is the format a ``required=[...]``/``always_include=[...]`` caller
+    uses to disambiguate same-named tools across namespaces, and the same
+    format
+    :class:`~dotfetch.integrations.agent_framework_provider.DotFetchContextProvider`
+    uses for its own ``required`` validation (``f"{t.namespace}.{t.name}"``).
+    Deliberately distinct from :attr:`ToolDefinition.qualified_name` /
+    :attr:`ToolSpec.qualified_name`, which both additionally suffix
+    ``:<version>`` — a version pin isn't something a ``required=[...]``
+    caller would reasonably type, so matching against it would make
+    ``namespace.name`` lookups silently fail.
+    """
+    return f"{tool.namespace}.{tool.name}"
+
+
+def _resolve_tool_names(
+    fetcher: DotFetch,
+    names: Sequence[str],
+    namespaces: Sequence[str] | None = None,
+) -> tuple[list[ToolDefinition], list[str]]:
+    """Resolve bare or qualified tool names against the fetcher's registry.
+
+    Reads :meth:`DotFetch.list_tools_sync` — the in-memory registry, no
+    vector-store round trip — the same source
+    :class:`~dotfetch.integrations.agent_framework_provider.DotFetchContextProvider`
+    uses to validate its own ``required=[...]``. A name matches either the
+    tool's bare ``name`` or its ``namespace.name`` qualified name (see
+    :func:`_bare_qualified_name`); bare-name lookups take the first match
+    across namespaces (mirroring
+    :meth:`~dotfetch.core.registry.ToolRegistry.get_tool_by_name`), except
+    that with ``namespaces`` a bare name prefers a registration inside them,
+    so a namespace-filtered selection pins the in-scope tool.
+
+    Returns ``(found, missing)`` — ``(requested name, resolved ToolDefinition)``
+    pairs in the order ``names`` was given, and the subset of ``names`` that
+    matched nothing. The requested name is kept alongside the resolution so
+    callers can tell a bare pin (``"foo"``) from a qualified one
+    (``"other.foo"``) when deduplicating against the semantic slice.
+    """
+    known = fetcher.list_tools_sync()
+    by_qualified: dict[str, ToolDefinition] = {}
+    by_bare: dict[str, ToolDefinition] = {}
+    scoped: dict[str, ToolDefinition] = {}
+    for tool in known:
+        by_qualified.setdefault(_bare_qualified_name(tool), tool)
+        by_bare.setdefault(tool.name, tool)
+        if namespaces and tool.namespace in namespaces:
+            scoped.setdefault(tool.name, tool)
+    by_bare.update(scoped)
+
+    found: list[tuple[str, ToolDefinition]] = []
+    missing: list[str] = []
+    for name in names:
+        tool = by_qualified.get(name) or by_bare.get(name)
+        if tool is None:
+            missing.append(name)
+        else:
+            found.append((name, tool))
+    return found, missing
+
+
+def _pin_specs(
+    fetcher: DotFetch,
+    names: Sequence[str] | None,
+    seen_qualified: set[str],
+    seen_bare: set[str],
+    *,
+    kind: Literal["required", "always_include"],
+    namespaces: Sequence[str] | None = None,
+) -> list[ToolSpec]:
+    """Resolve ``names`` and wrap any not already present as pinned :class:`ToolSpec`\\ s.
+
+    Shared by :meth:`DotFetchToolset.select` and :meth:`DotFetchToolset.select_or_empty`
+    for both the ``required`` and ``always_include`` keyword arguments — the
+    only difference between the two is what happens when a name doesn't
+    resolve against the registry:
+
+    - ``kind="required"``: raises :class:`MissingRequiredToolError` listing
+      every unresolved name. Mirrors
+      :class:`~dotfetch.integrations.agent_framework_provider.DotFetchContextProvider`,
+      which validates ``required=[...]`` and raises the same error type.
+    - ``kind="always_include"``: logs a ``WARNING`` naming the unresolved
+      tools and silently skips them — mirrors
+      ``DotFetchContextProvider``'s ``always_include`` semantics (a missing
+      always-include tool is a soft-fail, not a hard error).
+
+    Deduplication respects the pin's own name form:
+
+    - A **qualified** pin (``"other.foo"``) is skipped only when *that exact
+      tool* (same ``namespace.name``) is already present — a same-named tool
+      from a different namespace in the semantic slice does NOT satisfy it.
+    - A **bare** pin (``"foo"``) is satisfied by *any* already-present tool
+      with that bare name (semantic slice or an earlier pin), since the caller
+      expressed no namespace preference.
+
+    ``seen_qualified``/``seen_bare`` are mutated in place so an earlier call
+    (``required`` is pinned before ``always_include``) deduplicates against
+    later ones.
+    """
+    if not names:
+        return []
+    found, missing = _resolve_tool_names(fetcher, names, namespaces)
+    if missing:
+        if kind == "required":
+            raise MissingRequiredToolError(
+                f"DotFetchToolset.select: required tool(s) not found in dotfetch: "
+                f"{missing}. Did you forget to register them, or is there a typo?"
+            )
+        logger.warning(
+            "DotFetchToolset.select: always_include tool(s) not found in dotfetch "
+            "and will be skipped: %s",
+            missing,
+        )
+    pinned: list[ToolSpec] = []
+    for requested, tool_def in found:
+        bare_qualified = _bare_qualified_name(tool_def)
+        if bare_qualified in seen_qualified:
+            continue
+        is_bare_pin = requested == tool_def.name
+        if is_bare_pin and tool_def.name in seen_bare:
+            continue
+        spec = spec_from_tool(fetcher, tool_def)
+        seen_qualified.add(bare_qualified)
+        seen_bare.add(tool_def.name)
+        pinned.append(spec)
+    return pinned
+
+
+def _resolve_pins(
+    fetcher: DotFetch,
+    specs: list[ToolSpec],
+    *,
+    required: Sequence[str] | None,
+    always_include: Sequence[str] | None,
+    namespaces: Sequence[str] | None = None,
+) -> list[ToolSpec]:
+    """Build the pinned-tool tail appended after ``specs`` (the semantic slice).
+
+    ``namespaces`` (the selection's filter) makes a bare pin resolve to the
+    in-scope registration when one exists; qualified pins are unaffected.
+
+    Ordering matches
+    :class:`~dotfetch.integrations.agent_framework_provider.DotFetchContextProvider`:
+    dynamic/semantic tools first (``specs``, already ranked), then
+    ``required`` (in the order given), then ``always_include`` (in the order
+    given, skipping anything ``required`` already pinned). Deduplicated
+    against ``specs`` and against each other. Pinned tools are never counted
+    against ``limit`` — the same choice
+    ``DotFetchContextProvider.top_k`` makes for its own ``required`` /
+    ``always_include`` — so a caller's tool budget for the *semantic* slice
+    is never silently reduced by pins, and a required tool is never dropped
+    because the semantic slice happened to fill ``limit`` first.
+    """
+    if not required and not always_include:
+        return []
+    seen_qualified: set[str] = set()
+    seen_bare: set[str] = set()
+    for s in specs:
+        seen_qualified.add(f"{s._namespace}.{s.name}")
+        seen_bare.add(s.name)
+    pinned = _pin_specs(
+        fetcher, required, seen_qualified, seen_bare, kind="required", namespaces=namespaces
+    )
+    pinned += _pin_specs(
+        fetcher,
+        always_include,
+        seen_qualified,
+        seen_bare,
+        kind="always_include",
+        namespaces=namespaces,
+    )
+    return pinned
+
+
+class QueryBoundsError(ValueError):
+    """``limit``/``score_threshold`` fall outside ``ToolQuery``'s bounds.
+
+    A configuration error, not a retrieval failure: the per-turn live hooks
+    let it propagate instead of degrading to "no tools this turn".
+    """
+
+
+def check_query_bounds(*, limit: int, score_threshold: float, owner: str) -> None:
+    """Raise :class:`QueryBoundsError` if ``limit``/``score_threshold`` are out of bounds.
+
+    Validating through a throwaway :class:`~dotfetch.schema.query.ToolQuery`
+    keeps the accepted range defined in exactly one place; ``owner`` names the
+    API in the message.
+    """
+    try:
+        ToolQuery(
+            context=ConversationContext(query="x"),
+            limit=limit,
+            score_threshold=score_threshold,
+        )
+    except ValidationError as exc:
+        problems = "; ".join(
+            f"{'.'.join(str(loc) for loc in err['loc'])}={err.get('input')!r} is invalid: "
+            f"{err['msg']}"
+            for err in exc.errors()
+        )
+        raise QueryBoundsError(f"{owner}: {problems}") from exc
+
+
+class DotFetchToolset:
+    """Framework-neutral entry point: select tools, then export to a framework.
+
+    Example::
+
+        toolset = DotFetchToolset(fetcher)
+        specs = await toolset.select("send an email", limit=3)
+        # turn the specs into a framework's native objects via that framework's
+        # adapter (each exposes a ``convert`` staticmethod):
+        from dotfetch.langchain import LangChainAdapter
+        lc_tools = [LangChainAdapter.convert(s) for s in specs]
+    """
+
+    def __init__(self, fetcher: DotFetch, *, default_limit: int = DEFAULT_TOOL_LIMIT) -> None:
+        self._fetcher = fetcher
+        self._default_limit = default_limit
+
+    async def select(
+        self,
+        query: str,
+        *,
+        limit: int | None = None,
+        score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
+        tools_already_used: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
+    ) -> list[ToolSpec]:
+        """Run semantic selection and return ranked :class:`ToolSpec` handles.
+
+        ``score_threshold`` defaults to ``0.0`` (no filtering) — matching the
+        high-level convenience API and avoiding the silent-drop trap of the raw
+        ``ToolQuery`` 0.5 default.
+
+        ``required`` and ``always_include`` (both bare or ``namespace.name``
+        qualified tool names) are pinned onto the semantic slice — ported
+        from
+        :class:`~dotfetch.integrations.agent_framework_provider.DotFetchContextProvider`,
+        the Microsoft Agent Framework provider that originated this feature,
+        so every framework adapter gets the same guarantee:
+
+        - ``required``: every listed tool **must** end up in the result. A
+          tool already present in the semantic slice counts; anything
+          missing is fetched from the registry and appended. If a name
+          doesn't resolve against the registry at all, raises
+          :class:`~dotfetch.integrations.frameworks.errors.MissingRequiredToolError`
+          rather than silently returning an incomplete selection.
+        - ``always_include``: same resolution and append behaviour, but a
+          name that isn't in the registry is logged as a ``WARNING`` and
+          skipped rather than raising.
+
+        Both are appended *after* the semantic slice, in the order given
+        (``required`` before ``always_include``), deduplicated against it and
+        against each other — see :func:`_resolve_pins` for the full ordering
+        and dedup contract. Neither counts against ``limit``: ``limit`` bounds
+        only the semantic retrieval, so a required tool is never dropped
+        because the semantic slice already filled the budget, and pins never
+        silently shrink the semantic slice a caller asked for.
+        """
+        # ``or`` would turn an explicit ``limit=0`` into the default and slip
+        # it past the bounds check below, unlike the decorator and refresher.
+        limit = self._default_limit if limit is None else limit
+        # Checked first, and as a clear error: the ``ToolQuery`` below raised a
+        # raw ValidationError for ``limit=60`` — at the first turn, from inside
+        # whichever framework hook called here.
+        check_query_bounds(
+            limit=limit, score_threshold=score_threshold, owner="DotFetchToolset.select"
+        )
+        used = list(tools_already_used or [])
+        if used:
+            native_names = _native_tool_names(self._fetcher.list_tools_sync())
+            originals = {
+                native: qualified
+                for qualified, native in native_names.items()
+                if native != qualified.rsplit(".", 1)[-1]
+            }
+            used = [originals.get(name, name) for name in used]
+        context = ConversationContext(
+            query=query,
+            tools_already_used=used,
+        )
+        result = await self._fetcher.retrieve(
+            ToolQuery(
+                context=context,
+                limit=limit,
+                score_threshold=score_threshold,
+                namespaces=namespaces,
+            )
+        )
+        specs = [spec_from_tool(self._fetcher, st.tool, st.semantic_score) for st in result.tools]
+        pinned = _resolve_pins(
+            self._fetcher,
+            specs,
+            required=required,
+            always_include=always_include,
+            namespaces=namespaces,
+        )
+        return _with_native_names(self._fetcher, specs + pinned)
+
+    async def select_or_empty(
+        self,
+        query: str,
+        *,
+        limit: int | None = None,
+        score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
+        tools_already_used: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
+    ) -> list[ToolSpec]:
+        """Like :meth:`select`, but skips the *semantic* leg for a blank query.
+
+        Every per-turn live provider (``integrations/frameworks/*_live.py``,
+        :class:`~dotfetch.integrations.refresh.ToolRefresher`) needs this
+        exact guard: selecting on an empty embedding yields an arbitrary
+        top-k for some embedders, so a turn with no retrieval signal (no new
+        user text, no tool result yet) should surface no *dynamic* tools
+        rather than a nonsensical selection. This was previously
+        re-implemented verbatim in nearly every ``*_live.py`` module (each
+        with an identical "consistent with the other live providers" comment)
+        — centralised here so each live provider keeps its own
+        framework-specific query derivation but shares this one selection
+        primitive.
+
+        ``required`` / ``always_include`` are resolved and returned even on a
+        blank query — they don't depend on the query's retrieval signal, and
+        ``DotFetchContextProvider`` injects its own ``always_include``/``required``
+        pins unconditionally for the same reason (a workflow that needs a
+        pinned tool needs it whether or not this turn produced new query
+        text). A blank query with a missing ``required`` tool still raises
+        :class:`~dotfetch.integrations.frameworks.errors.MissingRequiredToolError`.
+        """
+        if not (query or "").strip():
+            return _with_native_names(
+                self._fetcher,
+                _resolve_pins(
+                    self._fetcher,
+                    [],
+                    required=required,
+                    always_include=always_include,
+                    namespaces=namespaces,
+                ),
+            )
+        return await self.select(
+            query,
+            limit=limit,
+            score_threshold=score_threshold,
+            namespaces=namespaces,
+            tools_already_used=tools_already_used,
+            required=required,
+            always_include=always_include,
+        )
+
+
+class BaseFrameworkAdapter:
+    """Shared base for native per-framework tool adapters.
+
+    Subclasses implement the :meth:`convert` staticmethod (one ``ToolSpec`` →
+    one framework-native tool object) and declare :attr:`live_tier` plus
+    :attr:`_live_delegate`, the bespoke method :meth:`live` forwards to. See
+    ``integrations/frameworks/README.md`` for the per-framework table (tier,
+    delegate, return type, where to plug it in).
+    """
+
+    def __init__(self, fetcher: DotFetch, *, default_limit: int = DEFAULT_TOOL_LIMIT) -> None:
+        self._fetcher = fetcher
+        self._default_limit = default_limit
+
+    #: The deepest dynamic re-selection tier this adapter's framework
+    #: supports — ``"per-turn"`` or ``"per-run"`` (see :data:`LiveTier`).
+    live_tier: ClassVar[LiveTier]
+
+    #: Name of the bespoke method :meth:`live` delegates to.
+    _live_delegate: ClassVar[str]
+
+    #: ``framework_kwargs`` :meth:`live` requires and passes positionally to
+    #: the delegate, in order (a chat model, an already-built agent, …).
+    _live_required_kwargs: ClassVar[tuple[str, ...]] = ()
+
+    @staticmethod
+    def convert(spec: ToolSpec) -> Any:
+        """Wrap a single :class:`ToolSpec` as the framework's native tool object.
+
+        Subclasses must re-declare this as a ``@staticmethod`` (it is part of the
+        public API — callers use ``SomeAdapter.convert(spec)`` without an
+        instance — and :meth:`select` dispatches through ``self.convert``).
+        """
+        raise NotImplementedError
+
+    def _selection_kwargs(
+        self,
+        limit: int | None,
+        score_threshold: float,
+        namespaces: list[str] | None,
+        required: list[str] | None,
+        always_include: list[str] | None,
+    ) -> dict[str, Any]:
+        """The selection keywords every live/bespoke method forwards, with the default limit applied."""
+        return {
+            "limit": self._default_limit if limit is None else limit,
+            "score_threshold": score_threshold,
+            "namespaces": namespaces,
+            "required": required,
+            "always_include": always_include,
+        }
+
+    def live(
+        self,
+        *,
+        limit: int | None = None,
+        score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
+        **framework_kwargs: Any,
+    ) -> Any:
+        """Return this framework's live/dynamic tool object (uniform entry point).
+
+        Forwards the five selection keywords to the adapter's bespoke method
+        (:attr:`_live_delegate`: ``react_agent``, ``toolset``, ``tool_hook``,
+        ``agent_builder``, …) together with ``**framework_kwargs``. Frameworks
+        whose hook is bound to an external object (a chat model, an agent)
+        require it as a named entry of ``framework_kwargs`` and raise
+        ``TypeError`` when it is missing. ``required``/``always_include``
+        follow :meth:`DotFetchToolset.select`'s pinning contract and are
+        re-applied on every re-selection round. :attr:`live_tier` says how
+        deep the re-selection goes.
+        """
+        kwargs = self._selection_kwargs(
+            limit, score_threshold, namespaces, required, always_include
+        )
+        check_query_bounds(
+            limit=kwargs["limit"],
+            score_threshold=score_threshold,
+            owner=f"{type(self).__name__}.live",
+        )
+        positional = []
+        for name in self._live_required_kwargs:
+            if name not in framework_kwargs:
+                raise TypeError(f"{type(self).__name__}.live() requires {name}=...")
+            positional.append(framework_kwargs.pop(name))
+        return getattr(self, self._live_delegate)(*positional, **kwargs, **framework_kwargs)
+
+    async def select(
+        self,
+        query: str,
+        *,
+        limit: int | None = None,
+        score_threshold: float = 0.0,
+        namespaces: list[str] | None = None,
+        tools_already_used: list[str] | None = None,
+        required: list[str] | None = None,
+        always_include: list[str] | None = None,
+    ) -> list[Any]:
+        """Select tools for ``query`` as the framework's native tool objects.
+
+        ``limit`` defaults to the adapter's ``default_limit``; the other
+        keywords are forwarded verbatim to :meth:`DotFetchToolset.select` (see
+        its docstring for the ``required``/``always_include`` pinning
+        contract). Each call still routes through ``fetcher.execute`` so
+        retries, timeouts, circuit breakers, and the security policy apply.
+        """
+        specs = await DotFetchToolset(self._fetcher).select(
+            query,
+            tools_already_used=tools_already_used,
+            **self._selection_kwargs(
+                limit, score_threshold, namespaces, required, always_include
+            ),
+        )
+        return [self.convert(s) for s in specs]

@@ -8,29 +8,29 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from agent_gantry import AgentGantry
-from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge, _tool_approval_mode
-from agent_gantry.schema.tool import ToolCapability
+from dotfetch import DotFetch
+from dotfetch.integrations.agent_framework_bridge import DotFetchToolBridge, _tool_approval_mode
+from dotfetch.schema.tool import ToolCapability
 
 
 @pytest.fixture
 def registered():
-    gantry = AgentGantry()
+    fetcher = DotFetch()
 
-    @gantry.register
+    @fetcher.register
     def lookup(value: int) -> str:
         """Look up an item using its numeric identifier."""
         return str(value)
 
-    return gantry, gantry.list_tools_sync()[0]
+    return fetcher, fetcher.list_tools_sync()[0]
 
 
 async def test_replacement_refreshes_the_cached_signature_and_description(registered):
-    gantry, _ = registered
-    bridge = GantryToolBridge(gantry, as_function_tool=False)
+    fetcher, _ = registered
+    bridge = DotFetchToolBridge(fetcher, as_function_tool=False)
     before = (await bridge.get_tools("look up an item", limit=1))[0]
 
-    @gantry.register(name="lookup")
+    @fetcher.register(name="lookup")
     def replacement(text: str) -> str:
         """Look up an item using its text identifier."""
         return text
@@ -43,8 +43,8 @@ async def test_replacement_refreshes_the_cached_signature_and_description(regist
 
 
 def test_nested_schema_edits_refresh_cached_wrappers(registered):
-    gantry, definition = registered
-    bridge = GantryToolBridge(gantry, as_function_tool=False)
+    fetcher, definition = registered
+    bridge = DotFetchToolBridge(fetcher, as_function_tool=False)
     before = bridge.wrap_single(definition)
     definition.parameters_schema["properties"]["value"]["description"] = "An updated parameter"
     after = bridge.wrap_single(definition)
@@ -54,8 +54,8 @@ def test_nested_schema_edits_refresh_cached_wrappers(registered):
 
 @pytest.mark.parametrize("change", ["confirmation", "capabilities"])
 def test_approval_metadata_changes_refresh_cached_wrappers(registered, change):
-    gantry, definition = registered
-    bridge = GantryToolBridge(gantry, as_function_tool=False)
+    fetcher, definition = registered
+    bridge = DotFetchToolBridge(fetcher, as_function_tool=False)
     before = bridge.wrap_single(definition)
     if change == "confirmation":
         definition.requires_confirmation = True
@@ -66,8 +66,8 @@ def test_approval_metadata_changes_refresh_cached_wrappers(registered, change):
 
 
 def test_health_and_routing_metadata_do_not_rebuild_native_wrappers(registered):
-    gantry, definition = registered
-    bridge = GantryToolBridge(gantry, as_function_tool=False)
+    fetcher, definition = registered
+    bridge = DotFetchToolBridge(fetcher, as_function_tool=False)
     before = bridge.wrap_single(definition)
     definition.health.total_calls += 1
     definition.tags.append("routing-only")
@@ -76,13 +76,13 @@ def test_health_and_routing_metadata_do_not_rebuild_native_wrappers(registered):
 
 
 def test_property_reordering_refreshes_the_positional_signature(registered):
-    gantry, definition = registered
+    fetcher, definition = registered
     definition.parameters_schema = {
         "type": "object",
         "properties": {"first": {"type": "string"}, "second": {"type": "string"}},
         "required": ["first", "second"],
     }
-    bridge = GantryToolBridge(gantry, as_function_tool=False)
+    bridge = DotFetchToolBridge(fetcher, as_function_tool=False)
     before = bridge.wrap_single(definition)
     definition.parameters_schema["properties"] = {
         "second": {"type": "string"},
@@ -94,10 +94,10 @@ def test_property_reordering_refreshes_the_positional_signature(registered):
 
 
 def test_cache_evicts_least_recently_used_wrapper(registered):
-    gantry, first = registered
+    fetcher, first = registered
     second = first.model_copy(update={"name": "second_lookup"})
     third = first.model_copy(update={"name": "third_lookup"})
-    bridge = GantryToolBridge(gantry, as_function_tool=False, cache_size=2)
+    bridge = DotFetchToolBridge(fetcher, as_function_tool=False, cache_size=2)
     first_wrapper = bridge.wrap_single(first)
     second_wrapper = bridge.wrap_single(second)
     assert bridge.wrap_single(first) is first_wrapper
@@ -107,22 +107,22 @@ def test_cache_evicts_least_recently_used_wrapper(registered):
 
 
 def test_zero_sized_cache_disables_reuse(registered):
-    gantry, definition = registered
-    bridge = GantryToolBridge(gantry, as_function_tool=False, cache_size=0)
+    fetcher, definition = registered
+    bridge = DotFetchToolBridge(fetcher, as_function_tool=False, cache_size=0)
     assert bridge.wrap_single(definition) is not bridge.wrap_single(definition)
 
 
 @pytest.mark.parametrize("size", [-1, 1.5, "2"])
 def test_bad_cache_size_fails_at_construction(registered, size):
     with pytest.raises(ValueError, match="cache_size"):
-        GantryToolBridge(registered[0], cache_size=size)
+        DotFetchToolBridge(registered[0], cache_size=size)
 
 
 def test_threads_share_one_wrapper_build(registered, monkeypatch):
-    from agent_gantry.integrations import agent_framework_bridge as module
+    from dotfetch.integrations import agent_framework_bridge as module
 
-    gantry, definition = registered
-    bridge = GantryToolBridge(gantry, as_function_tool=False)
+    fetcher, definition = registered
+    bridge = DotFetchToolBridge(fetcher, as_function_tool=False)
     original = module._build_callable_for_tool
     builds = []
 
@@ -142,8 +142,8 @@ def test_threads_share_one_wrapper_build(registered, monkeypatch):
 
 async def test_real_af_refreshes_native_schema_and_confirmation(registered):
     pytest.importorskip("agent_framework")
-    gantry, definition = registered
-    bridge = GantryToolBridge(gantry, as_function_tool=True)
+    fetcher, definition = registered
+    bridge = DotFetchToolBridge(fetcher, as_function_tool=True)
     before = bridge.wrap_single(definition)
     definition.requires_confirmation = True
     definition.description = "Look up an item after a human confirms the request."

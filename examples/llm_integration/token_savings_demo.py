@@ -1,9 +1,9 @@
 """
-Token savings: all 15 tool schemas vs. Gantry's top 2.
+Token savings: all 15 tool schemas vs. dotfetch's top 2.
 
 Counts the tokens of both tool lists (exactly with tiktoken if installed,
 otherwise a chars/4 estimate) and prints the saving. Runs offline with no
-API key; set OPENAI_API_KEY (and install ``agent-gantry[openai]``) to also
+API key; set OPENAI_API_KEY (and install ``dotfetch[openai]``) to also
 send both lists to the model and compare real prompt-token usage.
 
 Run: python examples/llm_integration/token_savings_demo.py
@@ -17,8 +17,8 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
 
 # Load environment variables from .env file
 load_dotenv()
@@ -73,47 +73,47 @@ def estimate_tokens(tools: list[dict[str, Any]]) -> int:
 
 
 async def main():
-    print("=== Agent-Gantry Token Savings Demo ===\n")
+    print("=== dotfetch Token Savings Demo ===\n")
 
     # Keep the offline path independent of model downloads.
-    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
+    fetcher = DotFetch(embedder=SimpleEmbedder(dimension=256))
 
     try:
         # 2. Register 15 Diverse Tools
         print("2. Registering 15 diverse tools...")
 
         # Math
-        @gantry.register(tags=["math"], examples=["add 7 and 12", "what is 50 plus 20"])
+        @fetcher.register(tags=["math"], examples=["add 7 and 12", "what is 50 plus 20"])
         def add_numbers(a: float, b: float) -> float:
             """Add two numbers."""
             return a + b
 
-        @gantry.register(tags=["math"], examples=["what is 100 minus 37", "take 4 away from 10"])
+        @fetcher.register(tags=["math"], examples=["what is 100 minus 37", "take 4 away from 10"])
         def subtract_numbers(a: float, b: float) -> float:
             """Subtract b from a."""
             return a - b
 
-        @gantry.register(
+        @fetcher.register(
             tags=["math"], examples=["what is 100 multiplied by 5", "multiply 6 by 7"]
         )
         def multiply_numbers(a: float, b: float) -> float:
             """Multiply two numbers."""
             return a * b
 
-        @gantry.register(tags=["math"], examples=["divide 100 by 4", "what is 81 over 9"])
+        @fetcher.register(tags=["math"], examples=["divide 100 by 4", "what is 81 over 9"])
         def divide_numbers(a: float, b: float) -> float:
             """Divide a by b."""
             return a / b
 
         # Weather
-        @gantry.register(
+        @fetcher.register(
             tags=["weather"], examples=["what's the weather in London", "is it raining in Leeds"]
         )
         def get_weather(city: str) -> str:
             """Get current weather."""
             return f"Weather in {city}"
 
-        @gantry.register(
+        @fetcher.register(
             tags=["weather"],
             examples=["what's the forecast for Paris this week", "will it rain tomorrow in Oslo"],
         )
@@ -122,14 +122,14 @@ async def main():
             return f"Forecast for {city}"
 
         # Finance
-        @gantry.register(
+        @fetcher.register(
             tags=["finance"], examples=["what is AAPL trading at", "current share price for Tesco"]
         )
         def get_stock_price(ticker: str) -> float:
             """Get stock price."""
             return 100.0
 
-        @gantry.register(
+        @fetcher.register(
             tags=["finance"], examples=["convert 100 USD to EUR", "how much is 50 pounds in dollars"]
         )
         def convert_currency(amount: float, from_curr: str, to_curr: str) -> float:
@@ -137,14 +137,14 @@ async def main():
             return amount * 1.2
 
         # Communication
-        @gantry.register(
+        @fetcher.register(
             tags=["email"], examples=["email the team about the outage", "send Sam a note"]
         )
         def send_email(to: str, subject: str, body: str) -> bool:
             """Send an email."""
             return True
 
-        @gantry.register(
+        @fetcher.register(
             tags=["email"], examples=["open the latest email from Priya", "read my newest message"]
         )
         def read_email(message_id: str) -> str:
@@ -152,14 +152,14 @@ async def main():
             return "Email content"
 
         # File System
-        @gantry.register(
+        @fetcher.register(
             tags=["file"], examples=["create a file called notes.txt", "save this text to a new file"]
         )
         def create_file(path: str, content: str) -> bool:
             """Create a file."""
             return True
 
-        @gantry.register(
+        @fetcher.register(
             tags=["file"], examples=["show me the contents of config.yaml", "open the README file"]
         )
         def read_file(path: str) -> str:
@@ -167,14 +167,14 @@ async def main():
             return "File content"
 
         # Language
-        @gantry.register(
+        @fetcher.register(
             tags=["translation"], examples=["translate this into Spanish", "say 'hello' in French"]
         )
         def translate_text(text: str, target_lang: str) -> str:
             """Translate text."""
             return "Translated text"
 
-        @gantry.register(
+        @fetcher.register(
             tags=["translation"],
             examples=["what language is this written in", "detect the language of this text"],
         )
@@ -183,15 +183,15 @@ async def main():
             return "en"
 
         # Search
-        @gantry.register(
+        @fetcher.register(
             tags=["search"], examples=["search the web for Python tutorials", "google the latest news"]
         )
         def search_web(query: str) -> list[str]:
             """Search the web."""
             return ["Result 1", "Result 2"]
 
-        await gantry.sync()
-        print(f"   Registered {gantry.tool_count} tools.\n")
+        await fetcher.sync()
+        print(f"   Registered {fetcher.tool_count} tools.\n")
 
         # 3. Define Query
         user_query = "What is 100 multiplied by 5?"
@@ -221,7 +221,7 @@ async def main():
         print("--- Scenario A: Passing ALL 15 Tools ---")
 
         # Get all tools as OpenAI schemas
-        all_tool_defs = await gantry.list_tools()
+        all_tool_defs = await fetcher.list_tools()
         all_tools_schema = [t.to_dialect("openai") for t in all_tool_defs]
 
         est_tokens_all = count_tokens(all_tools_schema)
@@ -253,11 +253,11 @@ async def main():
 
         print("\n")
 
-        # 6. Scenario B: Agent Gantry (Context Reduction)
-        print("--- Scenario B: Using Agent Gantry (Top 2 Tools) ---")
+        # 6. Scenario B: dotfetch (Context Reduction)
+        print("--- Scenario B: Using dotfetch (Top 2 Tools) ---")
 
         # Retrieve only relevant tools
-        relevant_tools_schema = await gantry.retrieve_tools(user_query, limit=2)
+        relevant_tools_schema = await fetcher.retrieve_tools(user_query, limit=2)
 
         est_tokens_filtered = count_tokens(relevant_tools_schema)
         print(f"   Tools passed: {len(relevant_tools_schema)}")
@@ -293,7 +293,7 @@ async def main():
             percent = (savings / usage_a) * 100 if usage_a > 0 else 0
             print(f"\n   >>> ESTIMATED SAVINGS: ~{savings} tokens ({percent:.1f}%) <<<")
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 if __name__ == "__main__":

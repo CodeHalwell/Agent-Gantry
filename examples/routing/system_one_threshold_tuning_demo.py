@@ -14,7 +14,7 @@ trade so you can pick from data rather than from a blog post.
 
 Run with::
 
-    pip install agent-gantry[system-one]
+    pip install dotfetch[system-one]
     export TYPESAFE_API_KEY=...
     python examples/routing/system_one_threshold_tuning_demo.py
 """
@@ -24,7 +24,7 @@ from __future__ import annotations
 import asyncio
 import os
 
-from agent_gantry import AgentGantry, SelectionCandidate, SystemOneSelector
+from dotfetch import DotFetch, SelectionCandidate, SystemOneSelector
 
 # Tools carry examples because that is what the retrieval path embeds and what
 # a selector reads. Skimping here costs more accuracy than any model choice.
@@ -118,19 +118,19 @@ async def main() -> None:
     )
     await selector.aclose()
 
-    # The same numbers, applied. A gantry configured this way returns only what
+    # The same numbers, applied. A fetcher configured this way returns only what
     # cleared the bar — including nothing at all, which a top-k retriever
     # cannot express.
-    gantry = AgentGantry(selector=SystemOneSelector(threshold=0.5))
+    fetcher = DotFetch(selector=SystemOneSelector(threshold=0.5))
     try:
         for ns, name, desc, ex in TOOLS:
 
             async def handler(**kwargs: object) -> None:
                 return None
 
-            from agent_gantry.schema.tool import ToolDefinition
+            from dotfetch.schema.tool import ToolDefinition
 
-            await gantry.add_tool(
+            await fetcher.add_tool(
                 ToolDefinition(
                     name=name, namespace=ns, description=desc, examples=ex,
                     parameters_schema={"type": "object", "properties": {}},
@@ -139,11 +139,11 @@ async def main() -> None:
             )
         print("\n  With threshold=0.5 through the normal retrieval API:")
         for query, _expected in LABELLED:
-            tools = await gantry.retrieve_tools(query, limit=3)
+            tools = await fetcher.retrieve_tools(query, limit=3)
             names = [tool["function"]["name"] for tool in tools] or ["(nothing relevant)"]
             print(f"      {query[:46]:<46} -> {names}")
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 if __name__ == "__main__":

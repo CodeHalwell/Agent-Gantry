@@ -27,15 +27,15 @@ import pytest
 os.environ.setdefault("CREWAI_DISABLE_TELEMETRY", "true")
 os.environ.setdefault("OTEL_SDK_DISABLED", "true")
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-from agent_gantry.agent_framework import AgentFrameworkAdapter
-from agent_gantry.integrations import frameworks as F  # noqa: N812
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
+from dotfetch.agent_framework import AgentFrameworkAdapter
+from dotfetch.integrations import frameworks as F  # noqa: N812
 
 
 @pytest.fixture
-async def gantry():
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+async def fetcher():
+    g = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
     @g.register(tags=["email"])
     def send_email(to: str, body: str = "") -> str:
@@ -86,7 +86,7 @@ def _invoke_dspy(tool, arguments):
 async def _invoke_strands(tool, arguments):
     # ``DecoratedFunctionTool`` keeps the wrapped function callable directly;
     # calling it returns the coroutine from the async wrapper, which routes
-    # through ``gantry.execute`` like every other adapter's invoke path.
+    # through ``fetcher.execute`` like every other adapter's invoke path.
     return await tool(**arguments)
 
 
@@ -95,7 +95,7 @@ def _invoke_pydantic_ai(tool, arguments):
     # ``function`` attribute (see pydantic_ai.tools.Tool.__init__). It is
     # built with ``takes_ctx=True``, so a live agent run passes the
     # ``RunContext`` positionally; ``None`` stands in for a context-free call.
-    # It routes through ``gantry.execute`` like every other adapter.
+    # It routes through ``fetcher.execute`` like every other adapter.
     return tool.function(None, **arguments)
 
 
@@ -125,18 +125,18 @@ def require_installed_frameworks():
     """CI must exercise the SDKs it installs instead of silently skipping them.
 
     Local minimal installs keep the usual importorskip behavior. CI declares
-    its expected SDKs with GANTRY_REQUIRED_FRAMEWORKS (canonical comma-separated
+    its expected SDKs with DOTFETCH_REQUIRED_FRAMEWORKS (canonical comma-separated
     names); missing packages and broken transitive imports then fail the job.
     """
     required = {
         name.strip()
-        for name in os.environ.get("GANTRY_REQUIRED_FRAMEWORKS", "").split(",")
+        for name in os.environ.get("DOTFETCH_REQUIRED_FRAMEWORKS", "").split(",")
         if name.strip()
     }
     modules = {name: module for name, module, _, _ in REAL_ADAPTERS}
     unknown = required - modules.keys()
     if unknown:
-        pytest.fail(f"Unknown GANTRY_REQUIRED_FRAMEWORKS entries: {sorted(unknown)}", pytrace=False)
+        pytest.fail(f"Unknown DOTFETCH_REQUIRED_FRAMEWORKS entries: {sorted(unknown)}", pytrace=False)
     for name in sorted(required):
         try:
             importlib.import_module(modules[name])
@@ -147,23 +147,23 @@ def require_installed_frameworks():
 @pytest.mark.parametrize(
     "name,module,adapter_cls,invoke", REAL_ADAPTERS, ids=[a[0] for a in REAL_ADAPTERS]
 )
-async def test_real_adapter_builds_and_invokes(name, module, adapter_cls, invoke, gantry):
+async def test_real_adapter_builds_and_invokes(name, module, adapter_cls, invoke, fetcher):
     pytest.importorskip(module, reason=f"{name} not installed")
 
-    tools = await adapter_cls(gantry).select("send an email to my boss", limit=1)
+    tools = await adapter_cls(fetcher).select("send an email to my boss", limit=1)
     assert tools, f"{name}: adapter returned no tools"
 
     result = invoke(tools[0], {"to": "boss@x.com"})
     if inspect.isawaitable(result):
         result = await result
-    assert "sent:boss@x.com" in str(result), f"{name}: invocation did not route through gantry"
+    assert "sent:boss@x.com" in str(result), f"{name}: invocation did not route through fetcher"
 
 
 @pytest.mark.parametrize(
     "name,module,adapter_cls,invoke", REAL_ADAPTERS, ids=[a[0] for a in REAL_ADAPTERS]
 )
 async def test_real_adapter_preserves_schema_and_namespace(
-    name, module, adapter_cls, invoke, gantry
+    name, module, adapter_cls, invoke, fetcher
 ):
     """Exercise arrays, enums, optional defaults, explicit null, and namespaces.
 
@@ -172,7 +172,7 @@ async def test_real_adapter_preserves_schema_and_namespace(
     """
     pytest.importorskip(module, reason=f"{name} not installed")
 
-    @gantry.register(name="send_email", namespace="reports")
+    @fetcher.register(name="send_email", namespace="reports")
     def send_report(
         to: str,
         amounts: list[int],
@@ -183,7 +183,7 @@ async def test_real_adapter_preserves_schema_and_namespace(
         amount = sum(amounts) if mode == "sum" else max(amounts)
         return f"report:{to}:{amount}:{note}"
 
-    tools = await gantry.framework(name).select("send a report", namespaces=["reports"], limit=1)
+    tools = await fetcher.framework(name).select("send a report", namespaces=["reports"], limit=1)
     assert len(tools) == 1
     result = invoke(tools[0], {"to": "boss@x.com", "amounts": [1, 2, 3], "note": None})
     if inspect.isawaitable(result):
@@ -194,20 +194,20 @@ async def test_real_adapter_preserves_schema_and_namespace(
 @pytest.mark.parametrize(
     "name,module,adapter_cls,invoke", REAL_ADAPTERS, ids=[a[0] for a in REAL_ADAPTERS]
 )
-async def test_real_adapter_keeps_same_named_tools(name, module, adapter_cls, invoke, gantry):
+async def test_real_adapter_keeps_same_named_tools(name, module, adapter_cls, invoke, fetcher):
     pytest.importorskip(module, reason=f"{name} not installed")
 
-    @gantry.register(name="send_email", namespace="billing")
+    @fetcher.register(name="send_email", namespace="billing")
     def billing_email(to: str) -> str:
         """Send an email from the billing service."""
         return f"billing:{to}"
 
-    @gantry.register(name="send_email", namespace="inventory")
+    @fetcher.register(name="send_email", namespace="inventory")
     def inventory_email(to: str) -> str:
         """Send an email from the inventory service."""
         return f"inventory:{to}"
 
-    tools = await adapter_cls(gantry).select(
+    tools = await adapter_cls(fetcher).select(
         "send an email", namespaces=["billing", "inventory"], limit=2
     )
     if name == "llamaindex":
@@ -227,7 +227,7 @@ async def test_real_adapter_keeps_same_named_tools(name, module, adapter_cls, in
 @pytest.mark.parametrize(
     "name,module,adapter_cls,invoke", REAL_ADAPTERS, ids=[a[0] for a in REAL_ADAPTERS]
 )
-async def test_real_adapter_executes_async_callable(name, module, adapter_cls, invoke, gantry):
+async def test_real_adapter_executes_async_callable(name, module, adapter_cls, invoke, fetcher):
     pytest.importorskip(module, reason=f"{name} not installed")
 
     class AsyncEmail:
@@ -235,15 +235,15 @@ async def test_real_adapter_executes_async_callable(name, module, adapter_cls, i
             """Send an email through an async callable object."""
             return f"callable:{to}"
 
-    gantry.register(AsyncEmail(), name="callable_email", namespace="callables")
-    tools = await adapter_cls(gantry).select("send an email", namespaces=["callables"], limit=1)
+    fetcher.register(AsyncEmail(), name="callable_email", namespace="callables")
+    tools = await adapter_cls(fetcher).select("send an email", namespaces=["callables"], limit=1)
     result = invoke(tools[0], {"to": "boss@x.com"})
     if inspect.isawaitable(result):
         result = await result
     assert result == "callable:boss@x.com"
 
 
-async def test_agent_framework_same_names_and_async_callables(gantry):
+async def test_agent_framework_same_names_and_async_callables(fetcher):
     pytest.importorskip("agent_framework")
 
     class AsyncEmail:
@@ -255,9 +255,9 @@ async def test_agent_framework_same_names_and_async_callables(gantry):
             return f"{self.service}:{to}"
 
     for namespace in ("billing", "inventory"):
-        gantry.register(AsyncEmail(namespace), name="send_email", namespace=namespace)
+        fetcher.register(AsyncEmail(namespace), name="send_email", namespace=namespace)
     tools = (
-        await gantry.framework("agent_framework")
+        await fetcher.framework("agent_framework")
         .tool_bridge()
         .get_tools(
             "send an email",
@@ -270,12 +270,12 @@ async def test_agent_framework_same_names_and_async_callables(gantry):
     assert results == {"billing:boss@x.com", "inventory:boss@x.com"}
 
 
-async def test_agent_framework_builds_and_invokes(gantry):
+async def test_agent_framework_builds_and_invokes(fetcher):
     """The existing bridge API also builds and invokes real native FunctionTools."""
     pytest.importorskip("agent_framework", reason="agent-framework not installed")
-    from agent_gantry.agent_framework import AgentFrameworkAdapter
+    from dotfetch.agent_framework import AgentFrameworkAdapter
 
-    bridge = AgentFrameworkAdapter(gantry).tool_bridge()
+    bridge = AgentFrameworkAdapter(fetcher).tool_bridge()
     tools = await bridge.get_tools("send an email to my boss", limit=1)
     assert tools, "agent_framework: adapter returned no tools"
 
@@ -288,5 +288,5 @@ async def test_agent_framework_builds_and_invokes(gantry):
     # instead of wrapping it in `list[Content]` — see `FunctionTool.invoke`.
     result = await tool.invoke(to="boss@x.com", skip_parsing=True)
     assert "sent:boss@x.com" in str(result), (
-        "agent_framework: invocation did not route through gantry"
+        "agent_framework: invocation did not route through fetcher"
     )

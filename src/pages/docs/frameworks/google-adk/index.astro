@@ -2,33 +2,33 @@
 import DocsLayout from '../../../../layouts/DocsLayout.astro';
 import CodeBlock from '../../../../components/CodeBlock.astro';
 ---
-<DocsLayout title="Google ADK guide | Agent-Gantry" description="Integrate Agent-Gantry with Google ADK: per-turn tool selection through before_model_callback, ADK tool confirmation, readable tool errors and session context.">
+<DocsLayout title="Google ADK guide | dotfetch" description="Integrate dotfetch with Google ADK: per-turn tool selection through before_model_callback, ADK tool confirmation, readable tool errors and session context.">
   <p class="eyebrow">Framework guide</p>
   <h1>Google ADK</h1>
-  <p class="lead">Agent-Gantry plugs into the Agent Development Kit's own mechanisms: <code>before_model_callback</code> picks each model request's tools, <code>require_confirmation</code> handles human approval, and the <code>ToolContext</code> carries your session state. Failures come back to the model as <code>&#123;"error": ...&#125;</code> responses instead of ending the run.</p>
+  <p class="lead">dotfetch plugs into the Agent Development Kit's own mechanisms: <code>before_model_callback</code> picks each model request's tools, <code>require_confirmation</code> handles human approval, and the <code>ToolContext</code> carries your session state. Failures come back to the model as <code>&#123;"error": ...&#125;</code> responses instead of ending the run.</p>
   <p><a class="pill" href="/Agent-Gantry/docs/frameworks/google-adk/advanced/">Advanced Google ADK usage →</a></p>
 
   <h2>Install</h2>
-  <CodeBlock lang="bash" code={`uv add "agent-gantry[google-adk]"   # google-adk >= 2.6.1`} />
+  <CodeBlock lang="bash" code={`uv add "dotfetch[google-adk]"   # google-adk >= 2.6.1`} />
 
   <h2>Basic page: per-turn tools</h2>
   <CodeBlock lang="python" title="Per-turn tool selection" code={`import asyncio
 
 from google.adk.runners import InMemoryRunner
 from google.genai import types
-from agent_gantry import AgentGantry
-from agent_gantry.google_adk import GoogleADKAdapter
+from dotfetch import DotFetch
+from dotfetch.google_adk import GoogleADKAdapter
 
-gantry = AgentGantry()
+fetcher = DotFetch()
 
-@gantry.register(examples=["where is my order", "has order 4471 shipped"])
+@fetcher.register(examples=["where is my order", "has order 4471 shipped"])
 def get_order_status(order_id: str) -> str:
     """Return the current shipping status for an order."""
     return "in_transit"
 
 async def main():
-    await gantry.sync()
-    agent = GoogleADKAdapter(gantry).agent(model="gemini-2.5-flash", name="support", limit=5)
+    await fetcher.sync()
+    agent = GoogleADKAdapter(fetcher).agent(model="gemini-2.5-flash", name="support", limit=5)
     runner = InMemoryRunner(agent=agent, app_name="support")
     session = await runner.session_service.create_session(app_name="support", user_id="u")
     message = types.Content(role="user", parts=[types.Part(text="Has order 4471 shipped?")])
@@ -37,16 +37,16 @@ async def main():
             print(event.content.parts[0].text)
 
 asyncio.run(main())`} />
-  <p>For an agent you build yourself, pass <code>before_model_callback=adapter.before_model_callback(limit=5)</code>. Tools the agent already has stay available; Gantry adds its selection each turn.</p>
+  <p>For an agent you build yourself, pass <code>before_model_callback=adapter.before_model_callback(limit=5)</code>. Tools the agent already has stay available; dotfetch adds its selection each turn.</p>
 
   <h2>What the model sees when a tool fails</h2>
   <p>A failed call returns <code>&#123;"error": "&lt;type&gt;: &lt;message&gt;"&#125;</code> as the function response, capped at 2,000 characters, which is how ADK tells a model a tool failed. An exception would end the run instead.</p>
-  <div class="callout"><strong>Redact or opt out:</strong> <code>GoogleADKAdapter(gantry, error_formatter=redact)</code> rewrites the text the model sees; <code>error_mode="raise"</code> lets <code>ToolExecutionError</code> propagate instead.</div>
+  <div class="callout"><strong>Redact or opt out:</strong> <code>GoogleADKAdapter(fetcher, error_formatter=redact)</code> rewrites the text the model sees; <code>error_mode="raise"</code> lets <code>ToolExecutionError</code> propagate instead.</div>
 
-  <h2>Reading session state from a Gantry tool</h2>
-  <CodeBlock lang="python" code={`from agent_gantry.google_adk import current_tool_context
+  <h2>Reading session state from a dotfetch tool</h2>
+  <CodeBlock lang="python" code={`from dotfetch.google_adk import current_tool_context
 
-@gantry.register
+@fetcher.register
 def get_balance(account: str) -> str:
     """Fetch an account balance for the signed-in user."""
     ctx = current_tool_context()   # ADK ToolContext, or None outside a run

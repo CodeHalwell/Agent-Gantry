@@ -1,6 +1,6 @@
-"""OpenAI Agents SDK + Agent-Gantry integration example.
+"""OpenAI Agents SDK + dotfetch integration example.
 
-Walks through each way Gantry plugs into the OpenAI Agents SDK:
+Walks through each way dotfetch plugs into the OpenAI Agents SDK:
 
 1. **Static tools** -- ``adapter.select(query)`` selects once and returns native
    ``agents.FunctionTool`` objects for ``Agent(tools=[...])``.
@@ -11,7 +11,7 @@ Walks through each way Gantry plugs into the OpenAI Agents SDK:
    instead of ending the run.
 4. **Approval** -- a ``requires_confirmation`` tool pauses the run with
    ``result.interruptions``; approving it executes it exactly once.
-5. **Run context** -- a Gantry tool reads ``Runner.run(context=...)`` through
+5. **Run context** -- a dotfetch tool reads ``Runner.run(context=...)`` through
    ``current_run_context()``.
 
 Everything runs **offline**: the SDK's own ``agents.testing.ScriptedModel``
@@ -20,7 +20,7 @@ scripts the model's tool calls, so no API key is needed. Swap in a real model
 
 Install (in its own environment; it cannot share one with CrewAI):
 
-    pip install 'agent-gantry[openai-agents]'
+    pip install 'dotfetch[openai-agents]'
 
 Run:
 
@@ -32,44 +32,44 @@ from __future__ import annotations
 import asyncio
 import os
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
 
 os.environ.setdefault("OPENAI_AGENTS_DISABLE_TRACING", "1")
 
 
-def build_gantry() -> AgentGantry:
-    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
+def build_fetcher() -> DotFetch:
+    fetcher = DotFetch(embedder=SimpleEmbedder(dimension=256))
 
-    @gantry.register(tags=["weather"], examples=["what's the weather in London"])
+    @fetcher.register(tags=["weather"], examples=["what's the weather in London"])
     def get_weather(city: str) -> str:
         """Get the current weather forecast for a city."""
         return f"It is 21C and sunny in {city}."
 
-    @gantry.register(tags=["crm"], examples=["find the customer record for Jo"])
+    @fetcher.register(tags=["crm"], examples=["find the customer record for Jo"])
     def lookup_customer(name: str) -> str:
         """Look up a customer record by name."""
         return f"Customer {name} found. Next step: send an email message to jo@example.com"
 
-    @gantry.register(tags=["email"], examples=["email the team"], requires_confirmation=True)
+    @fetcher.register(tags=["email"], examples=["email the team"], requires_confirmation=True)
     def send_email(to: str) -> str:
         """Send an email message to a recipient."""
         return f"Email sent to {to}."
 
-    @gantry.register(tags=["math"], examples=["divide 10 by 2"])
+    @fetcher.register(tags=["math"], examples=["divide 10 by 2"])
     def divide(a: int, b: int) -> float:
         """Divide integer a by integer b."""
         return a / b
 
-    @gantry.register(tags=["identity"], examples=["who am I signed in as"])
+    @fetcher.register(tags=["identity"], examples=["who am I signed in as"])
     def whoami() -> str:
         """Return the name of the signed-in user."""
-        from agent_gantry.openai_agents import current_run_context
+        from dotfetch.openai_agents import current_run_context
 
         ctx = current_run_context()
         return f"You are signed in as {ctx.context['user']}." if ctx else "Unknown user."
 
-    return gantry
+    return fetcher
 
 
 def scripted(*steps):
@@ -88,20 +88,20 @@ def outputs(result) -> list[str]:
 
 
 async def main() -> None:
-    gantry = build_gantry()
+    fetcher = build_fetcher()
     try:
-        await gantry.sync()
+        await fetcher.sync()
         try:
             from agents import Agent, Runner
             from agents.testing import ScriptedModel  # noqa: F401  (SDK >= 0.21)
         except ImportError as exc:
             print(
                 f"The OpenAI Agents SDK tools demo needs openai-agents>=0.23.1 ({exc}).\n"
-                "Install it with `pip install 'agent-gantry[openai-agents]'`."
+                "Install it with `pip install 'dotfetch[openai-agents]'`."
             )
             return
 
-        adapter = gantry.framework("openai_agents")
+        adapter = fetcher.framework("openai_agents")
 
         # 1. Static tools ---------------------------------------------------- #
         tools = await adapter.select("what's the weather in Paris?", limit=1)
@@ -150,11 +150,11 @@ async def main() -> None:
         print(f"[context] {outputs(result)[0]}")
 
         print(
-            "\nEvery tool call above went through gantry.execute, so the security "
+            "\nEvery tool call above went through fetcher.execute, so the security "
             "policy, retries, timeouts and circuit breakers all applied."
         )
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 if __name__ == "__main__":

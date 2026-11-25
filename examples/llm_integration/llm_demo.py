@@ -4,7 +4,7 @@ Provider-agnostic retrieve -> chat -> execute loop.
 Registers five tools, then for each query retrieves the top 2, hands them to
 the model, and executes whatever the model calls. Runs offline with no API
 key using a mocked model; set OPENAI_API_KEY (and install
-``agent-gantry[openai]``) to use the real one.
+``dotfetch[openai]``) to use the real one.
 
 Run: python examples/llm_integration/llm_demo.py
 """
@@ -15,9 +15,9 @@ import os
 
 from dotenv import load_dotenv
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-from agent_gantry.schema.execution import ToolCall
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
+from dotfetch.schema.execution import ToolCall
 
 load_dotenv()
 
@@ -32,21 +32,21 @@ except ImportError:
 
 
 async def main():
-    print("=== Agent-Gantry LLM Integration Demo ===\n")
+    print("=== dotfetch LLM Integration Demo ===\n")
 
     # Keep the offline path independent of model downloads.
-    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
+    fetcher = DotFetch(embedder=SimpleEmbedder(dimension=256))
 
     try:
         # 2. Register a diverse set of tools (The "Universe" of tools)
         print("2. Registering diverse toolset...")
 
-        @gantry.register(tags=["math"], examples=["what is 50 + 20", "add 7 and 12"])
+        @fetcher.register(tags=["math"], examples=["what is 50 + 20", "add 7 and 12"])
         def add_numbers(a: float, b: float) -> float:
             """Add two numbers together."""
             return a + b
 
-        @gantry.register(
+        @fetcher.register(
             tags=["weather"],
             examples=["what's the weather in London", "is it raining in Leeds"],
         )
@@ -54,7 +54,7 @@ async def main():
             """Get the current weather for a city."""
             return f"The weather in {city} is sunny and 75°F."
 
-        @gantry.register(
+        @fetcher.register(
             tags=["finance"],
             examples=["what is AAPL trading at", "current share price for Tesco"],
         )
@@ -62,7 +62,7 @@ async def main():
             """Get the current stock price for a ticker symbol."""
             return f"{ticker} is currently trading at $150.25"
 
-        @gantry.register(
+        @fetcher.register(
             tags=["system"],
             examples=["what time is it right now", "what's the current system time"],
         )
@@ -70,7 +70,7 @@ async def main():
             """Get the current system time."""
             return "2023-10-27 10:00:00 UTC"
 
-        @gantry.register(
+        @fetcher.register(
             tags=["email"],
             examples=["email the team about the outage", "send Sam a note"],
         )
@@ -79,8 +79,8 @@ async def main():
             return f"Sent email to {recipient}"
 
         # Sync to vector store
-        await gantry.sync()
-        print(f"   Registered {gantry.tool_count} tools in the registry.\n")
+        await fetcher.sync()
+        print(f"   Registered {fetcher.tool_count} tools in the registry.\n")
 
         # 3. Define the LLM interaction loop
         async def process_user_query(user_query: str):
@@ -88,16 +88,16 @@ async def main():
 
             # A. RETRIEVAL: Get only the most relevant tools
             # We limit to 2 tools to demonstrate strict context filtering
-            relevant_tools = await gantry.retrieve_tools(user_query, limit=2)
+            relevant_tools = await fetcher.retrieve_tools(user_query, limit=2)
 
             print(
-                f"   [Gantry] Context Reduction: {gantry.tool_count} total -> {len(relevant_tools)} relevant"
+                f"   [dotfetch] Context Reduction: {fetcher.tool_count} total -> {len(relevant_tools)} relevant"
             )
             for t in relevant_tools:
-                print(f"   [Gantry] Selected: {t['function']['name']}")
+                print(f"   [dotfetch] Selected: {t['function']['name']}")
 
             if not relevant_tools:
-                print("   [Gantry] No relevant tools found. Asking LLM without tools.")
+                print("   [dotfetch] No relevant tools found. Asking LLM without tools.")
 
             # B. LLM CALL: Pass only the retrieved tools
             api_key = os.environ.get("OPENAI_API_KEY")
@@ -152,16 +152,16 @@ async def main():
                     tool_calls = [MockToolCall("get_weather", {"city": "London"})]
                     print("   [LLM] Generated tool call: get_weather(city='London')")
 
-            # C. EXECUTION: Execute the tool calls securely via Gantry
+            # C. EXECUTION: Execute the tool calls securely via dotfetch
             if tool_calls:
                 for tc in tool_calls:
                     fn_name = tc.function.name
                     fn_args = json.loads(tc.function.arguments)
 
-                    print(f"   [Gantry] Executing tool: {fn_name}")
+                    print(f"   [dotfetch] Executing tool: {fn_name}")
 
-                    # Execute using AgentGantry's secure executor
-                    result = await gantry.execute(ToolCall(tool_name=fn_name, arguments=fn_args))
+                    # Execute using dotfetch's secure executor
+                    result = await fetcher.execute(ToolCall(tool_name=fn_name, arguments=fn_args))
 
                     print(f"   [Result] {result.result}")
             else:
@@ -176,7 +176,7 @@ async def main():
             "Tell me a joke."
         )  # Should retrieve no tools or irrelevant ones, LLM handles it
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 if __name__ == "__main__":

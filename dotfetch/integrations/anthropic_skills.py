@@ -1,0 +1,320 @@
+"""
+Anthropic Skills support for dotfetch.
+
+Skills allow you to create reusable, composable abstractions that combine
+multiple tools with instructions and examples. When used in a message,
+skill instructions are injected into the system prompt and the associated
+tools are made available to Claude.
+
+This provides a way to organize related tools into cohesive capabilities
+that Claude can reason about and use effectively.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field
+from typing import Any, Literal
+
+from dotfetch import DotFetch
+from dotfetch.integrations.anthropic_features import _AnthropicDotFetchClient
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class Skill:
+    """
+    A reusable skill that can be invoked by Claude.
+
+    Skills are higher-level abstractions that can combine multiple tools
+    and reasoning steps.
+    """
+
+    name: str
+    description: str
+    instructions: str
+    tools: list[str] = field(default_factory=list)
+    examples: list[dict[str, Any]] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_anthropic_schema(self) -> dict[str, Any]:
+        """Convert skill to Anthropic Skills API format."""
+        schema: dict[str, Any] = {
+            "type": "skill",
+            "name": self.name,
+            "description": self.description,
+            "instructions": self.instructions,
+        }
+
+        if self.tools:
+            schema["tools"] = self.tools
+
+        if self.examples:
+            schema["examples"] = self.examples
+
+        if self.metadata:
+            schema["metadata"] = self.metadata
+
+        return schema
+
+
+class SkillRegistry:
+    """Registry for managing Anthropic skills."""
+
+    def __init__(self) -> None:
+        """Initialize the skill registry."""
+        self._skills: dict[str, Skill] = {}
+
+    def register(
+        self,
+        name: str,
+        description: str,
+        instructions: str,
+        tools: list[str] | None = None,
+        examples: list[dict[str, Any]] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> Skill:
+        """
+        Register a new skill.
+
+        Args:
+            name: Skill name (must be unique)
+            description: Brief description of what the skill does
+            instructions: Detailed instructions for using the skill
+            tools: List of tool names this skill can use
+            examples: Example usage scenarios
+            metadata: Additional metadata
+
+        Returns:
+            The registered skill
+
+        Raises:
+            ValueError: If skill name already exists
+        """
+        if name in self._skills:
+            raise ValueError(f"Skill '{name}' already registered")
+
+        skill = Skill(
+            name=name,
+            description=description,
+            instructions=instructions,
+            tools=tools or [],
+            examples=examples or [],
+            metadata=metadata or {},
+        )
+
+        self._skills[name] = skill
+        return skill
+
+    def get(self, name: str) -> Skill | None:
+        """Get a skill by name."""
+        return self._skills.get(name)
+
+    def list_skills(self) -> list[Skill]:
+        """List all registered skills."""
+        return list(self._skills.values())
+
+    def to_anthropic_schema(self) -> list[dict[str, Any]]:
+        """Convert all skills to Anthropic format."""
+        return [skill.to_anthropic_schema() for skill in self._skills.values()]
+
+    def clear(self) -> None:
+        """Clear all registered skills."""
+        self._skills.clear()
+
+
+class SkillsClient(_AnthropicDotFetchClient):
+    """
+    Anthropic client with Skills support.
+
+    Skills are implemented by injecting skill instructions into the system
+    prompt and providing the associated tools to Claude. This allows for
+    reusable, composable tool workflows without requiring a special API.
+    """
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        fetcher: DotFetch | None = None,
+        skill_registry: SkillRegistry | None = None,
+    ) -> None:
+        """
+        Initialize the Skills client.
+
+        Args:
+            api_key: Anthropic API key (or use ANTHROPIC_API_KEY env var)
+            fetcher: DotFetch instance for tool execution
+            skill_registry: Optional skill registry (creates new if not provided)
+        """
+        super().__init__(api_key, fetcher)
+        self._skills = skill_registry or SkillRegistry()
+
+    @property
+    def skills(self) -> SkillRegistry:
+        """Access the skill registry."""
+        return self._skills
+
+    async def create_message(
+        self,
+        model: str,
+        messages: list[dict[str, Any]],
+        max_tokens: int = 4096,
+        skills: list[str] | Literal["all"] | None = None,
+        auto_retrieve_tools: bool = True,
+        query: str | None = None,
+        tool_limit: int = 10,
+        system: str | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        """
+        Create a message with Skills support.
+
+        Skills are implemented by:
+        1. Injecting skill instructions into the system prompt
+        2. Including tools associated with skills
+
+        Args:
+            model: Model identifier (e.g., "claude-sonnet-4-6")
+            messages: Message history
+            max_tokens: Maximum tokens to generate
+            skills: List of skill names to enable, "all" for all skills, or None
+            auto_retrieve_tools: Whether to automatically retrieve tools from dotfetch
+            query: Query for tool retrieval (defaults to last user message)
+            tool_limit: Maximum number of tools to retrieve
+            system: Optional system prompt (will be combined with skill instructions)
+            **kwargs: Additional arguments passed to messages.create()
+
+        Returns:
+            Anthropic message response
+        """
+        # Determine which skills to include
+        selected_skills: list[Skill] = []
+        skill_tool_names: set[str] = set()
+
+        if skills == "all":
+            selected_skills = self._skills.list_skills()
+        elif skills:
+            for skill_name in skills:
+                skill = self._skills.get(skill_name)
+                if skill:
+                    selected_skills.append(skill)
+
+        # Collect tool names from skills
+        for skill in selected_skills:
+            skill_tool_names.update(skill.tools)
+
+        # Build system prompt with skill instructions
+        system_parts: list[str] = []
+        if system:
+            system_parts.append(system)
+
+        if selected_skills:
+            system_parts.append("\n--- Skills ---\n")
+            for skill in selected_skills:
+                skill_section_parts: list[str] = [
+                    f"## {skill.name}\n",
+                    f"Description: {skill.description}\n\n",
+                    f"Instructions:\n{skill.instructions}\n"
+                ]
+                if skill.tools:
+                    skill_section_parts.append(f"\nAvailable tools: {', '.join(skill.tools)}\n")
+                if skill.examples:
+                    skill_section_parts.append("\nExamples:\n")
+                    for example in skill.examples:
+                        if "input" in example:
+                            skill_section_parts.append(f"  Input: {example['input']}\n")
+                        if "output" in example:
+                            skill_section_parts.append(f"  Output: {example['output']}\n")
+                        if "steps" in example:
+                            skill_section_parts.append("  Steps:\n")
+                            for step in example["steps"]:
+                                skill_section_parts.append(f"    - {step}\n")
+                system_parts.append("".join(skill_section_parts))
+
+        final_system = "\n".join(system_parts) if system_parts else None
+
+        if not query and auto_retrieve_tools:
+            query = self._last_user_query(messages)
+
+        # Retrieve tools if enabled and fetcher available
+        tools: list[dict[str, Any]] = []
+        if self._fetcher:
+            # If skills define specific tools, get those
+            if skill_tool_names:
+                all_tools = await self._fetcher.list_tools()
+                tools = [
+                    tool_def.to_dialect("anthropic")
+                    for tool_def in all_tools
+                    if tool_def.name in skill_tool_names
+                ]
+            elif auto_retrieve_tools and query:
+                tools = await self._retrieve_tools(query, tool_limit)
+
+        if final_system:
+            kwargs["system"] = final_system
+
+        if tools:
+            kwargs["tools"] = tools
+
+        return await self._create(model, messages=messages, max_tokens=max_tokens, **kwargs)
+
+    def register_skill_from_fetcher_tools(
+        self,
+        skill_name: str,
+        description: str,
+        instructions: str,
+        tool_names: list[str],
+        examples: list[dict[str, Any]] | None = None,
+    ) -> Skill:
+        """
+        Register a skill that uses dotfetch tools.
+
+        Args:
+            skill_name: Name for the skill
+            description: Brief description
+            instructions: Detailed instructions for Claude
+            tool_names: List of dotfetch tool names this skill uses
+            examples: Optional usage examples
+
+        Returns:
+            The registered skill
+        """
+        return self._skills.register(
+            name=skill_name,
+            description=description,
+            instructions=instructions,
+            tools=tool_names,
+            examples=examples or [],
+        )
+
+
+async def create_skills_client(
+    api_key: str | None = None,
+    fetcher: DotFetch | None = None,
+) -> SkillsClient:
+    """
+    Convenience function to create a Skills API client.
+
+    Args:
+        api_key: Anthropic API key
+        fetcher: DotFetch instance for tool execution
+
+    Returns:
+        Configured SkillsClient
+
+    Example:
+        >>> client = await create_skills_client(fetcher=fetcher)
+        >>> client.skills.register(
+        ...     name="customer_support",
+        ...     description="Handle customer support inquiries",
+        ...     instructions="Use these tools to help customers with refunds, tracking, and issues",
+        ...     tools=["get_order", "process_refund", "send_email"],
+        ... )
+        >>> response = await client.create_message(
+        ...     model="claude-sonnet-4-6",
+        ...     messages=[{"role": "user", "content": "I need a refund for order #12345"}],
+        ...     skills=["customer_support"],
+        ... )
+    """
+    return SkillsClient(api_key=api_key, fetcher=fetcher)

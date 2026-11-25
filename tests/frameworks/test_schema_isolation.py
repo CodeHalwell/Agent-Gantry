@@ -4,23 +4,23 @@ from __future__ import annotations
 
 import pytest
 
-from agent_gantry import ToolCall
-from agent_gantry.integrations.frameworks.base import GantryToolset
-from agent_gantry.schema.execution import ExecutionStatus
+from dotfetch import ToolCall
+from dotfetch.integrations.frameworks.base import DotFetchToolset
+from dotfetch.schema.execution import ExecutionStatus
 
 
 @pytest.fixture
-def registered(gantry):
-    @gantry.register
+def registered(fetcher):
+    @fetcher.register
     def lookup(value: int) -> str:
         """Look up an item using its numeric identifier."""
         return str(value)
 
-    return gantry
+    return fetcher
 
 
 async def test_spec_schema_is_a_snapshot_of_the_registry(registered):
-    specs = await GantryToolset(registered).select("look up an item", limit=1)
+    specs = await DotFetchToolset(registered).select("look up an item", limit=1)
     original = registered.list_tools_sync()[0]
     original.parameters_schema["properties"]["value"]["description"] = "A new description"
     assert "description" not in specs[0].parameters["properties"]["value"]
@@ -53,5 +53,5 @@ async def test_editing_native_schema_cannot_change_the_registry(registered, fram
     )
     assert result.status == ExecutionStatus.FAILURE
     assert result.error_type == "ValidationError"
-    next_spec = (await GantryToolset(registered).select("look up an item", limit=1))[0]
+    next_spec = (await DotFetchToolset(registered).select("look up an item", limit=1))[0]
     assert next_spec.parameters["properties"]["value"]["type"] == "integer"

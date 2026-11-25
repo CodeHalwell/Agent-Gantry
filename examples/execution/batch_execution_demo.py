@@ -13,15 +13,15 @@ Run with::
 import asyncio
 import time
 
-from agent_gantry import AgentGantry
-from agent_gantry.schema.execution import BatchToolCall, ToolCall
+from dotfetch import DotFetch
+from dotfetch.schema.execution import BatchToolCall, ToolCall
 
 
 async def main():
-    gantry = AgentGantry()
+    fetcher = DotFetch()
     try:
 
-        @gantry.register(
+        @fetcher.register(
             examples=["run a 2 second background job", "start worker 3 for five seconds"]
         )
         async def worker(id: int, duration: int) -> str:
@@ -31,7 +31,7 @@ async def main():
             print(f"[Worker {id}] Done!")
             return f"Worker {id} finished"
 
-        await gantry.sync()
+        await fetcher.sync()
 
         print("--- Batch Execution Demo ---")
 
@@ -47,7 +47,7 @@ async def main():
         print("Executing 3 tasks (1s each) in parallel...")
         start = time.perf_counter()
 
-        result = await gantry.execute_batch(batch)
+        result = await fetcher.execute_batch(batch)
 
         end = time.perf_counter()
 
@@ -60,7 +60,7 @@ async def main():
         else:
             print(">>> Warning: Tasks ran sequentially.")
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 if __name__ == "__main__":

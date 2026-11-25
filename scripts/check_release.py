@@ -1,6 +1,6 @@
 """Validate release metadata without importing optional dependencies.
 
-Run ``python scripts/check_release.py --tag v0.26.0 --notes-file release-notes.md``.
+Run ``python scripts/check_release.py --tag v0.27.0 --notes-file release-notes.md``.
 Omit ``--tag`` for a branch build; ``--check-git-tag`` also checks an existing
 version tag points to the checked-out commit before anything can be published.
 """
@@ -26,7 +26,7 @@ def release_metadata(root: Path, tag: str | None = None) -> tuple[str, str]:
     if not re.fullmatch(r"\d+\.\d+\.\d+", version):
         raise ValueError(f"Expected a stable release version, got {version!r}")
 
-    module = ast.parse((root / "agent_gantry/__init__.py").read_text(encoding="utf-8"))
+    module = ast.parse((root / "dotfetch/__init__.py").read_text(encoding="utf-8"))
     runtime_version = next(
         (
             ast.literal_eval(node.value)
@@ -43,11 +43,11 @@ def release_metadata(root: Path, tag: str | None = None) -> tuple[str, str]:
     npm_lock = json.loads((root / "package-lock.json").read_text(encoding="utf-8"))
     uv_lock = (root / "uv.lock").read_text(encoding="utf-8")
     editable = re.search(
-        r'(?m)^name = "agent-gantry"\nversion = "([^"]+)"\nsource = \{ editable = "\." \}',
+        r'(?m)^name = "dotfetch"\nversion = "([^"]+)"\nsource = \{ editable = "\." \}',
         uv_lock,
     )
     versions = {
-        "agent_gantry.__version__": runtime_version,
+        "dotfetch.__version__": runtime_version,
         "package.json": package.get("version"),
         "package-lock.json": npm_lock.get("version"),
         "package-lock.json root package": npm_lock.get("packages", {}).get("", {}).get("version"),

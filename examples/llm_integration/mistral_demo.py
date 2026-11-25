@@ -1,13 +1,13 @@
 """
-Mistral AI + Agent-Gantry integration demo.
+Mistral AI + dotfetch integration demo.
 
 Mistral's chat endpoint is OpenAI-compatible, so this demo shares the
 library's `openai` SDK dependency and configures it with
 ``base_url="https://api.mistral.ai/v1"``. All function-calling schemas produced
-by Gantry's ``dialect="openai"`` or default adapter work without modification.
+by dotfetch's ``dialect="openai"`` or default adapter work without modification.
 
 Install:
-    pip install "agent-gantry[openai]"
+    pip install "dotfetch[openai]"
 """
 
 import asyncio
@@ -17,14 +17,14 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from agent_gantry import AgentGantry, set_default_gantry, with_semantic_tools
-from agent_gantry.schema.execution import ToolCall
+from dotfetch import DotFetch, set_default_fetcher, with_semantic_tools
+from dotfetch.schema.execution import ToolCall
 
 load_dotenv()
 
 
 async def main():
-    print("=== Agent-Gantry + Mistral AI Integration Demo ===\n")
+    print("=== dotfetch + Mistral AI Integration Demo ===\n")
 
     api_key = os.environ.get("MISTRAL_API_KEY")
     if not api_key:
@@ -32,11 +32,11 @@ async def main():
         print("   Please set it in your .env file.")
         return
 
-    gantry = AgentGantry()
-    set_default_gantry(gantry)
+    fetcher = DotFetch()
+    set_default_fetcher(fetcher)
 
     try:
-        @gantry.register(
+        @fetcher.register(
             tags=["translation"],
             examples=["translate 'Hello World' to French", "say 'thank you' in German"],
         )
@@ -44,8 +44,8 @@ async def main():
             """Translate text to a target language."""
             return f"Translated '{text}' to {target_lang}: [Translated Text]"
 
-        await gantry.sync()
-        print(f"✅ Registered {gantry.tool_count} tools\n")
+        await fetcher.sync()
+        print(f"✅ Registered {fetcher.tool_count} tools\n")
 
         # Mistral is OpenAI-compatible: point AsyncOpenAI at the Mistral base URL.
         from openai import AsyncOpenAI
@@ -57,10 +57,10 @@ async def main():
         query = "Translate 'Hello World' to French"
         print(f"User Query: '{query}'")
 
-        # Gantry's default dialect produces OpenAI-compatible function schemas,
+        # dotfetch's default dialect produces OpenAI-compatible function schemas,
         # which Mistral's endpoint accepts without modification.
-        tools = await gantry.retrieve_tools(query, limit=1)
-        print(f"Gantry retrieved {len(tools)} tool(s)")
+        tools = await fetcher.retrieve_tools(query, limit=1)
+        print(f"dotfetch retrieved {len(tools)} tool(s)")
 
         response = await client.chat.completions.create(
             model="mistral-large-latest",
@@ -73,7 +73,7 @@ async def main():
         if tool_calls:
             for tc in tool_calls:
                 print(f"Mistral decided to call: {tc.function.name}({tc.function.arguments})")
-                result = await gantry.execute(
+                result = await fetcher.execute(
                     ToolCall(
                         tool_name=tc.function.name,
                         arguments=json.loads(tc.function.arguments)
@@ -104,17 +104,17 @@ async def main():
         await chat_with_mistral("Translate 'Good Morning' to Spanish")
 
         # --- Scenario: Typed MistralAdapter (provider-specific convenience) ---
-        # MistralAdapter(gantry).tools(query, limit=n) bakes in dialect="mistral",
+        # MistralAdapter(fetcher).tools(query, limit=n) bakes in dialect="mistral",
         # which yields the same OpenAI-style function schema Mistral's endpoint
         # accepts — so it drops straight into the OpenAI-compatible client above.
         print("\n--- Scenario: Typed MistralAdapter ---")
-        from agent_gantry.mistral import MistralAdapter
+        from dotfetch.mistral import MistralAdapter
 
         query_adapter = "Translate 'Thank you' to German"
         print(f"User Query: '{query_adapter}'")
 
-        tools_adapter = await MistralAdapter(gantry).tools(query_adapter, limit=1)
-        print(f"Gantry retrieved {len(tools_adapter)} tool(s)")
+        tools_adapter = await MistralAdapter(fetcher).tools(query_adapter, limit=1)
+        print(f"dotfetch retrieved {len(tools_adapter)} tool(s)")
 
         response_adapter = await client.chat.completions.create(
             model="mistral-large-latest",
@@ -126,7 +126,7 @@ async def main():
             tc = response_adapter.choices[0].message.tool_calls[0]
             print(f"Mistral (via adapter) called: {tc.function.name}")
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 if __name__ == "__main__":

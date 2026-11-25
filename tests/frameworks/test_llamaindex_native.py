@@ -24,11 +24,11 @@ from llama_index.core.workflow import (  # noqa: E402
     InputRequiredEvent,
 )
 
-from agent_gantry import AgentGantry, current_tool_invocation  # noqa: E402
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder  # noqa: E402
-from agent_gantry.core.security import SecurityPolicy  # noqa: E402
-from agent_gantry.integrations.frameworks.base import ToolExecutionError  # noqa: E402
-from agent_gantry.llamaindex import (  # noqa: E402
+from dotfetch import DotFetch, current_tool_invocation  # noqa: E402
+from dotfetch.adapters.embedders.simple import SimpleEmbedder  # noqa: E402
+from dotfetch.core.security import SecurityPolicy  # noqa: E402
+from dotfetch.integrations.frameworks.base import ToolExecutionError  # noqa: E402
+from dotfetch.llamaindex import (  # noqa: E402
     LlamaIndexAdapter,
     LlamaIndexToolError,
     current_workflow_context,
@@ -105,8 +105,8 @@ def _llm(*steps: list[tuple[str, dict[str, Any]]]) -> ScriptedLLM:
     return ScriptedLLM(script=list(steps), offered=[])
 
 
-async def _build(**kwargs: Any) -> AgentGantry:
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=256), **kwargs)
+async def _build(**kwargs: Any) -> DotFetch:
+    g = DotFetch(embedder=SimpleEmbedder(dimension=256), **kwargs)
     g.sent = []  # type: ignore[attr-defined]
 
     @g.register(examples=["what's the weather in London", "weather forecast for Paris"])
@@ -144,7 +144,7 @@ async def _build(**kwargs: Any) -> AgentGantry:
 
 
 @pytest.fixture
-async def gantry():
+async def fetcher():
     g = await _build()
     try:
         yield g
@@ -164,29 +164,29 @@ async def _run(agent: Any, prompt: str = "go", *, respond: Any = None, ctx: Any 
             requests.append(event)
             answer = respond(event) if callable(respond) else respond
             handler.ctx.send_event(
-                HumanResponseEvent(response=answer, gantry_approval_id=event.gantry_approval_id)
+                HumanResponseEvent(response=answer, fetcher_approval_id=event.fetcher_approval_id)
             )
     await handler
     return results, requests
 
 
-async def _static(gantry, query, *steps, **adapter_kwargs):
-    tools = await LlamaIndexAdapter(gantry, **adapter_kwargs).select(query, limit=6)
+async def _static(fetcher, query, *steps, **adapter_kwargs):
+    tools = await LlamaIndexAdapter(fetcher, **adapter_kwargs).select(query, limit=6)
     llm = _llm(*steps)
     return FunctionAgent(tools=tools, llm=llm), llm
 
 
-async def test_tool_failure_reaches_the_model_as_an_error_output(gantry):
-    agent, llm = await _static(gantry, "divide", [("divide", {"a": 1, "b": 0})])
+async def test_tool_failure_reaches_the_model_as_an_error_output(fetcher):
+    agent, llm = await _static(fetcher, "divide", [("divide", {"a": 1, "b": 0})])
     [output], _ = await _run(agent)
     assert output.is_error
     assert output.content == "ZeroDivisionError: division by zero"
     assert len(llm.offered) == 2  # the model got another step
 
 
-async def test_error_formatter_rewrites_the_text(gantry):
+async def test_error_formatter_rewrites_the_text(fetcher):
     agent, _ = await _static(
-        gantry,
+        fetcher,
         "divide",
         [("divide", {"a": 1, "b": 0})],
         error_formatter=lambda exc: f"{exc.error_type}: [redacted]",
@@ -195,8 +195,8 @@ async def test_error_formatter_rewrites_the_text(gantry):
     assert output.content == "ZeroDivisionError: [redacted]"
 
 
-async def test_failures_are_tool_execution_errors(gantry):
-    [tool] = await LlamaIndexAdapter(gantry).select("divide", limit=1)
+async def test_failures_are_tool_execution_errors(fetcher):
+    [tool] = await LlamaIndexAdapter(fetcher).select("divide", limit=1)
     with pytest.raises(LlamaIndexToolError) as info:
         await tool.async_fn(a=1, b=0)
     assert isinstance(info.value, ToolExecutionError)
@@ -204,13 +204,13 @@ async def test_failures_are_tool_execution_errors(gantry):
 
 
 @pytest.mark.parametrize("respond", ["yes", "no"])
-async def test_gated_call_waits_for_a_human_response(gantry, respond):
-    agent, _ = await _static(gantry, "send an email message", [("send_email", {"to": "bob@x"})])
+async def test_gated_call_waits_for_a_human_response(fetcher, respond):
+    agent, _ = await _static(fetcher, "send an email message", [("send_email", {"to": "bob@x"})])
     [output], [request] = await _run(agent, respond=respond)
-    assert request.gantry_tool == "send_email"
-    assert request.gantry_arguments == {"to": "bob@x"}
+    assert request.fetcher_tool == "send_email"
+    assert request.fetcher_arguments == {"to": "bob@x"}
     approved = respond == "yes"
-    assert gantry.sent == (["bob@x"] if approved else [])  # exactly once when approved
+    assert fetcher.sent == (["bob@x"] if approved else [])  # exactly once when approved
     assert (output.content == "sent:bob@x") is approved
     assert output.is_error is not approved
 
@@ -222,50 +222,50 @@ async def test_security_policy_pattern_also_waits_for_approval():
             g, "delete a stored record", [("delete_record", {"record_id": "r1"})]
         )
         _, [request] = await _run(agent, respond="yes")
-        assert request.gantry_tool == "delete_record"
+        assert request.fetcher_tool == "delete_record"
         assert g.sent == ["deleted:r1"]
     finally:
         await g.close()
 
 
-async def test_direct_call_of_a_gated_tool_is_reported_not_run(gantry):
-    [tool] = await LlamaIndexAdapter(gantry).select("send an email message", limit=1)
+async def test_direct_call_of_a_gated_tool_is_reported_not_run(fetcher):
+    [tool] = await LlamaIndexAdapter(fetcher).select("send an email message", limit=1)
     with pytest.raises(LlamaIndexToolError, match="approval"):
         await tool.async_fn(to="bob@x")
-    assert gantry.sent == []
+    assert fetcher.sent == []
 
 
-async def test_error_mode_raise_with_a_gated_tool_never_runs_it(gantry):
+async def test_error_mode_raise_with_a_gated_tool_never_runs_it(fetcher):
     agent, _ = await _static(
-        gantry, "send an email message", [("send_email", {"to": "bob@x"})], error_mode="raise"
+        fetcher, "send an email message", [("send_email", {"to": "bob@x"})], error_mode="raise"
     )
     [output], requests = await _run(agent, respond="yes")
     assert requests == []  # no approval flow in raise mode
-    assert output.is_error and gantry.sent == []
+    assert output.is_error and fetcher.sent == []
 
 
-async def test_workflow_context_reaches_gantry_handlers(gantry):
-    agent, _ = await _static(gantry, "who am I", [("whoami", {})])
+async def test_workflow_context_reaches_fetcher_handlers(fetcher):
+    agent, _ = await _static(fetcher, "who am I", [("whoami", {})])
     ctx = Context(agent)
     await ctx.store.set("user", "dan")
     [output], _ = await _run(agent, ctx=ctx)
     assert output.content == "user=dan;fw=llamaindex"
 
 
-async def test_tools_still_work_when_called_directly(gantry):
-    [tool] = await LlamaIndexAdapter(gantry).select("weather forecast for Paris", limit=1)
+async def test_tools_still_work_when_called_directly(fetcher):
+    [tool] = await LlamaIndexAdapter(fetcher).select("weather forecast for Paris", limit=1)
     assert (await tool.acall(city="Paris")).content == "sunny in Paris"
     assert "ctx" not in tool.metadata.get_parameters_dict()["properties"]
 
 
-async def test_two_identical_gated_calls_each_wait_for_their_own_approval(gantry):
+async def test_two_identical_gated_calls_each_wait_for_their_own_approval(fetcher):
     llm = _llm([("send_email", {"to": "bob@x"}), ("send_email", {"to": "bob@x"})])
-    agent = LlamaIndexAdapter(gantry).function_agent(llm, limit=1)
+    agent = LlamaIndexAdapter(fetcher).function_agent(llm, limit=1)
     outputs, requests = await asyncio.wait_for(
         _run(agent, "send an email message to bob", respond="yes"), timeout=30
     )
     assert len(requests) == 2  # one approval request per call, no shared waiter
-    assert gantry.sent == ["bob@x", "bob@x"]  # each approved call ran exactly once
+    assert fetcher.sent == ["bob@x", "bob@x"]  # each approved call ran exactly once
     # LlamaIndex replays a waiting step when a response arrives and may re-emit
     # its result; the replay joins the call that already ran.
     assert {o.content for o in outputs} == {"sent:bob@x"}
@@ -284,11 +284,11 @@ async def test_each_response_only_decides_its_own_call():
                 pending.append(event)
                 if len(pending) == 2:
                     # Reject the deletion first, then approve the email.
-                    for request in sorted(pending, key=lambda r: r.gantry_tool):
-                        answer = "no" if request.gantry_tool == "delete_record" else "yes"
+                    for request in sorted(pending, key=lambda r: r.fetcher_tool):
+                        answer = "no" if request.fetcher_tool == "delete_record" else "yes"
                         handler.ctx.send_event(
                             HumanResponseEvent(
-                                response=answer, gantry_approval_id=request.gantry_approval_id
+                                response=answer, fetcher_approval_id=request.fetcher_approval_id
                             )
                         )
         await asyncio.wait_for(handler, timeout=30)
@@ -297,39 +297,39 @@ async def test_each_response_only_decides_its_own_call():
         await g.close()
 
 
-async def test_a_later_identical_call_asks_and_runs_again(gantry):
+async def test_a_later_identical_call_asks_and_runs_again(fetcher):
     """A cached approval is only reused by replays of the same call."""
     agent, _ = await _static(
-        gantry,
+        fetcher,
         "send an email message",
         [("send_email", {"to": "bob@x"})],
         [("send_email", {"to": "bob@x"})],
     )
     outputs, requests = await asyncio.wait_for(_run(agent, respond="yes"), timeout=30)
     assert len(requests) == 2
-    assert gantry.sent == ["bob@x", "bob@x"]
+    assert fetcher.sent == ["bob@x", "bob@x"]
 
 
-async def test_gantry_function_agent_takes_static_tools(gantry):
-    from agent_gantry.llamaindex import GantryFunctionAgent
+async def test_fetcher_function_agent_takes_static_tools(fetcher):
+    from dotfetch.llamaindex import DotFetchFunctionAgent
 
-    tools = await LlamaIndexAdapter(gantry).select("send an email message", limit=6)
+    tools = await LlamaIndexAdapter(fetcher).select("send an email message", limit=6)
     llm = _llm([("send_email", {"to": "bob@x"}), ("send_email", {"to": "bob@x"})])
-    agent = GantryFunctionAgent(tools=tools, llm=llm)
+    agent = DotFetchFunctionAgent(tools=tools, llm=llm)
     _, requests = await asyncio.wait_for(_run(agent, respond="yes"), timeout=30)
     assert len(requests) == 2
-    assert gantry.sent == ["bob@x", "bob@x"]
+    assert fetcher.sent == ["bob@x", "bob@x"]
 
 
-async def test_an_unexpected_failure_after_approval_never_hangs_replays(gantry, monkeypatch):
-    from agent_gantry.integrations.frameworks import llamaindex as module
+async def test_an_unexpected_failure_after_approval_never_hangs_replays(fetcher, monkeypatch):
+    from dotfetch.integrations.frameworks import llamaindex as module
 
     async def broken(*args, **kwargs):
         raise RuntimeError("tool runner broke")
 
     monkeypatch.setattr(module, "execute_spec", broken)
     llm = _llm([("send_email", {"to": "bob@x"}), ("send_email", {"to": "carol@x"})])
-    agent = LlamaIndexAdapter(gantry).function_agent(llm, limit=1)
+    agent = LlamaIndexAdapter(fetcher).function_agent(llm, limit=1)
     outputs, requests = await asyncio.wait_for(
         _run(agent, "send an email message", respond="yes"), timeout=30
     )
@@ -337,21 +337,21 @@ async def test_an_unexpected_failure_after_approval_never_hangs_replays(gantry, 
     assert outputs and all(o.is_error for o in outputs)
 
 
-async def test_a_reused_call_id_in_a_later_turn_still_asks_and_runs(gantry):
+async def test_a_reused_call_id_in_a_later_turn_still_asks_and_runs(fetcher):
     """Some backends reuse tool-call ids across turns; each turn's call is its own."""
     # The scripted LLM numbers calls per step, so both steps send "call_0".
     llm = _llm([("send_email", {"to": "bob@x"})], [("send_email", {"to": "carol@x"})])
-    agent = LlamaIndexAdapter(gantry).function_agent(llm, limit=1)
+    agent = LlamaIndexAdapter(fetcher).function_agent(llm, limit=1)
     outputs, requests = await asyncio.wait_for(
         _run(agent, "send an email message", respond="yes"), timeout=30
     )
     assert len(requests) == 2
-    assert gantry.sent == ["bob@x", "carol@x"]
+    assert fetcher.sent == ["bob@x", "carol@x"]
     assert {o.content for o in outputs} == {"sent:bob@x", "sent:carol@x"}
 
 
 async def test_a_tool_argument_named_ctx_is_passed_through():
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=256))
+    g = DotFetch(embedder=SimpleEmbedder(dimension=256))
 
     @g.register
     def echo(ctx: str) -> str:
@@ -370,21 +370,21 @@ async def test_a_tool_argument_named_ctx_is_passed_through():
         await g.close()
 
 
-async def test_tool_retriever_offers_pins_when_retrieval_fails(gantry, caplog):
-    retriever = LlamaIndexAdapter(gantry).tool_retriever(limit=1, always_include=["get_weather"])
+async def test_tool_retriever_offers_pins_when_retrieval_fails(fetcher, caplog):
+    retriever = LlamaIndexAdapter(fetcher).tool_retriever(limit=1, always_include=["get_weather"])
 
     async def down(query):
         raise RuntimeError("vector store down")
 
-    gantry.retrieve = down
+    fetcher.retrieve = down
     with caplog.at_level("WARNING"):
         tools = await retriever.aretrieve("weather in Leeds")
     assert [t.metadata.name for t in tools] == ["get_weather"]
     assert "semantic retrieval failed" in caplog.text
 
 
-async def test_function_agent_uses_the_adapter_settings(gantry):
-    adapter = LlamaIndexAdapter(gantry, error_formatter=lambda exc: "[redacted]")
+async def test_function_agent_uses_the_adapter_settings(fetcher):
+    adapter = LlamaIndexAdapter(fetcher, error_formatter=lambda exc: "[redacted]")
     llm = _llm([("divide", {"a": 1, "b": 0})])
     agent = adapter.function_agent(llm, limit=3)
     [output], _ = await _run(agent, "divide two numbers")
@@ -392,9 +392,9 @@ async def test_function_agent_uses_the_adapter_settings(gantry):
 
 
 @pytest.mark.parametrize("respond", ["yes", "no"])
-async def test_per_step_agent_resumes_an_approved_call(gantry, respond):
+async def test_per_step_agent_resumes_an_approved_call(fetcher, respond):
     llm = _llm([("send_email", {"to": "bob@x"})])
-    agent = LlamaIndexAdapter(gantry).function_agent(llm, limit=1)
+    agent = LlamaIndexAdapter(fetcher).function_agent(llm, limit=1)
     [output], [request] = await _run(agent, "send an email message to bob", respond=respond)
-    assert request.gantry_tool == "send_email"
-    assert gantry.sent == (["bob@x"] if respond == "yes" else [])
+    assert request.fetcher_tool == "send_email"
+    assert fetcher.sent == (["bob@x"] if respond == "yes" else [])

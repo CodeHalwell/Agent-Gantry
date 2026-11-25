@@ -6,9 +6,9 @@ from __future__ import annotations
 
 import pytest
 
-from agent_gantry import AgentGantry
-from agent_gantry.schema.query import ConversationContext, ToolQuery
-from agent_gantry.schema.tool import ToolDefinition
+from dotfetch import DotFetch
+from dotfetch.schema.query import ConversationContext, ToolQuery
+from dotfetch.schema.tool import ToolDefinition
 
 
 class ForceReportReranker:
@@ -24,7 +24,7 @@ class ForceReportReranker:
 @pytest.mark.asyncio
 async def test_failed_tools_are_penalized(sample_tools) -> None:
     """Failed tools should be deprioritized in the final ranking."""
-    gantry = AgentGantry()
+    fetcher = DotFetch()
 
     notify_customer = ToolDefinition(
         name="notify_customer",
@@ -43,7 +43,7 @@ async def test_failed_tools_are_penalized(sample_tools) -> None:
     tools = sample_tools + [notify_customer]
 
     for tool in tools:
-        await gantry.add_tool(tool)
+        await fetcher.add_tool(tool)
 
     # Make send_email less attractive after a failure
     send_email = next((t for t in tools if t.name == "send_email"), None)
@@ -55,7 +55,7 @@ async def test_failed_tools_are_penalized(sample_tools) -> None:
         query="send a notification email to the customer",
         tools_failed=["send_email"],
     )
-    result = await gantry.retrieve(
+    result = await fetcher.retrieve(
         ToolQuery(context=context, limit=1, diversity_factor=0.4),
     )
 
@@ -66,16 +66,16 @@ async def test_failed_tools_are_penalized(sample_tools) -> None:
 @pytest.mark.asyncio
 async def test_intent_matching_boosts_relevance(sample_tools) -> None:
     """Intent classification should lift the refund tool for customer support queries."""
-    gantry = AgentGantry()
+    fetcher = DotFetch()
     for tool in sample_tools:
-        await gantry.add_tool(tool)
+        await fetcher.add_tool(tool)
 
     query = ToolQuery(
         context=ConversationContext(query="customer refund request"),
         limit=1,
         score_threshold=0.0,
     )
-    result = await gantry.retrieve(query)
+    result = await fetcher.retrieve(query)
 
     assert result.tools
     assert result.tools[0].tool.name == "process_refund"
@@ -84,16 +84,16 @@ async def test_intent_matching_boosts_relevance(sample_tools) -> None:
 @pytest.mark.asyncio
 async def test_reranker_can_be_toggled(sample_tools) -> None:
     """Reranker should only apply when explicitly enabled."""
-    gantry = AgentGantry(reranker=ForceReportReranker())
+    fetcher = DotFetch(reranker=ForceReportReranker())
     for tool in sample_tools:
-        await gantry.add_tool(tool)
+        await fetcher.add_tool(tool)
 
     context = ConversationContext(query="send an email summary to finance")
 
-    no_rerank = await gantry.retrieve(
+    no_rerank = await fetcher.retrieve(
         ToolQuery(context=context, limit=2, enable_reranking=False, score_threshold=0.0),
     )
-    reranked = await gantry.retrieve(
+    reranked = await fetcher.retrieve(
         ToolQuery(context=context, limit=2, enable_reranking=True, score_threshold=0.0),
     )
 
@@ -104,7 +104,7 @@ async def test_reranker_can_be_toggled(sample_tools) -> None:
 @pytest.mark.asyncio
 async def test_mmr_promotes_diversity() -> None:
     """MMR should avoid returning near-duplicate tools when diversity is requested."""
-    gantry = AgentGantry()
+    fetcher = DotFetch()
 
     email_customer = ToolDefinition(
         name="email_customer",
@@ -134,9 +134,9 @@ async def test_mmr_promotes_diversity() -> None:
     )
 
     for tool in [email_customer, email_admin, notify_customer]:
-        await gantry.add_tool(tool)
+        await fetcher.add_tool(tool)
 
-    result = await gantry.retrieve(
+    result = await fetcher.retrieve(
         ToolQuery(
             context=ConversationContext(query="send an email or notification to the customer"),
             limit=2,
@@ -158,23 +158,23 @@ async def test_configured_reranker_runs_by_default(sample_tools) -> None:
     branch was dead and a configured reranker silently never ran. The field is
     now tri-state: ``None`` defers to config, ``True``/``False`` force it.
     """
-    from agent_gantry.schema.config import AgentGantryConfig, RerankerConfig
+    from dotfetch.schema.config import DotFetchConfig, RerankerConfig
 
-    config = AgentGantryConfig(reranker=RerankerConfig(enabled=True))
-    gantry = AgentGantry(config=config, reranker=ForceReportReranker())
+    config = DotFetchConfig(reranker=RerankerConfig(enabled=True))
+    fetcher = DotFetch(config=config, reranker=ForceReportReranker())
     for tool in sample_tools:
-        await gantry.add_tool(tool)
+        await fetcher.add_tool(tool)
 
     context = ConversationContext(query="send an email summary to finance")
 
     # No explicit enable_reranking -> defer to config -> reranker runs.
-    defaulted = await gantry.retrieve(
+    defaulted = await fetcher.retrieve(
         ToolQuery(context=context, limit=2, score_threshold=0.0),
     )
     assert defaulted.tools[0].tool.name == "generate_report"
 
     # An explicit False still wins over the config.
-    opted_out = await gantry.retrieve(
+    opted_out = await fetcher.retrieve(
         ToolQuery(context=context, limit=2, enable_reranking=False, score_threshold=0.0),
     )
     assert opted_out.tools[0].tool.name == "send_email"

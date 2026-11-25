@@ -8,8 +8,8 @@ export const journeyStages: JourneyStageSource[] = [
   {
     title: 'Register',
     detail:
-      'Decorate ordinary Python functions and let Gantry infer schemas from type hints and docstrings.',
-    code: `@gantry.register(tags=["finance"])
+      'Decorate ordinary Python functions and let dotfetch infer schemas from type hints and docstrings.',
+    code: `@fetcher.register(tags=["finance"])
 def calculate_tax(amount: float) -> float:
     """Calculate tax."""
     return amount * 0.08`,
@@ -18,7 +18,7 @@ def calculate_tax(amount: float) -> float:
     title: 'Retrieve',
     detail:
       'Sync once, then retrieve only the tools that match a user request, conversation state, and policy constraints.',
-    code: `tools = await gantry.retrieve_tools(
+    code: `tools = await fetcher.retrieve_tools(
     "What is tax on $100?",
     limit=5,
     dialect="openai",
@@ -28,7 +28,7 @@ def calculate_tax(amount: float) -> float:
     title: 'Execute',
     detail:
       'Execute via the built-in engine with async support, timeouts, retries, circuit breakers, callbacks, and telemetry.',
-    code: `result = await gantry.execute(ToolCall(
+    code: `result = await fetcher.execute(ToolCall(
     tool_name="calculate_tax",
     arguments={"amount": 100},
 ))`,
@@ -37,7 +37,7 @@ def calculate_tax(amount: float) -> float:
     title: 'Operate',
     detail:
       'Persist embeddings, route to MCP/A2A, bridge agent frameworks, and instrument usage across production workflows.',
-    code: `gantry = AgentGantry(config=AgentGantryConfig(
+    code: `fetcher = DotFetch(config=DotFetchConfig(
     vector_store={"provider": "lancedb"},
     telemetry={"provider": "opentelemetry"},
 ))`,

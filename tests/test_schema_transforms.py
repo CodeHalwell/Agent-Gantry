@@ -1,6 +1,6 @@
 """Tests for the provider schema transforms and per-dialect option threading.
 
-Covers the two transforms in ``agent_gantry.adapters.tool_spec.schema_utils``
+Covers the two transforms in ``dotfetch.adapters.tool_spec.schema_utils``
 (OpenAI strict mode, Gemini/Vertex sanitization) and the path that carries
 adapter options from the convenience APIs down to the adapter — which used to
 drop them silently, making ``strict=True`` unreachable outside a manual
@@ -11,19 +11,19 @@ from __future__ import annotations
 
 import pytest
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.tool_spec.providers import (
+from dotfetch import DotFetch
+from dotfetch.adapters.tool_spec.providers import (
     AnthropicAdapter,
     GeminiAdapter,
     OpenAIAdapter,
     OpenAIResponsesAdapter,
 )
-from agent_gantry.adapters.tool_spec.schema_utils import (
+from dotfetch.adapters.tool_spec.schema_utils import (
     sanitize_gemini_schema,
     strict_json_schema,
     unsupported_strict_paths,
 )
-from agent_gantry.schema.tool import ToolDefinition
+from dotfetch.schema.tool import ToolDefinition
 
 
 class TestStrictJsonSchema:
@@ -754,8 +754,8 @@ class TestDialectOptionThreading:
     """
 
     @pytest.fixture
-    async def gantry(self) -> AgentGantry:
-        g = AgentGantry()
+    async def fetcher(self) -> DotFetch:
+        g = DotFetch()
 
         @g.register(tags=["weather"])
         async def get_weather(city: str, unit: str = "celsius") -> str:
@@ -764,33 +764,33 @@ class TestDialectOptionThreading:
 
         return g
 
-    async def test_strict_reaches_the_openai_adapter(self, gantry: AgentGantry) -> None:
-        tools = await gantry.retrieve_tools("weather", dialect="openai", strict=True)
+    async def test_strict_reaches_the_openai_adapter(self, fetcher: DotFetch) -> None:
+        tools = await fetcher.retrieve_tools("weather", dialect="openai", strict=True)
         assert tools
         fn = tools[0]["function"]
         assert fn["strict"] is True
         assert fn["parameters"]["additionalProperties"] is False
         assert set(fn["parameters"]["required"]) == {"city", "unit"}
 
-    async def test_explicit_dialect_options_are_forwarded(self, gantry: AgentGantry) -> None:
-        tools = await gantry.retrieve_tools(
+    async def test_explicit_dialect_options_are_forwarded(self, fetcher: DotFetch) -> None:
+        tools = await fetcher.retrieve_tools(
             "weather", dialect="openai", dialect_options={"strict": True}
         )
         assert tools[0]["function"]["strict"] is True
 
-    async def test_omitting_strict_keeps_the_plain_schema(self, gantry: AgentGantry) -> None:
-        tools = await gantry.retrieve_tools("weather", dialect="openai")
+    async def test_omitting_strict_keeps_the_plain_schema(self, fetcher: DotFetch) -> None:
+        tools = await fetcher.retrieve_tools("weather", dialect="openai")
         assert "strict" not in tools[0]["function"]
 
-    async def test_query_fields_still_configure_retrieval(self, gantry: AgentGantry) -> None:
+    async def test_query_fields_still_configure_retrieval(self, fetcher: DotFetch) -> None:
         """A ToolQuery field must go to the query, not to the adapter."""
-        tools = await gantry.retrieve_tools("weather", dialect="openai", namespaces=["nope"])
+        tools = await fetcher.retrieve_tools("weather", dialect="openai", namespaces=["nope"])
         assert tools == []
 
-    async def test_llm_adapter_passes_strict_through(self, gantry: AgentGantry) -> None:
-        from agent_gantry.openai import OpenAIAdapter as OpenAIRetrievalAdapter
+    async def test_llm_adapter_passes_strict_through(self, fetcher: DotFetch) -> None:
+        from dotfetch.openai import OpenAIAdapter as OpenAIRetrievalAdapter
 
-        tools = await OpenAIRetrievalAdapter(gantry).tools("weather", strict=True)
+        tools = await OpenAIRetrievalAdapter(fetcher).tools("weather", strict=True)
         assert tools[0]["function"]["strict"] is True
 
 
@@ -833,7 +833,7 @@ def test_pattern_keyed_objects_have_no_strict_mode_representation():
     strict-safe, and the transform then published it with the unsupported
     ``patternProperties`` keyword still attached, which the provider rejects
     (PR #381 review)."""
-    from agent_gantry.adapters.tool_spec.schema_utils import unsupported_strict_paths
+    from dotfetch.adapters.tool_spec.schema_utils import unsupported_strict_paths
 
     closed = {
         "type": "object",
@@ -872,7 +872,7 @@ def test_a_property_forbidden_by_its_schema_has_no_strict_representation():
     is ``false`` — satisfiable by no value — would be emitted as required and
     unsatisfiable at once, a schema with no valid instance that turns an
     otherwise callable tool into an uncallable one (PR #381 review)."""
-    from agent_gantry.adapters.tool_spec.schema_utils import unsupported_strict_paths
+    from dotfetch.adapters.tool_spec.schema_utils import unsupported_strict_paths
 
     optional = {
         "type": "object",
@@ -928,8 +928,8 @@ def test_a_nullable_open_mapping_is_still_strict_unsupported():
     only the scalar string let a nullable open mapping past the check and into
     strict mode, which cannot represent it. The provider then rejects the
     whole tool request rather than that one parameter (PR #381 review)."""
-    from agent_gantry.adapters.tool_spec.schema_utils import unsupported_strict_paths
-    from agent_gantry.schema.introspection import build_parameters_schema
+    from dotfetch.adapters.tool_spec.schema_utils import unsupported_strict_paths
+    from dotfetch.schema.introspection import build_parameters_schema
 
     def nullable_map(m: dict[str, int] | None) -> None: ...
 
@@ -964,7 +964,7 @@ def test_a_pattern_only_object_is_strict_unsupported_without_a_type():
     ``properties`` — constrains objects just as much as one spelling the type
     out. Gating the check on type-or-properties let that spelling past as
     strict-safe while its typed twin was flagged (PR #381 review)."""
-    from agent_gantry.adapters.tool_spec.schema_utils import unsupported_strict_paths
+    from dotfetch.adapters.tool_spec.schema_utils import unsupported_strict_paths
 
     untyped = {
         "type": "object",
@@ -1126,7 +1126,7 @@ def test_a_typeless_enum_is_strict_unsupported():
     # the two halves cannot drift apart.
     import typing
 
-    from agent_gantry.schema.introspection import _type_to_json_schema
+    from dotfetch.schema.introspection import _type_to_json_schema
 
     assert _type_to_json_schema(typing.Literal[1, "auto"]) == {"enum": [1, "auto"]}
     for typeless in (
@@ -1165,7 +1165,7 @@ def test_a_nullable_typeless_enum_is_strict_unsupported():
 
     import typing
 
-    from agent_gantry.schema.introspection import _type_to_json_schema
+    from dotfetch.schema.introspection import _type_to_json_schema
 
     # Nothing repairs these on the way out: ``strict_json_schema`` widens and
     # wraps the types it finds and never invents one, so what the guard sees

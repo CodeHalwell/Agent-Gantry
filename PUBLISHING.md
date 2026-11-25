@@ -1,4 +1,4 @@
-# Publishing Agent-Gantry
+# Publishing dotfetch
 
 The GitHub [Publish to PyPI workflow](.github/workflows/publish.yml) is the
 supported publishing path; local `uv publish` bypasses the release checks and
@@ -10,6 +10,12 @@ The workflow uses PyPI trusted publishing through GitHub OIDC. It builds and
 checks the distributions, smoke-installs the wheel on all supported Python
 versions, and only then uploads. A production run also creates the matching
 GitHub tag and Release with changelog notes and checksums.
+
+The first `dotfetch` upload needs a PyPI "pending publisher" (trusted
+publishing) registered for the new project name before the publish workflow can
+upload; see [RELEASING.md](RELEASING.md#one-time-setup). The old `agent-gantry`
+project gets one final release, built from `shim/agent-gantry/`, which installs
+`dotfetch` and raises a clear `ImportError` explaining the move.
 
 If trusted publishing fails, check the PyPI publisher's repository, workflow and
 environment names against [RELEASING.md](RELEASING.md), then retry the original

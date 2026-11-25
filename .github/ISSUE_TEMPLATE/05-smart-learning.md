@@ -39,9 +39,9 @@ assignees: []
 
 ```python
 # Example usage
-from agent_gantry import AgentGantry
+from dotfetch import DotFetch
 
-gantry = AgentGantry()
+fetcher = DotFetch()
 
 # Example of feedback collection and learning
 ```
@@ -57,7 +57,7 @@ gantry = AgentGantry()
 
 ## Context: Current Routing Behavior
 
-Agent-Gantry currently uses:
+dotfetch currently uses:
 - ✅ Semantic similarity (vector search)
 - ✅ Intent classification
 - ✅ MMR diversity
@@ -75,7 +75,7 @@ This feature request aims to add **adaptive learning** capabilities that improve
 - **Example**:
   ```python
   # User corrects tool selection
-  await gantry.record_feedback(
+  await fetcher.record_feedback(
       query="cancel my subscription",
       selected_tool="pause_subscription",  # Wrong
       correct_tool="cancel_subscription",  # Correct
@@ -83,7 +83,7 @@ This feature request aims to add **adaptive learning** capabilities that improve
   )
   
   # Future queries automatically improve
-  tools = await gantry.retrieve_tools("cancel my subscription")
+  tools = await fetcher.retrieve_tools("cancel my subscription")
   # Now correctly ranks cancel_subscription higher
   ```
 

@@ -9,18 +9,18 @@ stringifier — except every piece of that glue now ships in the library:
   middleware **and** a console trace that prints, for every tool the model
   calls, the round number, the call, the set the router surfaced, and a short
   preview of the result. No bespoke ``@function_middleware`` needed.
-* ``gantry.on_tool_call(cb)`` is a framework-agnostic event hook fired at
-  ``gantry.execute`` — the single choke point every tool call flows through —
+* ``fetcher.on_tool_call(cb)`` is a framework-agnostic event hook fired at
+  ``fetcher.execute`` — the single choke point every tool call flows through —
   so logging/metrics work the same whether the call came from Agent Framework,
-  another framework, or a direct ``gantry.execute``.
+  another framework, or a direct ``fetcher.execute``.
 * ``provider.selections`` keeps the per-round retrieval history so you can see
   exactly which tools were offered at each step (not just the last one).
-* ``agent_gantry.render_result`` turns any tool result — including AF ``Content``
+* ``dotfetch.render_result`` turns any tool result — including AF ``Content``
   block lists — into readable text.
 
-Logging note: importing ``agent_gantry`` no longer attaches a handler or raises
-the log level, so there's nothing to silence. If you *want* Gantry's INFO lines
-on the console, opt in with ``agent_gantry.enable_console_logging()``.
+Logging note: importing ``dotfetch`` no longer attaches a handler or raises
+the log level, so there's nothing to silence. If you *want* dotfetch's INFO lines
+on the console, opt in with ``dotfetch.enable_console_logging()``.
 
 The task — "generate a password, then hash it" — is a genuine two-step where
 step 2 depends on step 1's output, which is exactly what ``per_turn`` retrieval
@@ -43,8 +43,8 @@ from typing import Annotated
 from agent_framework import Agent
 from dotenv import load_dotenv
 
-from agent_gantry import AgentGantry, ToolCallEvent, render_result
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+from dotfetch import DotFetch, ToolCallEvent, render_result
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
 
 try:
     from agent_framework.openai import OpenAIChatClient
@@ -89,10 +89,10 @@ def _safe_arith(expression: str) -> str:
 # A small, self-contained tool registry (stdlib only — no external API keys).
 # Tags + example queries sharpen the semantic router's recall.
 # ---------------------------------------------------------------------------
-def build_gantry() -> AgentGantry:
-    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
+def build_fetcher() -> DotFetch:
+    fetcher = DotFetch(embedder=SimpleEmbedder(dimension=256))
 
-    @gantry.register(
+    @fetcher.register(
         tags=["password", "security", "secret", "random"],
         examples=["generate a secure password", "create a strong random password"],
     )
@@ -104,7 +104,7 @@ def build_gantry() -> AgentGantry:
         alphabet = string.ascii_letters + string.digits + "!@#$%^&*()-_=+"
         return "".join(secrets.choice(alphabet) for _ in range(length))
 
-    @gantry.register(
+    @fetcher.register(
         tags=["hashing", "crypto", "checksum", "sha256"],
         examples=["hash this string with SHA-256", "compute the SHA-256 of this text"],
     )
@@ -118,7 +118,7 @@ def build_gantry() -> AgentGantry:
             return "ERROR: algorithm must be one of md5, sha1, sha256"
         return hashlib.new(algo, text.encode()).hexdigest()
 
-    @gantry.register(
+    @fetcher.register(
         tags=["math", "arithmetic", "calculator"],
         examples=["what is 12 * (4 + 3)?", "compute 2 to the power of 10"],
     )
@@ -126,7 +126,7 @@ def build_gantry() -> AgentGantry:
         """Evaluate a simple arithmetic expression (safe AST walk, no eval())."""
         return _safe_arith(expression)
 
-    @gantry.register(
+    @fetcher.register(
         tags=["time", "date", "clock", "calendar"],
         examples=["what time is it now?", "what is today's date?"],
     )
@@ -134,7 +134,7 @@ def build_gantry() -> AgentGantry:
         """Get the current UTC date and time as an ISO-8601 timestamp."""
         return datetime.now(timezone.utc).isoformat()
 
-    @gantry.register(
+    @fetcher.register(
         tags=["uuid", "identifier", "random"],
         examples=["generate a unique id", "give me a random UUID"],
     )
@@ -142,7 +142,7 @@ def build_gantry() -> AgentGantry:
         """Generate a random UUID (version 4) identifier."""
         return str(uuid.uuid4())
 
-    @gantry.register(
+    @fetcher.register(
         tags=["text", "analysis", "word-count"],
         examples=["how many words are in this text?", "count the characters"],
     )
@@ -150,23 +150,23 @@ def build_gantry() -> AgentGantry:
         """Report word and character counts for a block of text."""
         return f"words={len(text.split())} characters={len(text)}"
 
-    return gantry
+    return fetcher
 
 
 async def main() -> None:
-    # Want to see Gantry's own INFO lines too? Uncomment:
-    # from agent_gantry import enable_console_logging
+    # Want to see dotfetch's own INFO lines too? Uncomment:
+    # from dotfetch import enable_console_logging
     # enable_console_logging()
 
-    gantry = build_gantry()
+    fetcher = build_fetcher()
     try:
-        await gantry.sync()
+        await fetcher.sync()
 
         # Per-turn routing: retrieval re-runs every chat round, so the tool surface
         # adapts as the agent reasons. The default per_turn query generator is driven
         # by the previous tool's result, which is what makes step 2 (hashing) find
         # the hash tool after step 1 (password generation) runs.
-        provider = gantry.framework("agent_framework").context_provider(
+        provider = fetcher.framework("agent_framework").context_provider(
             top_k=3,
             query_strategy="per_turn",
         )
@@ -198,7 +198,7 @@ async def main() -> None:
             print("agent itself. Everything above works without one.")
             return
 
-        # Framework-agnostic event hook: fires once per tool call at gantry.execute,
+        # Framework-agnostic event hook: fires once per tool call at fetcher.execute,
         # regardless of which framework drove it. Great for logging/metrics.
         def log_event(event: ToolCallEvent) -> None:
             status = "ok" if event.ok else f"FAILED ({event.result.error})"
@@ -207,7 +207,7 @@ async def main() -> None:
                 f"({event.latency_ms:.0f} ms)"
             )
 
-        gantry.on_tool_call(log_event)
+        fetcher.on_tool_call(log_event)
 
         agent = Agent(
             OpenAIChatClient(),
@@ -235,7 +235,7 @@ async def main() -> None:
         for i, decision in enumerate(provider.selections, start=1):
             print(f"  round {i}: {decision.summary()}")
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 if __name__ == "__main__":

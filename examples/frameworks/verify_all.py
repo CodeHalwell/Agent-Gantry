@@ -1,4 +1,4 @@
-"""End-to-end verification harness for Agent-Gantry's framework integrations.
+"""End-to-end verification harness for dotfetch's framework integrations.
 
 Run this to confirm — offline, with no LLM and no third-party agent framework
 required — that every piece added in the framework-integration work actually
@@ -6,10 +6,10 @@ functions:
 
 1. **P0 fixes**: a ``**kwargs`` tool is executable; the convenience retrieval
    default surfaces tools instead of silently filtering them.
-2. **Universal core**: ``GantryToolset.select`` returns ranked ``ToolSpec``s and
+2. **Universal core**: ``DotFetchToolset.select`` returns ranked ``ToolSpec``s and
    both ``ainvoke`` (async) and ``invoke`` (sync, even inside a running loop)
-   route through ``gantry.execute``.
-3. **Native adapters**: each ``<Framework>Adapter(gantry).select(...)`` builds
+   route through ``fetcher.execute``.
+3. **Native adapters**: each ``<Framework>Adapter(fetcher).select(...)`` builds
    native tool objects when the framework is installed, or reports SKIP with a
    clean ``ImportError`` when it is not — proving the lazy-import contract.
 4. **Multi-turn**: ``ToolRefresher`` re-selects a *different* tool as the task
@@ -27,10 +27,10 @@ import asyncio
 import sys
 from typing import Any
 
-from agent_gantry import AgentGantry, supported_frameworks
-from agent_gantry.integrations import ToolRefresher
-from agent_gantry.integrations.frameworks import GantryToolset
-from agent_gantry.schema.execution import ExecutionStatus, ToolCall
+from dotfetch import DotFetch, supported_frameworks
+from dotfetch.integrations import ToolRefresher
+from dotfetch.integrations.frameworks import DotFetchToolset
+from dotfetch.schema.execution import ExecutionStatus, ToolCall
 
 # ---- registry ------------------------------------------------------------- #
 # Ten tools across distinct domains so even the hash-based SimpleEmbedder can
@@ -70,7 +70,7 @@ def _best_embedder() -> tuple[Any, str, bool]:
     try:
         import sentence_transformers  # noqa: F401  (validate the install actually imports)
 
-        from agent_gantry.adapters.embedders.sentence_transformers import (
+        from dotfetch.adapters.embedders.sentence_transformers import (
             SentenceTransformersEmbedder,
         )
 
@@ -80,7 +80,7 @@ def _best_embedder() -> tuple[Any, str, bool]:
             True,
         )
     except Exception:  # noqa: BLE001
-        from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+        from dotfetch.adapters.embedders.simple import SimpleEmbedder
 
         return SimpleEmbedder(dimension=256), "SimpleEmbedder(hash, offline)", False
 
@@ -94,45 +94,45 @@ def _make_tool(name: str, description: str):
     return fn
 
 
-async def _build_gantry() -> AgentGantry:
+async def _build_fetcher() -> DotFetch:
     embedder, label, _is_real = _best_embedder()
     print(f"Embedder: {label}\n")
-    gantry = AgentGantry(embedder=embedder)
+    fetcher = DotFetch(embedder=embedder)
     for name, desc, tags, examples in TOOLS:
-        gantry.register(_make_tool(name, desc), tags=tags, examples=examples)
+        fetcher.register(_make_tool(name, desc), tags=tags, examples=examples)
 
     # A deliberately **kwargs-only tool to exercise the schema fix.
     def echo_kwargs(**kwargs: Any) -> str:
         "Echo back any keyword arguments supplied to this tool."
         return f"echo:{sorted(kwargs)}"
 
-    gantry.register(
+    fetcher.register(
         echo_kwargs,
         tags=["debug"],
         examples=["echo these arguments back to me", "repeat whatever I pass in"],
     )
-    await gantry.sync()
-    return gantry
+    await fetcher.sync()
+    return fetcher
 
 
 # ---- individual checks ---------------------------------------------------- #
-async def check_p0_kwargs(gantry: AgentGantry) -> tuple[bool, str]:
+async def check_p0_kwargs(fetcher: DotFetch) -> tuple[bool, str]:
     """A bare ``**kwargs`` tool must be executable with an empty arg dict."""
-    result = await gantry.execute(ToolCall(tool_name="echo_kwargs", arguments={}))
+    result = await fetcher.execute(ToolCall(tool_name="echo_kwargs", arguments={}))
     ok = result.status == ExecutionStatus.SUCCESS
     return ok, f"status={getattr(result.status, 'value', result.status)} result={result.result!r}"
 
 
-async def check_default_threshold(gantry: AgentGantry) -> tuple[bool, str]:
+async def check_default_threshold(fetcher: DotFetch) -> tuple[bool, str]:
     """retrieve_tools default (0.0) must surface tools, not filter them away."""
-    tools = await gantry.retrieve_tools("send an email to my manager", limit=3)
+    tools = await fetcher.retrieve_tools("send an email to my manager", limit=3)
     names = [t["function"]["name"] for t in tools]
     return (len(tools) > 0 and "send_email" in names), f"top3={names}"
 
 
-async def check_toolset_invoke(gantry: AgentGantry) -> tuple[bool, str]:
-    """GantryToolset.select + ToolSpec.ainvoke/invoke route through execute."""
-    specs = await GantryToolset(gantry).select("convert 100 usd to eur", limit=3)
+async def check_toolset_invoke(fetcher: DotFetch) -> tuple[bool, str]:
+    """DotFetchToolset.select + ToolSpec.ainvoke/invoke route through execute."""
+    specs = await DotFetchToolset(fetcher).select("convert 100 usd to eur", limit=3)
     if not specs:
         return False, "no specs selected"
     target = next((s for s in specs if s.name == "convert_currency"), specs[0])
@@ -142,12 +142,12 @@ async def check_toolset_invoke(gantry: AgentGantry) -> tuple[bool, str]:
     return ok, f"async={async_result!r} sync={sync_result!r} (specs={[s.name for s in specs]})"
 
 
-async def check_adapters(gantry: AgentGantry) -> list[tuple[str, bool, str]]:
+async def check_adapters(fetcher: DotFetch) -> list[tuple[str, bool, str]]:
     """Build native tools per framework; SKIP cleanly when not installed."""
     rows: list[tuple[str, bool, str]] = []
     for name in supported_frameworks():
         try:
-            native = await gantry.framework(name).select("deploy the payments service", limit=2)
+            native = await fetcher.framework(name).select("deploy the payments service", limit=2)
             rows.append((name, True, f"built {len(native)} native tool(s)"))
         except ImportError as exc:
             # Not installed: the lazy-import contract held — this is a SKIP,
@@ -158,7 +158,7 @@ async def check_adapters(gantry: AgentGantry) -> list[tuple[str, bool, str]]:
     return rows
 
 
-async def check_multi_turn(gantry: AgentGantry) -> tuple[bool, str]:
+async def check_multi_turn(fetcher: DotFetch) -> tuple[bool, str]:
     """ToolRefresher must re-select a different tool as the task pivots.
 
     This is a *user-driven* pivot scenario (each turn the user asks for a new
@@ -167,7 +167,7 @@ async def check_multi_turn(gantry: AgentGantry) -> tuple[bool, str]:
     autonomous counterpart below shows the same default following tool results
     when no newer user message exists.
     """
-    refresher = ToolRefresher(gantry, limit=3)
+    refresher = ToolRefresher(fetcher, limit=3)
     turns = [
         ("what's the weather in Paris?", "get_current_weather"),
         ("now email the forecast to my team", "send_email"),
@@ -212,7 +212,7 @@ async def check_autonomous_pipeline() -> tuple[bool, str]:
     embedder, _label, is_real = _best_embedder()
     if not is_real:
         return None, "SKIP: needs a real embedder (SimpleEmbedder is a hash toy)"  # type: ignore[return-value]
-    g = AgentGantry(embedder=embedder)
+    g = DotFetch(embedder=embedder)
     try:
         pipeline = [
             ("fetch_raw_data", "Fetch raw unprocessed data from the source system.", ["data"],
@@ -282,13 +282,13 @@ async def check_autonomous_pipeline() -> tuple[bool, str]:
 
 
 async def run() -> dict[str, Any]:
-    gantry = await _build_gantry()
+    fetcher = await _build_fetcher()
     try:
         core_checks = [
-            ("P0: **kwargs tool executable", await check_p0_kwargs(gantry)),
-            ("P0: default threshold surfaces tools", await check_default_threshold(gantry)),
-            ("core: GantryToolset select + invoke", await check_toolset_invoke(gantry)),
-            ("multi-turn (conversational) pivots", await check_multi_turn(gantry)),
+            ("P0: **kwargs tool executable", await check_p0_kwargs(fetcher)),
+            ("P0: default threshold surfaces tools", await check_default_threshold(fetcher)),
+            ("core: DotFetchToolset select + invoke", await check_toolset_invoke(fetcher)),
+            ("multi-turn (conversational) pivots", await check_multi_turn(fetcher)),
             ("multi-turn (autonomous) pipeline chains", await check_autonomous_pipeline()),
         ]
 
@@ -302,7 +302,7 @@ async def run() -> dict[str, Any]:
             print(f"  [{tag}] {label:<42} {detail}")
 
         print("\n=== FRAMEWORK ADAPTERS ===")
-        adapter_rows = await check_adapters(gantry)
+        adapter_rows = await check_adapters(fetcher)
         adapter_failed = False
         for name, ok, detail in adapter_rows:
             tag = "OK  " if ok else ("SKIP" if ok is None else "FAIL")
@@ -326,7 +326,7 @@ async def run() -> dict[str, Any]:
             "adapters_failed": adapter_failed,
         }
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 def main() -> int:

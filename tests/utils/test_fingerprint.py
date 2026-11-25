@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
-from agent_gantry.schema.tool import ToolCapability, ToolDefinition
-from agent_gantry.utils.fingerprint import compute_tool_fingerprint
+from dotfetch.schema.tool import ToolCapability, ToolDefinition
+from dotfetch.utils.fingerprint import compute_tool_fingerprint
 
 
 def test_compute_tool_fingerprint_valid():

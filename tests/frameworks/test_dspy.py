@@ -17,9 +17,9 @@ import types
 
 import pytest
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-from agent_gantry.integrations.frameworks.base import ToolExecutionError
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
+from dotfetch.integrations.frameworks.base import ToolExecutionError
 
 
 class _FakeTool:
@@ -89,8 +89,8 @@ def fake_dspy(monkeypatch):
 
 
 @pytest.fixture
-async def gantry():
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+async def fetcher():
+    g = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
     @g.register(tags=["email"])
     def send_email(to: str, body: str = "") -> str:
@@ -106,17 +106,17 @@ async def gantry():
     return g
 
 
-async def test_spec_to_dspy_builds_native_tool(fake_dspy, gantry):
-    from agent_gantry.dspy import DSPyAdapter
-    from agent_gantry.integrations.frameworks.base import GantryToolset
+async def test_spec_to_dspy_builds_native_tool(fake_dspy, fetcher):
+    from dotfetch.dspy import DSPyAdapter
+    from dotfetch.integrations.frameworks.base import DotFetchToolset
 
-    specs = await GantryToolset(gantry).select("send an email", limit=1)
+    specs = await DotFetchToolset(fetcher).select("send an email", limit=1)
     spec = specs[0]
     tool = DSPyAdapter.convert(spec)
 
     assert tool.name == spec.name == "send_email"
     assert tool.desc == spec.description == "Send an email message to a recipient."
-    # Gantry's own JSON-Schema parameters are passed through DSPy's own
+    # dotfetch's own JSON-Schema parameters are passed through DSPy's own
     # convert_input_schema_to_tool_args() converter, not re-inferred.
     assert "to" in tool.args and "body" in tool.args
     assert tool.arg_desc["to"].endswith("(Required)")
@@ -136,7 +136,7 @@ async def test_spec_to_dspy_builds_native_tool(fake_dspy, gantry):
     assert result == "sent:boss@x.com"
 
 
-async def test_dspy_tool_executes_synchronously_inside_running_loop(fake_dspy, gantry):
+async def test_dspy_tool_executes_synchronously_inside_running_loop(fake_dspy, fetcher):
     """The wrapped function is sync-callable even from inside a running loop.
 
     This test function is itself async (pytest-asyncio runs it on a live event
@@ -145,22 +145,22 @@ async def test_dspy_tool_executes_synchronously_inside_running_loop(fake_dspy, g
     branch of ``ToolSpec.invoke``'s sync bridge (worker-thread offload) rather
     than the no-loop ``asyncio.run`` branch.
     """
-    from agent_gantry.dspy import DSPyAdapter
-    from agent_gantry.integrations.frameworks.base import GantryToolset
+    from dotfetch.dspy import DSPyAdapter
+    from dotfetch.integrations.frameworks.base import DotFetchToolset
 
-    specs = await GantryToolset(gantry).select("send an email", limit=1)
+    specs = await DotFetchToolset(fetcher).select("send an email", limit=1)
     tool = DSPyAdapter.convert(specs[0])
 
     result = tool(to="boss@x.com")
     assert result == "sent:boss@x.com"
 
 
-async def test_spec_to_dspy_drops_none_optional_args(fake_dspy, gantry):
+async def test_spec_to_dspy_drops_none_optional_args(fake_dspy, fetcher):
     """Optional params left at their None default are dropped so the tool's own default applies."""
-    from agent_gantry.dspy import DSPyAdapter
-    from agent_gantry.integrations.frameworks.base import GantryToolset
+    from dotfetch.dspy import DSPyAdapter
+    from dotfetch.integrations.frameworks.base import DotFetchToolset
 
-    specs = await GantryToolset(gantry).select("send an email", limit=1)
+    specs = await DotFetchToolset(fetcher).select("send an email", limit=1)
     tool = DSPyAdapter.convert(specs[0])
 
     # `body` defaults to None in the generated signature; omitting it should
@@ -169,10 +169,10 @@ async def test_spec_to_dspy_drops_none_optional_args(fake_dspy, gantry):
     assert result == "sent:boss@x.com"
 
 
-async def test_for_dspy_returns_tool_list(fake_dspy, gantry):
-    from agent_gantry.dspy import DSPyAdapter
+async def test_for_dspy_returns_tool_list(fake_dspy, fetcher):
+    from dotfetch.dspy import DSPyAdapter
 
-    tools = await DSPyAdapter(gantry).select("send an email", limit=2)
+    tools = await DSPyAdapter(fetcher).select("send an email", limit=2)
 
     assert isinstance(tools, list)
     assert len(tools) >= 1
@@ -180,26 +180,26 @@ async def test_for_dspy_returns_tool_list(fake_dspy, gantry):
     assert "send_email" in names
 
 
-async def test_select_routes_through_gantry_execute_and_raises_on_failure(fake_dspy, gantry):
-    """A tool call that fails Gantry execution surfaces as ToolExecutionError, not a silent result."""
-    from agent_gantry.dspy import DSPyAdapter
-    from agent_gantry.integrations.frameworks.base import GantryToolset
+async def test_select_routes_through_fetcher_execute_and_raises_on_failure(fake_dspy, fetcher):
+    """A tool call that fails dotfetch execution surfaces as ToolExecutionError, not a silent result."""
+    from dotfetch.dspy import DSPyAdapter
+    from dotfetch.integrations.frameworks.base import DotFetchToolset
 
-    @gantry.register(tags=["danger"])
+    @fetcher.register(tags=["danger"])
     def explode() -> str:
         "Always raises."
         raise RuntimeError("boom")
 
-    await gantry.sync()
+    await fetcher.sync()
 
-    specs = await GantryToolset(gantry).select("always raises", limit=1)
+    specs = await DotFetchToolset(fetcher).select("always raises", limit=1)
     tool = DSPyAdapter.convert(specs[0])
 
     with pytest.raises(ToolExecutionError):
         tool()
 
 
-async def test_missing_dspy_raises_helpful_error(monkeypatch, gantry):
+async def test_missing_dspy_raises_helpful_error(monkeypatch, fetcher):
     # Ensure the lazy import fails even if a real package is somehow present.
     # Mask every level the adapter imports from -- if only "dspy" were masked,
     # an already-cached real `dspy.adapters.types.tool` (e.g. imported by
@@ -209,22 +209,22 @@ async def test_missing_dspy_raises_helpful_error(monkeypatch, gantry):
     for mod in ("dspy", "dspy.adapters", "dspy.adapters.types", "dspy.adapters.types.tool"):
         monkeypatch.setitem(sys.modules, mod, None)
 
-    from agent_gantry.dspy import DSPyAdapter
-    from agent_gantry.integrations.frameworks.base import GantryToolset
+    from dotfetch.dspy import DSPyAdapter
+    from dotfetch.integrations.frameworks.base import DotFetchToolset
 
-    specs = await GantryToolset(gantry).select("send an email", limit=1)
-    with pytest.raises(ImportError, match=r"agent-gantry\[dspy\]"):
+    specs = await DotFetchToolset(fetcher).select("send an email", limit=1)
+    with pytest.raises(ImportError, match=r"dotfetch\[dspy\]"):
         DSPyAdapter.convert(specs[0])
 
 
 @pytest.mark.parametrize("types_", [["string", "null"], ["string", "integer", "null"]])
-async def test_type_lists_survive_dspy_schema_conversion(fake_dspy, gantry, monkeypatch, types_):
+async def test_type_lists_survive_dspy_schema_conversion(fake_dspy, fetcher, monkeypatch, types_):
     """Mirror DSPy's scalar-type lookup and keep its full validation schema."""
     from copy import deepcopy
 
-    from agent_gantry.dspy import DSPyAdapter
-    from agent_gantry.integrations.frameworks.base import spec_from_tool
-    from agent_gantry.schema.tool import ToolDefinition
+    from dotfetch.dspy import DSPyAdapter
+    from dotfetch.integrations.frameworks.base import spec_from_tool
+    from dotfetch.schema.tool import ToolDefinition
 
     def converter(schema):
         # DSPy 3.4.1 hashes the JSON type; a list here raises TypeError.
@@ -243,7 +243,7 @@ async def test_type_lists_survive_dspy_schema_conversion(fake_dspy, gantry, monk
     definition = ToolDefinition(
         name="echo_value", description="Return the supplied value.", parameters_schema=parameters
     )
-    spec = spec_from_tool(gantry, definition)
+    spec = spec_from_tool(fetcher, definition)
     tool = DSPyAdapter.convert(spec)
 
     assert tool.args["value"] == parameters["properties"]["value"]
@@ -251,16 +251,16 @@ async def test_type_lists_survive_dspy_schema_conversion(fake_dspy, gantry, monk
     assert spec.parameters == before
 
 
-async def test_real_dspy_validates_nullable_parameters(gantry):
+async def test_real_dspy_validates_nullable_parameters(fetcher):
     pytest.importorskip("dspy")
-    from agent_gantry.dspy import DSPyAdapter
+    from dotfetch.dspy import DSPyAdapter
 
-    @gantry.register(namespace="nullable")
+    @fetcher.register(namespace="nullable")
     def echo_value(value: str | None = "ready") -> str:
         """Return the supplied nullable value."""
         return repr(value)
 
-    tools = await DSPyAdapter(gantry).select("echo a value", namespaces=["nullable"], limit=1)
+    tools = await DSPyAdapter(fetcher).select("echo a value", namespaces=["nullable"], limit=1)
     tool = tools[0]
     assert tool(value=None) == "None"
     assert tool(value="hello") == "'hello'"
@@ -269,13 +269,13 @@ async def test_real_dspy_validates_nullable_parameters(gantry):
         tool(value=["wrong type"])
 
 
-async def test_agent_builder_rebuilds_dspy_react_with_reselected_tools(fake_dspy, gantry):
+async def test_agent_builder_rebuilds_dspy_react_with_reselected_tools(fake_dspy, fetcher):
     """``agent_builder(...)`` returns a per-run builder; ``.build(query)`` makes a fresh ReAct."""
-    from agent_gantry.dspy import DSPyAdapter
-    from agent_gantry.integrations.frameworks.dspy import GantryLiveDSPyReAct
+    from dotfetch.dspy import DSPyAdapter
+    from dotfetch.integrations.frameworks.dspy import DotFetchLiveDSPyReAct
 
-    builder = DSPyAdapter(gantry).agent_builder("question -> answer", max_iters=3, limit=1)
-    assert isinstance(builder, GantryLiveDSPyReAct)
+    builder = DSPyAdapter(fetcher).agent_builder("question -> answer", max_iters=3, limit=1)
+    assert isinstance(builder, DotFetchLiveDSPyReAct)
 
     react = await builder.build("send an email to a recipient")
     assert isinstance(react, _FakeReAct)
@@ -290,12 +290,12 @@ async def test_agent_builder_rebuilds_dspy_react_with_reselected_tools(fake_dspy
     assert "add" in names2
 
 
-async def test_agent_builder_build_requires_dspy(monkeypatch, gantry):
+async def test_agent_builder_build_requires_dspy(monkeypatch, fetcher):
     for mod in ("dspy", "dspy.adapters", "dspy.adapters.types", "dspy.adapters.types.tool"):
         monkeypatch.setitem(sys.modules, mod, None)
 
-    from agent_gantry.dspy import DSPyAdapter
+    from dotfetch.dspy import DSPyAdapter
 
-    builder = DSPyAdapter(gantry).agent_builder("question -> answer")
-    with pytest.raises(ImportError, match=r"agent-gantry\[dspy\]"):
+    builder = DSPyAdapter(fetcher).agent_builder("question -> answer")
+    with pytest.raises(ImportError, match=r"dotfetch\[dspy\]"):
         await builder.build("send an email")

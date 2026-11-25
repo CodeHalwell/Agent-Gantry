@@ -2,7 +2,7 @@
 A selector that cannot answer fails open to semantic routing -- but never silently.
 
 Failing open is the right default: an agent should not lose its tools because
-a decision endpoint is unreachable. The fallback used to stop at the gantry
+a decision endpoint is unreachable. The fallback used to stop at the fetcher
 boundary, though, so a caller could not tell a result the selector produced
 from one the semantic router produced in its place, and an eval that
 configured a selector could pass on a different backend without knowing.
@@ -18,14 +18,14 @@ from typing import Any
 
 import pytest
 
-from agent_gantry import AgentGantry, SelectorFallbackError
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-from agent_gantry.schema.config import AgentGantryConfig, SelectorConfig
-from agent_gantry.schema.query import ConversationContext, RetrievalResult, ToolQuery
-from agent_gantry.schema.selection import SelectionResult
-from agent_gantry.schema.skill import Skill
+from dotfetch import DotFetch, SelectorFallbackError
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
+from dotfetch.schema.config import DotFetchConfig, SelectorConfig
+from dotfetch.schema.query import ConversationContext, RetrievalResult, ToolQuery
+from dotfetch.schema.selection import SelectionResult
+from dotfetch.schema.skill import Skill
 
-GANTRY_LOG = "agent_gantry.core.gantry"
+DOTFETCH_LOG = "dotfetch.core.fetcher"
 
 
 class _Selector:
@@ -51,20 +51,20 @@ class _Selector:
         )
 
 
-def _gantry(selector: Any | None, **kwargs: Any) -> AgentGantry:
-    gantry = AgentGantry(embedder=SimpleEmbedder(), selector=selector, **kwargs)
+def _fetcher(selector: Any | None, **kwargs: Any) -> DotFetch:
+    fetcher = DotFetch(embedder=SimpleEmbedder(), selector=selector, **kwargs)
 
-    @gantry.register(tags=["math"])
+    @fetcher.register(tags=["math"])
     async def add_numbers(a: int, b: int) -> int:
         """Add two numbers together for the caller."""
         return a + b
 
-    @gantry.register(tags=["text"])
+    @fetcher.register(tags=["text"])
     async def shout(text: str) -> str:
         """Uppercase a string of text for the caller."""
         return text.upper()
 
-    return gantry
+    return fetcher
 
 
 def _query(text: str = "add two numbers") -> ToolQuery:
@@ -75,7 +75,7 @@ def _selector_logs(caplog: pytest.LogCaptureFixture) -> list[tuple[str, str]]:
     return [
         (record.levelname, record.getMessage())
         for record in caplog.records
-        if record.name == GANTRY_LOG and "elector" in record.getMessage()
+        if record.name == DOTFETCH_LOG and "elector" in record.getMessage()
     ]
 
 
@@ -85,67 +85,67 @@ def _selector_logs(caplog: pytest.LogCaptureFixture) -> list[tuple[str, str]]:
 
 
 async def test_a_selector_answer_is_marked_as_the_selectors() -> None:
-    gantry = _gantry(_Selector({"add_numbers": 0.9}))
+    fetcher = _fetcher(_Selector({"add_numbers": 0.9}))
     try:
-        result = await gantry.retrieve(_query())
+        result = await fetcher.retrieve(_query())
         assert [t.tool.name for t in result.tools] == ["add_numbers"]
         assert result.backend == "selector"
         assert result.selector_fallback is False
         assert result.selector_fallback_reason is None
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_a_fallback_is_marked_with_its_reason() -> None:
     """The case that produced a false pass: semantic tools, selector configured."""
-    gantry = _gantry(_Selector("ConnectError: endpoint unreachable"))
+    fetcher = _fetcher(_Selector("ConnectError: endpoint unreachable"))
     try:
-        result = await gantry.retrieve(_query())
+        result = await fetcher.retrieve(_query())
         assert result.tools, "failing open still returns the semantic router's tools"
         assert result.backend == "semantic"
         assert result.selector_fallback is True
         assert result.selector_fallback_reason == "ConnectError: endpoint unreachable"
         assert result.selection_time_ms is None
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_a_decline_is_a_selector_result_not_a_fallback() -> None:
     """Looking at the catalogue and choosing nothing is the selector answering."""
-    gantry = _gantry(_Selector({}))
+    fetcher = _fetcher(_Selector({}))
     try:
-        result = await gantry.retrieve(_query("what is the capital of France?"))
+        result = await fetcher.retrieve(_query("what is the capital of France?"))
         assert result.tools == []
         assert result.backend == "selector"
         assert result.selector_fallback is False
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_no_selector_is_semantic_without_a_fallback() -> None:
-    gantry = _gantry(None)
+    fetcher = _fetcher(None)
     try:
-        result = await gantry.retrieve(_query())
+        result = await fetcher.retrieve(_query())
         assert result.backend == "semantic"
         assert result.selector_fallback is False
         assert result.selector_fallback_reason is None
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_a_selector_that_was_never_consulted_is_still_reported() -> None:
     """An empty query never costs a selection request; the result says the
     router answered, so the provenance holds for every call."""
     selector = _Selector({"add_numbers": 0.9})
-    gantry = _gantry(selector)
+    fetcher = _fetcher(selector)
     try:
-        result = await gantry.retrieve(_query("   "))
+        result = await fetcher.retrieve(_query("   "))
         assert selector.calls == 0
         assert result.backend == "semantic"
         assert result.selector_fallback is True
         assert result.selector_fallback_reason == "the query is empty"
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 def test_the_new_fields_default_for_results_built_elsewhere() -> None:
@@ -175,67 +175,67 @@ async def test_a_fallback_warns_once_per_reason(caplog: pytest.LogCaptureFixture
     """A catalogue over the selector's ceiling falls back on every call, for
     good. One WARNING makes that visible; one per call would bury the log."""
     reason = "catalogue of 600 exceeds max_candidates=512"
-    gantry = _gantry(_Selector(reason))
+    fetcher = _fetcher(_Selector(reason))
     try:
-        with caplog.at_level(logging.DEBUG, logger=GANTRY_LOG):
+        with caplog.at_level(logging.DEBUG, logger=DOTFETCH_LOG):
             for _ in range(3):
-                await gantry.retrieve(_query())
+                await fetcher.retrieve(_query())
         logs = _selector_logs(caplog)
         assert [level for level, _ in logs] == ["WARNING", "DEBUG", "DEBUG"]
         assert all(reason in message for _, message in logs)
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_a_fallback_is_called_a_failure_not_a_decline(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    gantry = _gantry(_Selector("TimeoutError: no answer"))
+    fetcher = _fetcher(_Selector("TimeoutError: no answer"))
     try:
-        with caplog.at_level(logging.DEBUG, logger=GANTRY_LOG):
-            await gantry.retrieve(_query())
+        with caplog.at_level(logging.DEBUG, logger=DOTFETCH_LOG):
+            await fetcher.retrieve(_query())
         (level, message), = _selector_logs(caplog)
         assert level == "WARNING"
         assert message.startswith("Selector failed for tool selection (TimeoutError: no answer)")
         assert "declined" not in message
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_a_new_reason_and_a_recurrence_after_recovery_warn_again(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     selector = _Selector("first fault", "first fault", "second fault", {"add_numbers": 0.9}, "second fault")
-    gantry = _gantry(selector)
+    fetcher = _fetcher(selector)
     try:
-        with caplog.at_level(logging.DEBUG, logger=GANTRY_LOG):
+        with caplog.at_level(logging.DEBUG, logger=DOTFETCH_LOG):
             for _ in range(5):
-                await gantry.retrieve(_query())
+                await fetcher.retrieve(_query())
         levels = [level for level, _ in _selector_logs(caplog)]
         # first fault (new), first fault (repeat), second fault (new),
         # then an answer (nothing logged), then second fault again (news again).
         assert levels == ["WARNING", "DEBUG", "WARNING", "WARNING"]
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_nothing_to_select_on_is_not_a_warning(caplog: pytest.LogCaptureFixture) -> None:
-    gantry = _gantry(_Selector({"add_numbers": 0.9}))
+    fetcher = _fetcher(_Selector({"add_numbers": 0.9}))
     try:
-        with caplog.at_level(logging.DEBUG, logger=GANTRY_LOG):
-            await gantry.retrieve(_query(""))
+        with caplog.at_level(logging.DEBUG, logger=DOTFETCH_LOG):
+            await fetcher.retrieve(_query(""))
         (level, message), = _selector_logs(caplog)
         assert level == "DEBUG"
         assert message.startswith("Selector not consulted for tool selection")
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_the_selectors_own_ceiling_warning_is_once_per_size(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    from agent_gantry.adapters.selectors.system_one import SystemOneSelector
-    from agent_gantry.schema.selection import SelectionCandidate
+    from dotfetch.adapters.selectors.system_one import SystemOneSelector
+    from dotfetch.schema.selection import SelectionCandidate
 
     class NeverAsked:
         async def score(self, *args: Any, **kwargs: Any) -> Any:  # pragma: no cover
@@ -244,7 +244,7 @@ async def test_the_selectors_own_ceiling_warning_is_once_per_size(
     selector = SystemOneSelector(client=NeverAsked(), max_candidates=2)
     three = [SelectionCandidate(id=f"t{i}", name=f"t{i}") for i in range(3)]
     four = [*three, SelectionCandidate(id="t3", name="t3")]
-    log = "agent_gantry.adapters.selectors.system_one"
+    log = "dotfetch.adapters.selectors.system_one"
     with caplog.at_level(logging.DEBUG, logger=log):
         for candidates in (three, three, four):
             result = await selector.select("q", candidates, limit=2)
@@ -256,11 +256,11 @@ async def test_the_selectors_own_ceiling_warning_is_once_per_size(
 async def test_the_shipped_client_warns_once_per_outage_not_once_per_request(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """The gantry's once-per-reason line is no use if the client underneath it
+    """The fetcher's once-per-reason line is no use if the client underneath it
     warns on every request for as long as the provider stays down."""
     pytest.importorskip("typesafe_sdk")
-    from agent_gantry.adapters.selectors.system_one import SystemOneSelector
-    from agent_gantry.adapters.system_one_client import SystemOneClient
+    from dotfetch.adapters.selectors.system_one import SystemOneSelector
+    from dotfetch.adapters.system_one_client import SystemOneClient
 
     class Sdk:
         """A stand-in TypeSafe client that is down, then up, then down again."""
@@ -275,15 +275,15 @@ async def test_the_shipped_client_warns_once_per_outage_not_once_per_request(
             return type("Response", (), {"answers": answers, "usage": None})()
 
     sdk = Sdk()
-    gantry = _gantry(SystemOneSelector(client=SystemOneClient(client=sdk)))
+    fetcher = _fetcher(SystemOneSelector(client=SystemOneClient(client=sdk)))
     try:
-        with caplog.at_level(logging.DEBUG, logger="agent_gantry"):
+        with caplog.at_level(logging.DEBUG, logger="dotfetch"):
             for _ in range(3):
-                assert (await gantry.retrieve(_query())).selector_fallback is True
+                assert (await fetcher.retrieve(_query())).selector_fallback is True
             sdk.down = False
-            assert (await gantry.retrieve(_query())).backend == "selector"
+            assert (await fetcher.retrieve(_query())).backend == "selector"
             sdk.down = True
-            assert (await gantry.retrieve(_query())).selector_fallback is True
+            assert (await fetcher.retrieve(_query())).selector_fallback is True
 
         def warnings_from(logger_name: str, text: str) -> int:
             return sum(
@@ -294,10 +294,10 @@ async def test_the_shipped_client_warns_once_per_outage_not_once_per_request(
 
         # One when the outage starts and one when it recurs after an answer,
         # from each layer; five failed-or-not requests would have been four.
-        assert warnings_from("agent_gantry.adapters.system_one_client", "selection failed") == 2
-        assert warnings_from(GANTRY_LOG, "Selector failed") == 2
+        assert warnings_from("dotfetch.adapters.system_one_client", "selection failed") == 2
+        assert warnings_from(DOTFETCH_LOG, "Selector failed") == 2
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 # ---------------------------------------------------------------------------
@@ -306,61 +306,61 @@ async def test_the_shipped_client_warns_once_per_outage_not_once_per_request(
 
 
 async def test_strict_mode_raises_instead_of_falling_back() -> None:
-    gantry = _gantry(_Selector("ConnectError: unreachable"), on_selector_fallback="raise")
+    fetcher = _fetcher(_Selector("ConnectError: unreachable"), on_selector_fallback="raise")
     try:
         with pytest.raises(SelectorFallbackError, match="ConnectError: unreachable") as raised:
-            await gantry.retrieve(_query())
+            await fetcher.retrieve(_query())
         assert raised.value.kind == "tool"
         assert raised.value.reason == "ConnectError: unreachable"
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_strict_mode_can_be_set_in_config() -> None:
-    config = AgentGantryConfig(selector=SelectorConfig(on_fallback="raise"))
-    gantry = AgentGantry(
+    config = DotFetchConfig(selector=SelectorConfig(on_fallback="raise"))
+    fetcher = DotFetch(
         config=config, embedder=SimpleEmbedder(), selector=_Selector("boom")
     )
     try:
 
-        @gantry.register
+        @fetcher.register
         def ping() -> str:
             """Reply with pong."""
             return "pong"
 
         with pytest.raises(SelectorFallbackError):
-            await gantry.retrieve(_query("ping"))
+            await fetcher.retrieve(_query("ping"))
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_strict_mode_leaves_answers_and_declines_alone() -> None:
-    gantry = _gantry(_Selector({"add_numbers": 0.9}, {}), on_selector_fallback="raise")
+    fetcher = _fetcher(_Selector({"add_numbers": 0.9}, {}), on_selector_fallback="raise")
     try:
-        answered = await gantry.retrieve(_query())
-        declined = await gantry.retrieve(_query("what is the capital of France?"))
+        answered = await fetcher.retrieve(_query())
+        declined = await fetcher.retrieve(_query("what is the capital of France?"))
         assert answered.backend == declined.backend == "selector"
         assert declined.tools == []
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_strict_mode_does_not_raise_when_there_is_nothing_to_select_on() -> None:
     """An empty query is not a selector failure; it is reported, not raised."""
-    gantry = _gantry(_Selector({"add_numbers": 0.9}), on_selector_fallback="raise")
+    fetcher = _fetcher(_Selector({"add_numbers": 0.9}), on_selector_fallback="raise")
     try:
-        result = await gantry.retrieve(_query(""))
+        result = await fetcher.retrieve(_query(""))
         assert result.selector_fallback is True
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_strict_mode_covers_skills_and_mcp_servers() -> None:
-    gantry = AgentGantry(
+    fetcher = DotFetch(
         embedder=SimpleEmbedder(), selector=_Selector("boom"), on_selector_fallback="raise"
     )
     try:
-        await gantry.add_skill(
+        await fetcher.add_skill(
             Skill(
                 name="deploying",
                 description="How to deploy the service to production safely.",
@@ -368,43 +368,43 @@ async def test_strict_mode_covers_skills_and_mcp_servers() -> None:
             )
         )
         with pytest.raises(SelectorFallbackError) as raised:
-            await gantry.retrieve_skills("how do I ship this", limit=1)
+            await fetcher.retrieve_skills("how do I ship this", limit=1)
         assert raised.value.kind == "skill"
 
-        if gantry._mcp_registry is not None:
-            gantry.register_mcp_server(
+        if fetcher._mcp_registry is not None:
+            fetcher.register_mcp_server(
                 "files", ["echo", "files"], description="Reads and writes local files."
             )
             with pytest.raises(SelectorFallbackError) as raised:
-                await gantry.retrieve_mcp_servers("open a file", limit=1)
+                await fetcher.retrieve_mcp_servers("open a file", limit=1)
             assert raised.value.kind == "mcp_server"
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_skill_and_mcp_fallbacks_warn_too(caplog: pytest.LogCaptureFixture) -> None:
-    gantry = AgentGantry(embedder=SimpleEmbedder(), selector=_Selector("boom"))
+    fetcher = DotFetch(embedder=SimpleEmbedder(), selector=_Selector("boom"))
     try:
-        await gantry.add_skill(
+        await fetcher.add_skill(
             Skill(
                 name="deploying",
                 description="How to deploy the service to production safely.",
                 content="Run the deploy script.",
             )
         )
-        with caplog.at_level(logging.DEBUG, logger=GANTRY_LOG):
-            await gantry.retrieve_skills("how do I ship this", limit=1)
-            await gantry.retrieve_skills("how do I ship this", limit=1)
+        with caplog.at_level(logging.DEBUG, logger=DOTFETCH_LOG):
+            await fetcher.retrieve_skills("how do I ship this", limit=1)
+            await fetcher.retrieve_skills("how do I ship this", limit=1)
         logs = _selector_logs(caplog)
         assert [level for level, _ in logs] == ["WARNING", "DEBUG"]
         assert logs[0][1].startswith("Selector failed for skill selection (boom)")
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 def test_an_unknown_strict_mode_is_rejected() -> None:
     with pytest.raises(ValueError, match="'semantic' or 'raise'"):
-        AgentGantry(embedder=SimpleEmbedder(), on_selector_fallback="explode")  # type: ignore[arg-type]
+        DotFetch(embedder=SimpleEmbedder(), on_selector_fallback="explode")  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------
@@ -413,14 +413,14 @@ def test_an_unknown_strict_mode_is_rejected() -> None:
 
 
 def test_the_selector_surface_is_importable_from_the_package_root() -> None:
-    import agent_gantry
-    from agent_gantry.adapters import selectors
-    from agent_gantry.adapters.system_one_client import SystemOneClient
+    import dotfetch
+    from dotfetch.adapters import selectors
+    from dotfetch.adapters.system_one_client import SystemOneClient
 
-    assert agent_gantry.SystemOneClient is SystemOneClient
-    assert agent_gantry.SelectorFallbackError is selectors.SelectorFallbackError
+    assert dotfetch.SystemOneClient is SystemOneClient
+    assert dotfetch.SelectorFallbackError is selectors.SelectorFallbackError
     assert {"SystemOneClient", "SystemOneSelector", "SystemOneReranker", "SelectorFallbackError"} <= set(
-        agent_gantry.__all__
+        dotfetch.__all__
     )
 
 
@@ -433,14 +433,14 @@ async def test_the_retrieval_decision_carries_the_backend() -> None:
     """``provider.selections`` / ``last_selection`` / ``dry_run_retrieve`` all
     hand back a ``RetrievalDecision``; an eval reads the backend off that."""
     pytest.importorskip("agent_framework")
-    from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
+    from dotfetch.integrations.agent_framework_bridge import DotFetchToolBridge
 
     selector = _Selector(
         {"add_numbers": 0.9}, "ConnectError: unreachable", "ConnectError: unreachable"
     )
-    gantry = _gantry(selector)
+    fetcher = _fetcher(selector)
     try:
-        bridge = GantryToolBridge(gantry)
+        bridge = DotFetchToolBridge(fetcher)
         _, served = await bridge.get_tools_with_decision("add two numbers", limit=2)
         assert served.backend == "selector"
         assert served.selector_fallback is False
@@ -455,21 +455,21 @@ async def test_the_retrieval_decision_carries_the_backend() -> None:
         assert attributes["selector_fallback"] is True
         assert attributes["selector_fallback_reason"] == "ConnectError: unreachable"
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_a_provider_dry_run_reports_the_fallback() -> None:
     pytest.importorskip("agent_framework")
-    from agent_gantry import GantryContextProvider
+    from dotfetch import DotFetchContextProvider
 
-    gantry = _gantry(_Selector("catalogue of 600 exceeds max_candidates=512"))
+    fetcher = _fetcher(_Selector("catalogue of 600 exceeds max_candidates=512"))
     try:
-        provider = GantryContextProvider(gantry, top_k=2)
+        provider = DotFetchContextProvider(fetcher, top_k=2)
         decision = await provider.dry_run_retrieve("add two numbers")
         assert decision.selector_fallback is True
         assert decision.selector_fallback_reason == "catalogue of 600 exceeds max_candidates=512"
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 # ---------------------------------------------------------------------------
@@ -485,13 +485,13 @@ async def test_a_provider_dry_run_reports_the_fallback() -> None:
 
 
 async def test_strict_mode_reaches_the_caller_of_with_semantic_tools() -> None:
-    from agent_gantry import with_semantic_tools
+    from dotfetch import with_semantic_tools
 
-    gantry = _gantry(_Selector("ConnectError: unreachable"), on_selector_fallback="raise")
+    fetcher = _fetcher(_Selector("ConnectError: unreachable"), on_selector_fallback="raise")
     called: list[Any] = []
     try:
 
-        @with_semantic_tools(gantry, limit=2)
+        @with_semantic_tools(fetcher, limit=2)
         async def generate(prompt: str, *, tools: list[Any] | None = None) -> str:
             called.append(tools)
             return "ok"
@@ -500,16 +500,16 @@ async def test_strict_mode_reaches_the_caller_of_with_semantic_tools() -> None:
             await generate("add two numbers")
         assert called == []  # the model was never called without the selector
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 def test_strict_mode_reaches_the_caller_of_a_sync_with_semantic_tools() -> None:
-    from agent_gantry import with_semantic_tools
+    from dotfetch import with_semantic_tools
 
-    gantry = _gantry(_Selector("ConnectError: unreachable"), on_selector_fallback="raise")
+    fetcher = _fetcher(_Selector("ConnectError: unreachable"), on_selector_fallback="raise")
     called: list[Any] = []
 
-    @with_semantic_tools(gantry, limit=2)
+    @with_semantic_tools(fetcher, limit=2)
     def generate(prompt: str, *, tools: list[Any] | None = None) -> str:
         called.append(tools)
         return "ok"
@@ -519,15 +519,15 @@ def test_strict_mode_reaches_the_caller_of_a_sync_with_semantic_tools() -> None:
     assert called == []
 
 
-async def test_a_fail_open_gantry_still_survives_through_with_semantic_tools() -> None:
+async def test_a_fail_open_fetcher_still_survives_through_with_semantic_tools() -> None:
     """The default is untouched: the fallback serves the call, and says so."""
-    from agent_gantry import with_semantic_tools
+    from dotfetch import with_semantic_tools
 
-    gantry = _gantry(_Selector("ConnectError: unreachable"))
+    fetcher = _fetcher(_Selector("ConnectError: unreachable"))
     called: list[Any] = []
     try:
 
-        @with_semantic_tools(gantry, limit=2)
+        @with_semantic_tools(fetcher, limit=2)
         async def generate(prompt: str, *, tools: list[Any] | None = None) -> str:
             called.append(tools)
             return "ok"
@@ -535,16 +535,16 @@ async def test_a_fail_open_gantry_still_survives_through_with_semantic_tools() -
         assert await generate("add two numbers") == "ok"
         assert called and called[0]  # the semantic router's tools were injected
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_strict_mode_ends_a_context_provider_run() -> None:
     af = pytest.importorskip("agent_framework")
-    from agent_gantry import GantryContextProvider
+    from dotfetch import DotFetchContextProvider
 
-    gantry = _gantry(_Selector("ConnectError: unreachable"), on_selector_fallback="raise")
+    fetcher = _fetcher(_Selector("ConnectError: unreachable"), on_selector_fallback="raise")
     try:
-        provider = GantryContextProvider(gantry, top_k=2, score_threshold=0.0)
+        provider = DotFetchContextProvider(fetcher, top_k=2, score_threshold=0.0)
         context = af.SessionContext(
             input_messages=[af.Message(role="user", contents=["add two numbers"])]
         )
@@ -552,30 +552,30 @@ async def test_strict_mode_ends_a_context_provider_run() -> None:
             await provider.before_run(agent=None, session=None, context=context, state={})
         assert provider.last_selection is None
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_strict_mode_reaches_the_per_turn_hooks() -> None:
     """Two hooks that need no framework installed; the guard below covers the rest."""
     import types
 
-    from agent_gantry.integrations.frameworks.google_adk_live import _inject_selected_tools
-    from agent_gantry.integrations.frameworks.langgraph_live import _select_tools_for_state
+    from dotfetch.integrations.frameworks.google_adk_live import _inject_selected_tools
+    from dotfetch.integrations.frameworks.langgraph_live import _select_tools_for_state
 
-    gantry = _gantry(_Selector("ConnectError: unreachable"), on_selector_fallback="raise")
+    fetcher = _fetcher(_Selector("ConnectError: unreachable"), on_selector_fallback="raise")
     try:
         state = {"messages": [{"role": "user", "content": "add two numbers"}]}
         with pytest.raises(SelectorFallbackError):
-            await _select_tools_for_state(gantry, state, limit=2, score_threshold=0.0)
+            await _select_tools_for_state(fetcher, state, limit=2, score_threshold=0.0)
         with pytest.raises(SelectorFallbackError):
             await _inject_selected_tools(
-                gantry, "add two numbers", types.SimpleNamespace(), limit=2, score_threshold=0.0
+                fetcher, "add two numbers", types.SimpleNamespace(), limit=2, score_threshold=0.0
             )
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
-#: Calls that reach ``AgentGantry.retrieve`` (or its skill twin) from an
+#: Calls that reach ``DotFetch.retrieve`` (or its skill twin) from an
 #: integration. A ``try`` around one of these that also catches ``Exception``
 #: is a place where strict mode can be swallowed.
 _RETRIEVAL_CALLS = {
@@ -597,13 +597,13 @@ def _swallowing_handlers() -> list[str]:
     import ast
     from pathlib import Path
 
-    import agent_gantry
+    import dotfetch
 
     def names(node: ast.expr | None) -> set[str]:
         return {n.id for n in ast.walk(node) if isinstance(n, ast.Name)} if node else set()
 
     offenders: list[str] = []
-    root = Path(agent_gantry.__file__).parent / "integrations"
+    root = Path(dotfetch.__file__).parent / "integrations"
     for path in sorted(root.rglob("*.py")):
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             if not isinstance(node, ast.Try):

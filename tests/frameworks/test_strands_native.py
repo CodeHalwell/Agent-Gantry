@@ -16,11 +16,11 @@ pytest.importorskip("strands.interrupt")
 from strands import Agent  # noqa: E402
 from strands.models.model import Model  # noqa: E402
 
-from agent_gantry import AgentGantry, current_tool_invocation  # noqa: E402
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder  # noqa: E402
-from agent_gantry.core.security import SecurityPolicy  # noqa: E402
-from agent_gantry.integrations.frameworks.base import ToolExecutionError  # noqa: E402
-from agent_gantry.strands import (  # noqa: E402
+from dotfetch import DotFetch, current_tool_invocation  # noqa: E402
+from dotfetch.adapters.embedders.simple import SimpleEmbedder  # noqa: E402
+from dotfetch.core.security import SecurityPolicy  # noqa: E402
+from dotfetch.integrations.frameworks.base import ToolExecutionError  # noqa: E402
+from dotfetch.strands import (  # noqa: E402
     APPROVAL_INTERRUPT,
     StrandsAdapter,
     current_tool_context,
@@ -74,8 +74,8 @@ def _results(agent: Any) -> list[dict[str, Any]]:
     ]
 
 
-async def _build(**kwargs: Any) -> AgentGantry:
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=256), **kwargs)
+async def _build(**kwargs: Any) -> DotFetch:
+    g = DotFetch(embedder=SimpleEmbedder(dimension=256), **kwargs)
     g.sent = []  # type: ignore[attr-defined]
 
     @g.register(examples=["what's the weather in London", "weather forecast for Paris"])
@@ -115,7 +115,7 @@ async def _build(**kwargs: Any) -> AgentGantry:
 
 
 @pytest.fixture
-async def gantry():
+async def fetcher():
     g = await _build()
     try:
         yield g
@@ -123,14 +123,14 @@ async def gantry():
         await g.close()
 
 
-async def _agent(gantry, query, *steps, **adapter_kwargs):
-    tools = await StrandsAdapter(gantry, **adapter_kwargs).select(query, limit=6)
+async def _agent(fetcher, query, *steps, **adapter_kwargs):
+    tools = await StrandsAdapter(fetcher, **adapter_kwargs).select(query, limit=6)
     model = ScriptedModel(*steps)
     return Agent(name="clerk", model=model, tools=tools, callback_handler=None), model
 
 
-async def test_tool_failure_is_an_error_tool_result(gantry):
-    agent, model = await _agent(gantry, "divide", [("divide", {"a": 1, "b": 0})])
+async def test_tool_failure_is_an_error_tool_result(fetcher):
+    agent, model = await _agent(fetcher, "divide", [("divide", {"a": 1, "b": 0})])
     await agent.invoke_async("divide 1 by 0")
     [result] = _results(agent)
     assert result["status"] == "error"
@@ -138,9 +138,9 @@ async def test_tool_failure_is_an_error_tool_result(gantry):
     assert len(model.offered) == 2  # the model got another turn
 
 
-async def test_error_formatter_rewrites_the_text(gantry):
+async def test_error_formatter_rewrites_the_text(fetcher):
     agent, _ = await _agent(
-        gantry,
+        fetcher,
         "divide",
         [("divide", {"a": 1, "b": 0})],
         error_formatter=lambda exc: f"{exc.error_type}: [redacted]",
@@ -149,8 +149,8 @@ async def test_error_formatter_rewrites_the_text(gantry):
     assert _results(agent)[0]["content"][0]["text"] == "ZeroDivisionError: [redacted]"
 
 
-async def test_error_mode_raise_leaves_it_to_strands(gantry):
-    agent, _ = await _agent(gantry, "divide", [("divide", {"a": 1, "b": 0})], error_mode="raise")
+async def test_error_mode_raise_leaves_it_to_strands(fetcher):
+    agent, _ = await _agent(fetcher, "divide", [("divide", {"a": 1, "b": 0})], error_mode="raise")
     await agent.invoke_async("divide")
     [result] = _results(agent)
     assert result["status"] == "error"
@@ -158,21 +158,21 @@ async def test_error_mode_raise_leaves_it_to_strands(gantry):
 
 
 @pytest.mark.parametrize("response", ["yes", True, {"approved": True}, "no", False])
-async def test_gated_call_interrupts_and_resumes(gantry, response):
-    agent, _ = await _agent(gantry, "send an email message", [("send_email", {"to": "bob@x"})])
+async def test_gated_call_interrupts_and_resumes(fetcher, response):
+    agent, _ = await _agent(fetcher, "send an email message", [("send_email", {"to": "bob@x"})])
     first = await agent.invoke_async("email bob")
     assert first.stop_reason == "interrupt"
     [interrupt] = first.interrupts
     assert interrupt.name == APPROVAL_INTERRUPT
     assert interrupt.reason["tool"] == "send_email"
     assert interrupt.reason["arguments"] == {"to": "bob@x"}
-    assert gantry.sent == []
+    assert fetcher.sent == []
 
     await agent.invoke_async(
         [{"interruptResponse": {"interruptId": interrupt.id, "response": response}}]
     )
     approved = response in ("yes", True) or response == {"approved": True}
-    assert gantry.sent == (["bob@x"] if approved else [])  # exactly once when approved
+    assert fetcher.sent == (["bob@x"] if approved else [])  # exactly once when approved
     [result] = _results(agent)
     assert (result["status"] == "success") is approved
     if not approved:
@@ -195,46 +195,46 @@ async def test_security_policy_pattern_also_interrupts():
         await g.close()
 
 
-async def test_direct_call_of_a_gated_tool_is_reported_not_run(gantry):
-    [tool] = await StrandsAdapter(gantry).select("send an email message", limit=1)
+async def test_direct_call_of_a_gated_tool_is_reported_not_run(fetcher):
+    [tool] = await StrandsAdapter(fetcher).select("send an email message", limit=1)
     result = await tool(to="bob@x")
     assert result["status"] == "error" and "approval" in result["content"][0]["text"]
-    assert gantry.sent == []
-    [raising] = await StrandsAdapter(gantry, error_mode="raise").select("send an email", limit=1)
+    assert fetcher.sent == []
+    [raising] = await StrandsAdapter(fetcher, error_mode="raise").select("send an email", limit=1)
     with pytest.raises(ToolExecutionError):
         await raising(to="bob@x")
 
 
-async def test_tool_context_reaches_gantry_handlers(gantry):
-    agent, _ = await _agent(gantry, "who am I", [("whoami", {})])
+async def test_tool_context_reaches_fetcher_handlers(fetcher):
+    agent, _ = await _agent(fetcher, "who am I", [("whoami", {})])
     await agent.invoke_async("who am I", user="dan")
     assert _results(agent)[0]["content"][0]["text"] == (
         "user=dan;call=call_1_0;agent=clerk;fw=strands"
     )
 
 
-async def test_per_turn_hook_tools_use_the_adapter_settings(gantry):
-    adapter = StrandsAdapter(gantry, error_formatter=lambda exc: "[redacted]")
+async def test_per_turn_hook_tools_use_the_adapter_settings(fetcher):
+    adapter = StrandsAdapter(fetcher, error_formatter=lambda exc: "[redacted]")
     model = ScriptedModel([("divide", {"a": 1, "b": 0})])
     agent = adapter.agent(model=model, limit=1, callback_handler=None)
     await agent.invoke_async("divide 10 by 2")
     assert _results(agent)[0]["content"][0]["text"] == "[redacted]"
 
 
-async def test_per_turn_hook_tools_interrupt_for_approval(gantry):
+async def test_per_turn_hook_tools_interrupt_for_approval(fetcher):
     model = ScriptedModel([("send_email", {"to": "bob@x"})])
-    agent = StrandsAdapter(gantry).agent(model=model, limit=1, callback_handler=None)
+    agent = StrandsAdapter(fetcher).agent(model=model, limit=1, callback_handler=None)
     first = await agent.invoke_async("send an email message to bob")
     assert first.stop_reason == "interrupt"
     [interrupt] = first.interrupts
     await agent.invoke_async(
         [{"interruptResponse": {"interruptId": interrupt.id, "response": "yes"}}]
     )
-    assert gantry.sent == ["bob@x"]
+    assert fetcher.sent == ["bob@x"]
 
 
 async def test_a_tool_argument_named_tool_context_is_kept():
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=256))
+    g = DotFetch(embedder=SimpleEmbedder(dimension=256))
 
     @g.register
     def annotate(tool_context: str) -> str:

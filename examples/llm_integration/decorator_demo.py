@@ -9,7 +9,7 @@ This example demonstrates both the OLD and NEW patterns for using the decorator.
 
 import asyncio
 
-from agent_gantry import AgentGantry, set_default_gantry, with_semantic_tools
+from dotfetch import DotFetch, set_default_fetcher, with_semantic_tools
 
 
 # Mock LLM Client to simulate an API call
@@ -27,33 +27,33 @@ class MockLLMClient:
 
 
 async def main() -> None:
-    gantry = AgentGantry()
+    fetcher = DotFetch()
 
     try:
         # 1. Register some tools
-        @gantry.register(examples=["what is the weather in Tokyo", "is it raining in Leeds"])
+        @fetcher.register(examples=["what is the weather in Tokyo", "is it raining in Leeds"])
         def get_weather(city: str) -> str:
             """Get current weather for a city."""
             return f"Weather in {city}: Sunny"
 
-        @gantry.register(examples=["what is the price of AAPL", "how is Tesco stock doing"])
+        @fetcher.register(examples=["what is the price of AAPL", "how is Tesco stock doing"])
         def get_stock_price(symbol: str) -> str:
             """Get current stock price."""
             return f"{symbol}: $150.00"
 
-        @gantry.register(examples=["send an email to the team", "email Priya about the report"])
+        @fetcher.register(examples=["send an email to the team", "email Priya about the report"])
         def send_email(to: str, subject: str) -> str:
             """Send an email."""
             return "Email sent"
 
-        await gantry.sync()
+        await fetcher.sync()
 
         client = MockLLMClient()
 
-        print("=== Pattern 1: Using set_default_gantry() (RECOMMENDED) ===")
-        # Set the default gantry instance for the current context
-        # This allows using @with_semantic_tools without passing gantry explicitly
-        set_default_gantry(gantry)
+        print("=== Pattern 1: Using set_default_fetcher() (RECOMMENDED) ===")
+        # Set the default fetcher instance for the current context
+        # This allows using @with_semantic_tools without passing fetcher explicitly
+        set_default_fetcher(fetcher)
 
         # 2. Decorate a function with @with_semantic_tools
         # The decorator will:
@@ -71,17 +71,17 @@ async def main() -> None:
         print("\n--- Query 2: Stocks ---")
         await generate_response("What is the price of AAPL?")
 
-        print("\n=== Pattern 2: Explicit Gantry (BACKWARDS COMPATIBLE) ===")
+        print("\n=== Pattern 2: Explicit dotfetch (BACKWARDS COMPATIBLE) ===")
 
-        # You can still pass gantry explicitly if you prefer
-        @with_semantic_tools(gantry, limit=1)
+        # You can still pass fetcher explicitly if you prefer
+        @with_semantic_tools(fetcher, limit=1)
         async def generate_response_explicit(prompt: str, tools: list | None = None) -> str:
             return await client.create(prompt, tools=tools)
 
         print("\n--- Query 3: Email ---")
         await generate_response_explicit("Send an email to the team")
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 if __name__ == "__main__":

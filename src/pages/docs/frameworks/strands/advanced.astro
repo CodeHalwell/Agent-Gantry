@@ -2,14 +2,14 @@
 import DocsLayout from '../../../../layouts/DocsLayout.astro';
 import CodeBlock from '../../../../components/CodeBlock.astro';
 ---
-<DocsLayout title="Advanced Strands Agents guide | Agent-Gantry" description="Approval through Strands interrupts, per-turn selection, run context and error modes for the Agent-Gantry Strands Agents integration.">
+<DocsLayout title="Advanced Strands Agents guide | dotfetch" description="Approval through Strands interrupts, per-turn selection, run context and error modes for the dotfetch Strands Agents integration.">
   <p class="eyebrow">Advanced framework guide</p>
   <h1>Advanced Strands Agents</h1>
   <p class="lead">Interrupt-based approval, how per-turn selection works, and run context.</p>
   <p><a class="pill" href="/Agent-Gantry/docs/frameworks/strands/">← Basic Strands usage</a></p>
 
   <h2>Approval through interrupts</h2>
-  <p>A confirmation-gated call (<code>requires_confirmation=True</code> or a <code>SecurityPolicy(require_confirmation=[...])</code> pattern) raises a Strands interrupt from inside the tool, named <code>"gantry-approval"</code> with a reason holding the tool, its arguments and description. The run stops with <code>stop_reason == "interrupt"</code>.</p>
+  <p>A confirmation-gated call (<code>requires_confirmation=True</code> or a <code>SecurityPolicy(require_confirmation=[...])</code> pattern) raises a Strands interrupt from inside the tool, named <code>"fetcher-approval"</code> with a reason holding the tool, its arguments and description. The run stops with <code>stop_reason == "interrupt"</code>.</p>
   <CodeBlock lang="python" code={`result = await agent.invoke_async("Refund order 4471")
 if result.stop_reason == "interrupt":
     [interrupt] = result.interrupts
@@ -17,7 +17,7 @@ if result.stop_reason == "interrupt":
     result = await agent.invoke_async(
         [{"interruptResponse": {"interruptId": interrupt.id, "response": answer}}]
     )`} />
-  <p>The tool re-runs on resume and the interrupt returns the response: <code>"yes"</code>, <code>"y"</code>, <code>"approve"</code>, <code>"approved"</code>, <code>True</code> or <code>&#123;"approved": True&#125;</code> runs the call once through <code>gantry.execute</code> with only the confirmation gate cleared; anything else rejects it and the model is told. A tool called directly, outside an agent, reports that it needs approval.</p>
+  <p>The tool re-runs on resume and the interrupt returns the response: <code>"yes"</code>, <code>"y"</code>, <code>"approve"</code>, <code>"approved"</code>, <code>True</code> or <code>&#123;"approved": True&#125;</code> runs the call once through <code>fetcher.execute</code> with only the confirmation gate cleared; anything else rejects it and the model is told. A tool called directly, outside an agent, reports that it needs approval.</p>
 
   <h2>Per-turn selection</h2>
   <ul>
@@ -28,5 +28,5 @@ if result.stop_reason == "interrupt":
   </ul>
 
   <h2>Run context and tracing</h2>
-  <p><code>current_tool_context()</code> returns Strands' <code>ToolContext</code>: <code>.invocation_state</code> (the keyword arguments passed to <code>agent(...)</code>), <code>.agent</code> and <code>.tool_use</code>. <code>current_tool_invocation()</code> carries it too, with <code>deps</code> set to <code>invocation_state</code> and <code>tool_call_id</code> to the <code>toolUseId</code>. Strands traces with OpenTelemetry, so its span becomes the Gantry <code>ToolCall</code>'s trace.</p>
+  <p><code>current_tool_context()</code> returns Strands' <code>ToolContext</code>: <code>.invocation_state</code> (the keyword arguments passed to <code>agent(...)</code>), <code>.agent</code> and <code>.tool_use</code>. <code>current_tool_invocation()</code> carries it too, with <code>deps</code> set to <code>invocation_state</code> and <code>tool_call_id</code> to the <code>toolUseId</code>. Strands traces with OpenTelemetry, so its span becomes the dotfetch <code>ToolCall</code>'s trace.</p>
 </DocsLayout>

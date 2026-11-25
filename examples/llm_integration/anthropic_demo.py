@@ -1,7 +1,7 @@
 """
-Anthropic (Claude) + Agent-Gantry integration demo.
+Anthropic (Claude) + dotfetch integration demo.
 
-Demonstrates how to use Agent-Gantry with Anthropic's Claude API, including:
+Demonstrates how to use dotfetch with Anthropic's Claude API, including:
 - Dynamic tool retrieval with Anthropic schema conversion
 - Using the @with_semantic_tools decorator with dialect="anthropic"
 - The typed AnthropicAdapter convenience wrapper
@@ -14,16 +14,16 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from agent_gantry import AgentGantry, set_default_gantry, with_semantic_tools
-from agent_gantry.schema.execution import ToolCall
-from agent_gantry.schema.query import ConversationContext, ToolQuery
+from dotfetch import DotFetch, set_default_fetcher, with_semantic_tools
+from dotfetch.schema.execution import ToolCall
+from dotfetch.schema.query import ConversationContext, ToolQuery
 
 # Load environment variables
 load_dotenv()
 
 
 async def main() -> None:
-    print("=== Agent-Gantry + Anthropic (Claude) Integration Demo ===\n")
+    print("=== dotfetch + Anthropic (Claude) Integration Demo ===\n")
 
     # 1. Check for API Key
     api_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -32,19 +32,19 @@ async def main() -> None:
         print("   Please set it in your .env file.")
         return
 
-    # 2. Initialize Gantry
+    # 2. Initialize dotfetch
     try:
-        from agent_gantry.adapters.embedders.nomic import NomicEmbedder
+        from dotfetch.adapters.embedders.nomic import NomicEmbedder
 
-        gantry = AgentGantry(embedder=NomicEmbedder())
+        fetcher = DotFetch(embedder=NomicEmbedder())
         print("✅ Initialized with Nomic Embeddings")
     except ImportError:
-        gantry = AgentGantry()
-        print(f"⚠️  Initialized with the default embedder ({type(gantry.embedder).__name__})")
+        fetcher = DotFetch()
+        print(f"⚠️  Initialized with the default embedder ({type(fetcher.embedder).__name__})")
 
     try:
         # 3. Register Tools
-        @gantry.register(
+        @fetcher.register(
             tags=["system"],
             examples=["is production healthy right now", "check the staging server status"],
         )
@@ -52,8 +52,8 @@ async def main() -> None:
             """Check the status of a server environment (prod/staging)."""
             return f"Environment '{env}' is HEALTHY. CPU: 45%"
 
-        await gantry.sync()
-        print(f"✅ Registered {gantry.tool_count} tools\n")
+        await fetcher.sync()
+        print(f"✅ Registered {fetcher.tool_count} tools\n")
 
         # 4. Initialize Anthropic Client
         from anthropic import AsyncAnthropic
@@ -68,14 +68,14 @@ async def main() -> None:
         # A. Retrieve Tools (Returns RetrievalResult)
         # We use the lower-level `retrieve` method to get the internal ToolDefinition objects
         # so we can convert them to Anthropic's format.
-        retrieval_result = await gantry.retrieve(
+        retrieval_result = await fetcher.retrieve(
             ToolQuery(context=ConversationContext(query=query), limit=1, score_threshold=0.0)
         )
 
         # B. Convert to Anthropic Schema
         anthropic_tools = [t.tool.to_dialect("anthropic") for t in retrieval_result.tools]
 
-        print(f"Gantry retrieved {len(anthropic_tools)} tool(s)")
+        print(f"dotfetch retrieved {len(anthropic_tools)} tool(s)")
         # print(json.dumps(anthropic_tools, indent=2)) # Uncomment to see schema
 
         # C. Call Claude
@@ -92,8 +92,8 @@ async def main() -> None:
             if block.type == "tool_use":
                 print(f"Claude decided to call: {block.name}({block.input})")
 
-                # Execute securely via Gantry
-                result = await gantry.execute(
+                # Execute securely via dotfetch
+                result = await fetcher.execute(
                     ToolCall(tool_name=block.name, arguments=block.input)
                 )
                 print(f"Execution Result: {result.result}")
@@ -101,8 +101,8 @@ async def main() -> None:
         # --- Scenario B: Using the Decorator (RECOMMENDED) ---
         print("\n--- Scenario B: Using @with_semantic_tools Decorator (RECOMMENDED) ---")
 
-        # Set default gantry for decorator usage
-        set_default_gantry(gantry)
+        # Set default fetcher for decorator usage
+        set_default_fetcher(fetcher)
 
         # The decorator handles retrieval AND schema conversion (dialect="anthropic")
         @with_semantic_tools(limit=1, dialect="anthropic")
@@ -125,17 +125,17 @@ async def main() -> None:
                 print(f"Claude decided to call: {block.name}")
 
         # --- Scenario C: Typed AnthropicAdapter (provider-specific convenience) ---
-        # AnthropicAdapter(gantry).tools(query, limit=n) bakes in dialect="anthropic",
+        # AnthropicAdapter(fetcher).tools(query, limit=n) bakes in dialect="anthropic",
         # so it returns ready-to-send Claude tool schemas in one call — equivalent to
         # the retrieve + to_dialect("anthropic") dance shown in Scenario A.
         print("\n--- Scenario C: Typed AnthropicAdapter ---")
-        from agent_gantry.anthropic import AnthropicAdapter
+        from dotfetch.anthropic import AnthropicAdapter
 
         query_c = "Check the database server status"
         print(f"User Query: '{query_c}'")
 
-        anthropic_tools_c = await AnthropicAdapter(gantry).tools(query_c, limit=1)
-        print(f"Gantry retrieved {len(anthropic_tools_c)} tool(s): "
+        anthropic_tools_c = await AnthropicAdapter(fetcher).tools(query_c, limit=1)
+        print(f"dotfetch retrieved {len(anthropic_tools_c)} tool(s): "
               f"{[t['name'] for t in anthropic_tools_c]}")
 
         response_c = await client.messages.create(
@@ -147,12 +147,12 @@ async def main() -> None:
         for block in response_c.content:
             if block.type == "tool_use":
                 print(f"Claude decided to call: {block.name}({block.input})")
-                result = await gantry.execute(
+                result = await fetcher.execute(
                     ToolCall(tool_name=block.name, arguments=block.input)
                 )
                 print(f"Execution Result: {result.result}")
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 if __name__ == "__main__":

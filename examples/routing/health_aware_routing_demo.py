@@ -12,31 +12,31 @@ Run with::
 
 import asyncio
 
-from agent_gantry import AgentGantry
-from agent_gantry.schema.config import AgentGantryConfig, ExecutionConfig
-from agent_gantry.schema.execution import ToolCall
-from agent_gantry.schema.query import ConversationContext, ToolQuery
+from dotfetch import DotFetch
+from dotfetch.schema.config import DotFetchConfig, ExecutionConfig
+from dotfetch.schema.execution import ToolCall
+from dotfetch.schema.query import ConversationContext, ToolQuery
 
 
 async def main():
     # Configure low threshold for circuit breaker
-    config = AgentGantryConfig(
+    config = DotFetchConfig(
         execution=ExecutionConfig(circuit_breaker_threshold=2, circuit_breaker_timeout_s=60)
     )
-    gantry = AgentGantry(config=config)
+    fetcher = DotFetch(config=config)
     try:
 
-        @gantry.register(examples=["run the fragile tool", "try the tool that keeps breaking"])
+        @fetcher.register(examples=["run the fragile tool", "try the tool that keeps breaking"])
         def fragile_tool() -> str:
             """A tool that breaks easily."""
             raise Exception("Broken!")
 
-        @gantry.register(examples=["run the robust tool", "use the tool that always works"])
+        @fetcher.register(examples=["run the robust tool", "use the tool that always works"])
         def robust_tool() -> str:
             """A tool that works."""
             return "Works!"
 
-        await gantry.sync()
+        await fetcher.sync()
 
         print("--- Health-Aware Routing Demo ---")
 
@@ -47,7 +47,7 @@ async def main():
         print("Breaking 'fragile_tool'...")
         call = ToolCall(tool_name="fragile_tool", arguments={})
         for _ in range(3):
-            await gantry.execute(call)
+            await fetcher.execute(call)
 
         # 2. Query with exclude_unhealthy=False
         print("\n1. Query (exclude_unhealthy=False):")
@@ -55,26 +55,26 @@ async def main():
         ctx = ConversationContext(query="tool")
         query = ToolQuery(context=ctx, exclude_unhealthy=False, score_threshold=0.0)
 
-        result = await gantry.retrieve(query)
+        result = await fetcher.retrieve(query)
         names = [t.tool.name for t in result.tools]
         print(f"Found: {names}")
         # Should include fragile_tool
 
         # 3. Query with exclude_unhealthy=True (Default)
         print("\n2. Query (exclude_unhealthy=True):")
-        # Note: AgentGantry.retrieve defaults exclude_unhealthy to True in ToolQuery model
+        # Note: DotFetch.retrieve defaults exclude_unhealthy to True in ToolQuery model
         query = ToolQuery(context=ctx, exclude_unhealthy=True, score_threshold=0.0)
 
-        result = await gantry.retrieve(query)
+        result = await fetcher.retrieve(query)
         names = [t.tool.name for t in result.tools]
         print(f"Found: {names}")
 
-        tool_def = await gantry.get_tool("fragile_tool")
+        tool_def = await fetcher.get_tool("fragile_tool")
         print("\nTool Health Status:")
         print(f" - Failures: {tool_def.health.consecutive_failures}")
         print(f" - Circuit Open: {tool_def.health.circuit_breaker_open}")
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 if __name__ == "__main__":

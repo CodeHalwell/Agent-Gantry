@@ -14,9 +14,9 @@ from typing import Any
 
 import pytest
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-from agent_gantry.core.chunks import (
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
+from dotfetch.core.chunks import (
     CHUNK_AFTER,
     CHUNK_CHARS,
     CHUNK_SCORE_WEIGHT,
@@ -26,9 +26,9 @@ from agent_gantry.core.chunks import (
     split_text,
     tool_chunks,
 )
-from agent_gantry.schema.config import AgentGantryConfig, RoutingConfig
-from agent_gantry.schema.query import ConversationContext, ToolQuery
-from agent_gantry.schema.tool import (
+from dotfetch.schema.config import DotFetchConfig, RoutingConfig
+from dotfetch.schema.query import ConversationContext, ToolQuery
+from dotfetch.schema.tool import (
     ToolDefinition,
     chunk_namespace,
     is_reserved_namespace,
@@ -52,20 +52,20 @@ def _query(text: str, **fields: Any) -> ToolQuery:
     return ToolQuery(context=ConversationContext(query=text), score_threshold=0.0, **fields)
 
 
-async def _gantry(tools: list[ToolDefinition], **kwargs: Any) -> AgentGantry:
-    gantry = AgentGantry(embedder=SimpleEmbedder(), **kwargs)
+async def _fetcher(tools: list[ToolDefinition], **kwargs: Any) -> DotFetch:
+    fetcher = DotFetch(embedder=SimpleEmbedder(), **kwargs)
     for tool in tools:
-        await gantry.add_tool(tool)
-    await gantry.sync()
-    return gantry
+        await fetcher.add_tool(tool)
+    await fetcher.sync()
+    return fetcher
 
 
 def _distractors(count: int = 40) -> list[ToolDefinition]:
     return [_tool(f"read_report_{i}", f"Read report number {i} to the user.") for i in range(count)]
 
 
-async def _chunk_rows(gantry: AgentGantry, namespace: str = "default") -> list[ToolDefinition]:
-    return await gantry.list_tools(namespace=chunk_namespace(namespace))
+async def _chunk_rows(fetcher: DotFetch, namespace: str = "default") -> list[ToolDefinition]:
+    return await fetcher.list_tools(namespace=chunk_namespace(namespace))
 
 
 def _names(result: Any) -> list[str]:
@@ -179,25 +179,25 @@ def test_chunks_are_bounded_without_losing_the_end_of_the_text() -> None:
 
 
 async def test_a_tool_is_found_by_the_last_sentence_of_a_long_description() -> None:
-    gantry = await _gantry([_long_tool(), *_distractors()])
+    fetcher = await _fetcher([_long_tool(), *_distractors()])
     try:
-        result = await gantry.retrieve(_query("zebra quagga okapi striped ungulate", limit=3))
+        result = await fetcher.retrieve(_query("zebra quagga okapi striped ungulate", limit=3))
         assert _names(result)[0] == "search_archive"
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_without_chunks_that_sentence_is_out_of_reach() -> None:
     """The same registry with chunking off: what the change is responsible for."""
-    config = AgentGantryConfig(routing=RoutingConfig(chunk_long_text=False))
-    chunked = await _gantry([_long_tool(), *_distractors()])
-    plain = await _gantry([_long_tool(), *_distractors()], config=config)
+    config = DotFetchConfig(routing=RoutingConfig(chunk_long_text=False))
+    chunked = await _fetcher([_long_tool(), *_distractors()])
+    plain = await _fetcher([_long_tool(), *_distractors()], config=config)
     try:
         assert await _chunk_rows(plain) == []
         assert await _chunk_rows(chunked) != []
 
-        async def score(gantry: AgentGantry) -> float:
-            result = await gantry.retrieve(_query("zebra quagga okapi striped ungulate", limit=50))
+        async def score(fetcher: DotFetch) -> float:
+            result = await fetcher.retrieve(_query("zebra quagga okapi striped ungulate", limit=50))
             return next(t.semantic_score for t in result.tools if t.tool.name == "search_archive")
 
         assert await score(chunked) > await score(plain) + 0.05
@@ -207,22 +207,22 @@ async def test_without_chunks_that_sentence_is_out_of_reach() -> None:
 
 
 async def test_chunks_are_never_returned_listed_or_counted_as_tools() -> None:
-    gantry = await _gantry([_long_tool(), *_distractors(5)])
+    fetcher = await _fetcher([_long_tool(), *_distractors(5)])
     try:
-        result = await gantry.retrieve(_query("zebra quagga okapi striped ungulate", limit=50))
+        result = await fetcher.retrieve(_query("zebra quagga okapi striped ungulate", limit=50))
         assert not [t for t in result.tools if is_reserved_namespace(t.tool.namespace)]
         assert len(_names(result)) == len(set(_names(result))) == 6
 
-        listed = await gantry.list_tools()
+        listed = await fetcher.list_tools()
         assert sorted(t.name for t in listed) == sorted(
             ["search_archive", *(f"read_report_{i}" for i in range(5))]
         )
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_a_namespace_filter_still_reaches_the_chunks_of_that_namespace_only() -> None:
-    gantry = await _gantry(
+    fetcher = await _fetcher(
         [
             _long_tool("search_archive", namespace="ops"),
             _long_tool("search_vault", namespace="finance"),
@@ -230,12 +230,12 @@ async def test_a_namespace_filter_still_reaches_the_chunks_of_that_namespace_onl
         ]
     )
     try:
-        result = await gantry.retrieve(
+        result = await fetcher.retrieve(
             _query("zebra quagga okapi striped ungulate", limit=5, namespaces=["ops"])
         )
         assert _names(result) == ["search_archive"]
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_a_tool_found_only_through_a_chunk_joins_the_candidates() -> None:
@@ -244,24 +244,24 @@ async def test_a_tool_found_only_through_a_chunk_joins_the_candidates() -> None:
         _tool(f"zebra_fact_{i}", "Zebra. Zebra facts about a zebra and another zebra.")
         for i in range(60)
     ]
-    gantry = await _gantry([_long_tool(), *noise])
+    fetcher = await _fetcher([_long_tool(), *noise])
     try:
-        result = await gantry.retrieve(_query("zebra quagga okapi striped ungulate", limit=5))
+        result = await fetcher.retrieve(_query("zebra quagga okapi striped ungulate", limit=5))
         assert "search_archive" in _names(result)
         # ...and asking for diversity, which wants each candidate's embedding,
         # copes with one that arrived without it.
-        diverse = await gantry.retrieve(
+        diverse = await fetcher.retrieve(
             _query("zebra quagga okapi striped ungulate", limit=5, diversity_factor=0.5)
         )
         assert "search_archive" in _names(diverse)
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_a_search_scoped_to_one_mcp_server_finds_a_tool_by_its_chunks() -> None:
     pytest.importorskip("mcp")
-    from agent_gantry.adapters.executors.mcp_client import MCPClient
-    from agent_gantry.schema.config import MCPServerConfig
+    from dotfetch.adapters.executors.mcp_client import MCPClient
+    from dotfetch.schema.config import MCPServerConfig
 
     def discovered(server: str, name: str) -> ToolDefinition:
         client = MCPClient(MCPServerConfig(name=server, url=f"https://{server}.example/mcp"))
@@ -272,14 +272,14 @@ async def test_a_search_scoped_to_one_mcp_server_finds_a_tool_by_its_chunks() ->
 
     here, there = discovered("datadog", "search_archive"), discovered("azure", "search_vault")
     assert _TAIL not in here.description and _TAIL in (here.extended_description or "")
-    gantry = await _gantry([here, there, *_distractors()])
+    fetcher = await _fetcher([here, there, *_distractors()])
     try:
-        result = await gantry.retrieve(
+        result = await fetcher.retrieve(
             _query("zebra quagga okapi striped ungulate", limit=5, mcp_servers=["datadog"])
         )
         assert _names(result) == ["search_archive"]
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 # --------------------------------------------------------------------------- #
@@ -289,8 +289,8 @@ async def test_a_search_scoped_to_one_mcp_server_finds_a_tool_by_its_chunks() ->
 
 async def test_a_shorter_description_leaves_no_chunks_behind() -> None:
     """A tool re-synced with fewer chunks, or none, loses the ones it no longer has."""
-    from agent_gantry.adapters.vector_stores.memory import InMemoryVectorStore
-    from agent_gantry.core.chunks import sync_tool_chunks
+    from dotfetch.adapters.vector_stores.memory import InMemoryVectorStore
+    from dotfetch.core.chunks import sync_tool_chunks
 
     store, embedder = InMemoryVectorStore(), SimpleEmbedder()
     await store.initialize()
@@ -315,23 +315,23 @@ async def test_a_shorter_description_leaves_no_chunks_behind() -> None:
 
 
 async def test_deleting_a_tool_deletes_its_chunks() -> None:
-    gantry = await _gantry([_long_tool(), *_distractors(3)])
+    fetcher = await _fetcher([_long_tool(), *_distractors(3)])
     try:
-        assert await _chunk_rows(gantry) != []
-        assert await gantry.delete_tool("search_archive")
-        assert await _chunk_rows(gantry) == []
+        assert await _chunk_rows(fetcher) != []
+        assert await fetcher.delete_tool("search_archive")
+        assert await _chunk_rows(fetcher) == []
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_pruning_keeps_the_chunks_of_kept_tools_and_drops_the_rest() -> None:
-    first = await _gantry([_long_tool("search_archive"), _long_tool("search_vault")])
+    first = await _fetcher([_long_tool("search_archive"), _long_tool("search_vault")])
     try:
         before = len(await _chunk_rows(first))
         assert before >= 4
 
-        # A second gantry on the same store registers only one of the two.
-        second = AgentGantry(embedder=SimpleEmbedder(), vector_store=first._vector_store)
+        # A second fetcher on the same store registers only one of the two.
+        second = DotFetch(embedder=SimpleEmbedder(), vector_store=first._vector_store)
         await second.add_tool(_long_tool("search_archive"))
         await second.sync(prune=True)
 
@@ -347,8 +347,8 @@ async def test_pruning_keeps_the_chunks_of_kept_tools_and_drops_the_rest() -> No
 # Skills: the body is searchable
 # --------------------------------------------------------------------------- #
 
-from agent_gantry.core.chunks import skill_chunks  # noqa: E402
-from agent_gantry.schema.skill import Skill, SkillCategory  # noqa: E402
+from dotfetch.core.chunks import skill_chunks  # noqa: E402
+from dotfetch.schema.skill import Skill, SkillCategory  # noqa: E402
 
 
 def _skill(name: str, description: str, body: str, **fields: Any) -> Skill:
@@ -371,10 +371,10 @@ def _other_skills(count: int = 12) -> list[Skill]:
     ]
 
 
-async def _skills_gantry(skills: list[Skill], **kwargs: Any) -> AgentGantry:
-    gantry = AgentGantry(embedder=SimpleEmbedder(), **kwargs)
-    await gantry.add_skills(skills)
-    return gantry
+async def _skills_fetcher(skills: list[Skill], **kwargs: Any) -> DotFetch:
+    fetcher = DotFetch(embedder=SimpleEmbedder(), **kwargs)
+    await fetcher.add_skills(skills)
+    return fetcher
 
 
 def test_a_skills_content_is_chunked_whatever_its_length() -> None:
@@ -398,9 +398,9 @@ def test_a_chunk_keeps_the_filters_its_skill_is_found_by() -> None:
 
 
 async def test_a_skill_is_found_by_what_only_its_body_says() -> None:
-    gantry = await _skills_gantry([_log_skill(), *_other_skills()])
+    fetcher = await _skills_fetcher([_log_skill(), *_other_skills()])
     try:
-        results = await gantry.retrieve_skills("narrow by service:checkout and env:prod", limit=3)
+        results = await fetcher.retrieve_skills("narrow by service:checkout and env:prod", limit=3)
 
         assert results[0].skill.name == "log_search_syntax"
         assert not any(r.skill.is_chunk for r in results)
@@ -408,17 +408,17 @@ async def test_a_skill_is_found_by_what_only_its_body_says() -> None:
         # The whole skill comes back, not the piece that matched.
         assert results[0].skill.content.startswith("# Reference")
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_without_chunks_the_body_is_out_of_reach() -> None:
-    config = AgentGantryConfig(routing=RoutingConfig(chunk_long_text=False))
-    chunked = await _skills_gantry([_log_skill(), *_other_skills()])
-    plain = await _skills_gantry([_log_skill(), *_other_skills()], config=config)
+    config = DotFetchConfig(routing=RoutingConfig(chunk_long_text=False))
+    chunked = await _skills_fetcher([_log_skill(), *_other_skills()])
+    plain = await _skills_fetcher([_log_skill(), *_other_skills()], config=config)
     try:
 
-        async def score(gantry: AgentGantry) -> float:
-            results = await gantry.retrieve_skills("service:checkout env:prod", limit=20)
+        async def score(fetcher: DotFetch) -> float:
+            results = await fetcher.retrieve_skills("service:checkout env:prod", limit=20)
             return next(r.score for r in results if r.skill.name == "log_search_syntax")
 
         assert await score(chunked) > await score(plain) + 0.2
@@ -428,7 +428,7 @@ async def test_without_chunks_the_body_is_out_of_reach() -> None:
 
 
 async def test_skill_chunks_are_not_listed_counted_or_shown_to_a_selector() -> None:
-    from agent_gantry.schema.selection import SelectionResult
+    from dotfetch.schema.selection import SelectionResult
 
     seen: list[str] = []
 
@@ -438,25 +438,25 @@ async def test_skill_chunks_are_not_listed_counted_or_shown_to_a_selector() -> N
             return SelectionResult(selected=[c.id for c in candidates][:limit])
 
     skills = [_log_skill(), *_other_skills(4)]
-    gantry = await _skills_gantry(skills)
-    selecting = await _skills_gantry(skills, selector=_Selector())
+    fetcher = await _skills_fetcher(skills)
+    selecting = await _skills_fetcher(skills, selector=_Selector())
     try:
-        assert await gantry.count_skills() == 5
-        assert sorted(s.name for s in await gantry.list_skills()) == sorted(s.name for s in skills)
-        assert [s.name for s in await gantry.list_skills(limit=2, offset=1)] == [
-            s.name for s in (await gantry.list_skills())[1:3]
+        assert await fetcher.count_skills() == 5
+        assert sorted(s.name for s in await fetcher.list_skills()) == sorted(s.name for s in skills)
+        assert [s.name for s in await fetcher.list_skills(limit=2, offset=1)] == [
+            s.name for s in (await fetcher.list_skills())[1:3]
         ]
-        assert await gantry.count_skills(namespace=chunk_namespace("default")) >= 5
+        assert await fetcher.count_skills(namespace=chunk_namespace("default")) >= 5
 
         await selecting.retrieve_skills("anything at all", limit=3)
         assert sorted(seen) == sorted(f"default.{s.name}" for s in skills)
     finally:
-        await gantry.close()
+        await fetcher.close()
         await selecting.close()
 
 
 async def test_namespace_and_category_filters_reach_the_right_bodies() -> None:
-    gantry = await _skills_gantry(
+    fetcher = await _skills_fetcher(
         [
             _log_skill(namespace="ops"),
             _log_skill(namespace="finance", category=SkillCategory.GUIDELINE),
@@ -464,36 +464,36 @@ async def test_namespace_and_category_filters_reach_the_right_bodies() -> None:
         ]
     )
     try:
-        ops = await gantry.retrieve_skills("service:checkout env:prod", limit=3, namespace="ops")
+        ops = await fetcher.retrieve_skills("service:checkout env:prod", limit=3, namespace="ops")
         assert [(r.skill.namespace, r.skill.name) for r in ops][0] == ("ops", "log_search_syntax")
         assert all(r.skill.namespace == "ops" for r in ops)
 
-        guidelines = await gantry.retrieve_skills(
+        guidelines = await fetcher.retrieve_skills(
             "service:checkout env:prod", limit=3, category=SkillCategory.GUIDELINE.value
         )
         assert [(r.skill.namespace, r.skill.name) for r in guidelines] == [
             ("finance", "log_search_syntax")
         ]
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_a_shorter_body_and_a_deleted_skill_leave_no_chunks() -> None:
-    gantry = await _skills_gantry([_log_skill()])
+    fetcher = await _skills_fetcher([_log_skill()])
     try:
 
         async def chunk_count() -> int:
-            return await gantry.count_skills(namespace=chunk_namespace("default"))
+            return await fetcher.count_skills(namespace=chunk_namespace("default"))
 
         assert await chunk_count() >= 2
-        await gantry.add_skill(_skill("log_search_syntax", "Logwatch reference card.", "See the wiki."))
+        await fetcher.add_skill(_skill("log_search_syntax", "Logwatch reference card.", "See the wiki."))
         assert await chunk_count() == 1
 
-        assert await gantry.delete_skill("log_search_syntax")
+        assert await fetcher.delete_skill("log_search_syntax")
         assert await chunk_count() == 0
-        assert await gantry.count_skills() == 0
+        assert await fetcher.count_skills() == 0
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 # --------------------------------------------------------------------------- #
@@ -509,12 +509,12 @@ async def test_many_pieces_of_a_few_skills_do_not_leave_the_result_short() -> No
     body = "Zebra quagga okapi striped ungulate notes for the keeper on duty today. " * 690
     skills = [_skill(f"rota_{i}", "The keeper rota for the week.", body) for i in range(11)]
     assert all(len(skill_chunks(skill)) == MAX_SKILL_CHUNKS for skill in skills)
-    gantry = await _skills_gantry(skills)
+    fetcher = await _skills_fetcher(skills)
     try:
-        found = await gantry.retrieve_skills("zebra quagga okapi striped ungulate", limit=10)
+        found = await fetcher.retrieve_skills("zebra quagga okapi striped ungulate", limit=10)
         assert len(found) == 10
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_another_namespaces_chunks_cannot_crowd_a_scoped_search() -> None:
@@ -532,15 +532,15 @@ async def test_another_namespaces_chunks_cannot_crowd_a_scoped_search() -> None:
         for i in range(40)
     ]
     wanted = _tool("ask_keeper", "Ask the keeper about a striped ungulate.", namespace="ops")
-    gantry = await _gantry([*foreign, wanted])
+    fetcher = await _fetcher([*foreign, wanted])
     try:
-        assert len(await _chunk_rows(gantry, "zoo")) >= 80
-        result = await gantry.retrieve(
+        assert len(await _chunk_rows(fetcher, "zoo")) >= 80
+        result = await fetcher.retrieve(
             _query("zebra quagga okapi striped ungulate", limit=5, namespaces=["ops"])
         )
         assert _names(result) == ["ask_keeper"]
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_a_skill_search_scoped_to_a_namespace_is_not_crowded_either() -> None:
@@ -549,13 +549,13 @@ async def test_a_skill_search_scoped_to_a_namespace_is_not_crowded_either() -> N
         for i in range(60)
     ]
     here = _skill("keeper_rota", "The keeper rota for the week.", "Zebra duty is on Monday.", namespace="ops")
-    gantry = await _skills_gantry([*elsewhere, here])
+    fetcher = await _skills_fetcher([*elsewhere, here])
     try:
-        results = await gantry.retrieve_skills("zebra quagga okapi", limit=3, namespace="ops")
+        results = await fetcher.retrieve_skills("zebra quagga okapi", limit=3, namespace="ops")
         assert [r.skill.name for r in results] == ["keeper_rota"]
-        assert await gantry.count_skills() == 61
+        assert await fetcher.count_skills() == 61
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_a_tool_whose_chunks_failed_to_index_is_tried_again() -> None:
@@ -570,22 +570,22 @@ async def test_a_tool_whose_chunks_failed_to_index_is_tried_again() -> None:
             return await super().embed_batch(texts, batch_size)
 
     embedder = _Flaky()
-    gantry = AgentGantry(embedder=embedder, config=AgentGantryConfig(auto_sync=False))
+    fetcher = DotFetch(embedder=embedder, config=DotFetchConfig(auto_sync=False))
     try:
-        await gantry.add_tool(_long_tool())
+        await fetcher.add_tool(_long_tool())
         with pytest.raises(RuntimeError, match="embedding service is down"):
-            await gantry.sync()
-        # Straight from the store: listing through the gantry would sync again.
-        assert await gantry._vector_store.list_all(namespace=chunk_namespace("default")) == []
-        assert await gantry._vector_store.get_by_name("search_archive") is None
+            await fetcher.sync()
+        # Straight from the store: listing through the fetcher would sync again.
+        assert await fetcher._vector_store.list_all(namespace=chunk_namespace("default")) == []
+        assert await fetcher._vector_store.get_by_name("search_archive") is None
 
         embedder.fail = False
-        assert await gantry.sync() == 1  # not "already up to date"
-        assert len(await _chunk_rows(gantry)) >= 2
-        result = await gantry.retrieve(_query("zebra quagga okapi striped ungulate", limit=1))
+        assert await fetcher.sync() == 1  # not "already up to date"
+        assert len(await _chunk_rows(fetcher)) >= 2
+        result = await fetcher.retrieve(_query("zebra quagga okapi striped ungulate", limit=1))
         assert _names(result) == ["search_archive"]
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_many_pieces_of_a_few_tools_do_not_leave_the_result_short() -> None:
@@ -601,21 +601,21 @@ async def test_many_pieces_of_a_few_tools_do_not_leave_the_result_short() -> Non
         for i in range(15)
     ]
     assert all(len(tool_chunks(tool)) == MAX_CHUNKS for tool in tools)
-    gantry = await _gantry(tools)
+    fetcher = await _fetcher(tools)
     try:
-        result = await gantry.retrieve(_query("zebra quagga okapi striped ungulate", limit=10))
+        result = await fetcher.retrieve(_query("zebra quagga okapi striped ungulate", limit=10))
         assert len(result.tools) == 10
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_a_match_on_a_piece_counts_for_less_than_a_match_on_a_tool() -> None:
     """A long tool has many pieces, so many chances to match on incidental text."""
-    gantry = await _gantry([_long_tool(), _tool("ping_host", "Check whether a host answers.")])
+    fetcher = await _fetcher([_long_tool(), _tool("ping_host", "Check whether a host answers.")])
     try:
-        router = gantry._router
-        long_tool = await gantry.get_tool("search_archive")
-        short_tool = await gantry.get_tool("ping_host")
+        router = fetcher._router
+        long_tool = await fetcher.get_tool("search_archive")
+        short_tool = await fetcher.get_tool("ping_host")
         piece = tool_chunks(long_tool)[-1]
 
         # The same raw score from the store: the tool matched whole comes first.
@@ -631,7 +631,7 @@ async def test_a_match_on_a_piece_counts_for_less_than_a_match_on_a_tool() -> No
         folded = await router._fold_chunks([(long_tool, 0.5), (piece, 0.8)], _query("anything"))
         assert folded[0][1] == pytest.approx(0.8 * CHUNK_SCORE_WEIGHT)
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_a_store_failure_fetching_a_chunks_tool_is_reported(
@@ -641,28 +641,28 @@ async def test_a_store_failure_fetching_a_chunks_tool_is_reported(
         _tool(f"zebra_fact_{i}", "Zebra. Zebra facts about a zebra and another zebra.")
         for i in range(60)
     ]
-    gantry = await _gantry([_long_tool(), *noise])
+    fetcher = await _fetcher([_long_tool(), *noise])
     try:
 
         async def broken(name: str, namespace: str = "default") -> Any:
             raise ConnectionError("store unreachable")
 
-        gantry._vector_store.get_by_name = broken  # type: ignore[method-assign]
-        with caplog.at_level("WARNING", logger="agent_gantry.core.router"):
-            result = await gantry.retrieve(_query("zebra quagga okapi striped ungulate", limit=5))
+        fetcher._vector_store.get_by_name = broken  # type: ignore[method-assign]
+        with caplog.at_level("WARNING", logger="dotfetch.core.router"):
+            result = await fetcher.retrieve(_query("zebra quagga okapi striped ungulate", limit=5))
 
         assert "search_archive" not in _names(result)  # left out, and said so
         assert any("default.search_archive" in r.getMessage() for r in caplog.records)
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_a_store_without_fingerprints_still_loses_a_shortened_tools_chunks() -> None:
     """Such a store answers ``{}`` whatever it holds, which is not "nothing was stored"."""
-    from agent_gantry.adapters.vector_stores.base import VectorStoreAdapter
-    from agent_gantry.adapters.vector_stores.memory import InMemoryVectorStore
-    from agent_gantry.core.registry import ToolRegistry
-    from agent_gantry.core.sync_manager import SyncManager
+    from dotfetch.adapters.vector_stores.base import VectorStoreAdapter
+    from dotfetch.adapters.vector_stores.memory import InMemoryVectorStore
+    from dotfetch.core.registry import ToolRegistry
+    from dotfetch.core.sync_manager import SyncManager
 
     class _NoFingerprints(InMemoryVectorStore):
         # The protocol's own stub, as a store that never implemented it has.
@@ -680,13 +680,13 @@ async def test_a_store_without_fingerprints_still_loses_a_shortened_tools_chunks
 
 
 async def test_a_failure_to_delete_a_chunk_is_reported(caplog: pytest.LogCaptureFixture) -> None:
-    from agent_gantry.core.chunks import delete_tool_chunks
+    from dotfetch.core.chunks import delete_tool_chunks
 
     class _Store:
         async def delete(self, name: str, namespace: str) -> bool:
             raise ConnectionError("store unreachable")
 
-    with caplog.at_level("WARNING", logger="agent_gantry.core.chunks"):
+    with caplog.at_level("WARNING", logger="dotfetch.core.chunks"):
         assert await delete_tool_chunks(_Store(), "search_archive", "default") == 0  # type: ignore[arg-type]
     assert any("default.search_archive" in r.getMessage() for r in caplog.records)
 
@@ -697,10 +697,10 @@ async def test_turning_chunking_off_does_not_leave_old_pieces_matching() -> None
     Skipping the pieces altogether left the old ones in place, still matching
     a query for text the update had removed.
     """
-    off = AgentGantryConfig(routing=RoutingConfig(chunk_long_text=False))
-    first = await _gantry([_long_tool(), *_distractors()])
+    off = DotFetchConfig(routing=RoutingConfig(chunk_long_text=False))
+    first = await _fetcher([_long_tool(), *_distractors()])
     await first.add_skills([_log_skill()])
-    second = AgentGantry(embedder=SimpleEmbedder(), vector_store=first._vector_store, config=off)
+    second = DotFetch(embedder=SimpleEmbedder(), vector_store=first._vector_store, config=off)
     try:
         store = first._vector_store
         assert await store.list_all(namespace=chunk_namespace("default"))

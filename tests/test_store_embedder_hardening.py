@@ -18,9 +18,9 @@ from typing import Any
 
 import pytest
 
-from agent_gantry.adapters.embedders.cached import CachedEmbedder
-from agent_gantry.adapters.vector_stores.memory import InMemoryVectorStore
-from agent_gantry.schema.tool import ToolDefinition
+from dotfetch.adapters.embedders.cached import CachedEmbedder
+from dotfetch.adapters.vector_stores.memory import InMemoryVectorStore
+from dotfetch.schema.tool import ToolDefinition
 
 
 def _tool(name: str, namespace: str = "default", tags: list[str] | None = None) -> ToolDefinition:
@@ -44,7 +44,7 @@ class TestRemoteNamespaceFilters:
     every remote store raise — MCP server retrieval unconditionally."""
 
     def test_pgvector_binds_a_list_as_an_array(self) -> None:
-        from agent_gantry.adapters.vector_stores.remote import _pg_namespace_clause
+        from dotfetch.adapters.vector_stores.remote import _pg_namespace_clause
 
         clause, value = _pg_namespace_clause(["a", "b"], 3)
         # ``namespace = $3`` with a list bound to it raises asyncpg DataError
@@ -56,7 +56,7 @@ class TestRemoteNamespaceFilters:
         assert value == "a"
 
     def test_chroma_uses_in_for_a_list(self) -> None:
-        from agent_gantry.adapters.vector_stores.remote import ChromaVectorStore
+        from dotfetch.adapters.vector_stores.remote import ChromaVectorStore
 
         # ``{"namespace": ["a", "b"]}`` fails Chroma's own where-validation
         assert ChromaVectorStore._build_namespace_where(["a", "b"]) == {
@@ -69,7 +69,7 @@ class TestRemoteNamespaceFilters:
         ``list_all`` and ``count`` used ``if namespace:``, which cannot tell
         ``None`` -- no filter -- from ``[]`` -- a filter matching nothing -- so
         they returned the whole collection instead."""
-        from agent_gantry.adapters.vector_stores.remote import _selects_nothing
+        from dotfetch.adapters.vector_stores.remote import _selects_nothing
 
         assert _selects_nothing([]) is True
         assert _selects_nothing(()) is True
@@ -83,7 +83,7 @@ class TestRemoteNamespaceFilters:
     async def test_empty_namespace_list_short_circuits_list_all_and_count(self) -> None:
         """Each adapter returns the empty answer without reaching its client,
         so the guard holds whether or not a backend is running."""
-        from agent_gantry.adapters.vector_stores.remote import (
+        from dotfetch.adapters.vector_stores.remote import (
             ChromaVectorStore,
             PGVectorStore,
             QdrantVectorStore,
@@ -103,7 +103,7 @@ class TestRemoteNamespaceFilters:
         pytest.importorskip("qdrant_client")
         from qdrant_client.models import MatchAny, MatchValue
 
-        from agent_gantry.adapters.vector_stores.remote import QdrantVectorStore
+        from dotfetch.adapters.vector_stores.remote import QdrantVectorStore
 
         # MatchValue(value=[...]) fails pydantic validation
         condition = QdrantVectorStore._build_namespace_filter(["a", "b"]).must[0]
@@ -140,7 +140,7 @@ async def test_memory_add_tools_rejects_a_length_mismatch_without_mutating() -> 
 def lancedb_store(tmp_path: Any) -> Any:
     pytest.importorskip("lancedb")
     pytest.importorskip("pyarrow")
-    from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
+    from dotfetch.adapters.vector_stores.lancedb import LanceDBVectorStore
 
     return LanceDBVectorStore(db_path=str(tmp_path / "db"), dimension=4)
 
@@ -180,7 +180,7 @@ async def test_lancedb_add_without_upsert_dedupes_within_one_batch(lancedb_store
 @pytest.mark.asyncio
 async def test_lancedb_delete_reports_a_miss(lancedb_store: Any) -> None:
     """``delete`` returned True for a name that was never there, so
-    ``AgentGantry.delete_tool`` reported success for an unknown tool."""
+    ``DotFetch.delete_tool`` reported success for an unknown tool."""
     await lancedb_store.initialize()
     await lancedb_store.add_tools([_tool("real_tool")], [[1.0, 0.0, 0.0, 0.0]])
     assert await lancedb_store.delete("missing_tool") is False
@@ -259,7 +259,7 @@ class TestSentenceTransformersEmbedder:
         """The sync manager reads the id *before* the first embed call and
         records it after, so an id of ``dimauto`` that became ``dim8`` forced a
         full re-embed on every process start against a persistent store."""
-        from agent_gantry.adapters.embedders.sentence_transformers import (
+        from dotfetch.adapters.embedders.sentence_transformers import (
             SentenceTransformersEmbedder,
         )
 
@@ -277,7 +277,7 @@ class TestSentenceTransformersEmbedder:
         ``1 - d/2`` cosine conversion is only exact for unit vectors."""
         import numpy as np
 
-        from agent_gantry.adapters.embedders.sentence_transformers import (
+        from dotfetch.adapters.embedders.sentence_transformers import (
             SentenceTransformersEmbedder,
         )
 
@@ -294,7 +294,7 @@ class TestSentenceTransformersEmbedder:
     def test_nomic_matryoshka_truncation_is_renormalised(self) -> None:
         import numpy as np
 
-        from agent_gantry.adapters.embedders.nomic import NomicEmbedder
+        from dotfetch.adapters.embedders.nomic import NomicEmbedder
 
         # 64 is one of Nomic's recommended Matryoshka dimensions
         embedder = NomicEmbedder(dimension=64)
@@ -309,7 +309,7 @@ class TestSentenceTransformersEmbedder:
         """Documents get the configured task prefix; queries always ``search_query``."""
         import numpy as np
 
-        from agent_gantry.adapters.embedders.nomic import NomicEmbedder
+        from dotfetch.adapters.embedders.nomic import NomicEmbedder
 
         class RecordingModel(_FakeModel):
             def __init__(self) -> None:
@@ -343,8 +343,8 @@ class TestOpenAIEmbedders:
         """The base class checked OPENAI_API_KEY first, so the documented
         AZURE_OPENAI_API_KEY alone raised the OpenAI error."""
         pytest.importorskip("openai")
-        from agent_gantry.adapters.embedders.openai import AzureOpenAIEmbedder
-        from agent_gantry.schema.config import EmbedderConfig
+        from dotfetch.adapters.embedders.openai import AzureOpenAIEmbedder
+        from dotfetch.schema.config import EmbedderConfig
 
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         monkeypatch.setenv("AZURE_OPENAI_API_KEY", "azure-test-key")
@@ -362,8 +362,8 @@ class TestOpenAIEmbedders:
 
     def test_openai_still_requires_its_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
         pytest.importorskip("openai")
-        from agent_gantry.adapters.embedders.openai import OpenAIEmbedder
-        from agent_gantry.schema.config import EmbedderConfig
+        from dotfetch.adapters.embedders.openai import OpenAIEmbedder
+        from dotfetch.schema.config import EmbedderConfig
 
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         with pytest.raises(ValueError, match="OPENAI_API_KEY"):
@@ -531,8 +531,8 @@ async def test_lancedb_schema_migration_keeps_rows(tmp_path: Any) -> None:
     """A pre-fingerprint table is migrated without losing its rows."""
     lancedb = pytest.importorskip("lancedb")
     pa = pytest.importorskip("pyarrow")
-    from agent_gantry.adapters.vector_stores.lancedb import LanceDBVectorStore
-    from agent_gantry.utils.fingerprint import compute_tool_fingerprint
+    from dotfetch.adapters.vector_stores.lancedb import LanceDBVectorStore
+    from dotfetch.utils.fingerprint import compute_tool_fingerprint
 
     tool = _tool("legacy_tool")
     legacy_schema = pa.schema(
@@ -578,7 +578,7 @@ async def test_lancedb_schema_migration_keeps_rows(tmp_path: Any) -> None:
 
 @pytest.mark.asyncio
 async def test_search_with_tags_widens_until_enough_match() -> None:
-    from agent_gantry.adapters.vector_stores.remote import _required_tags, _search_with_tags
+    from dotfetch.adapters.vector_stores.remote import _required_tags, _search_with_tags
 
     rows: list[Any] = [(_tool(f"plain_{i}"), 1.0 - i / 100) for i in range(10)]
     rows.append((_tool("tagged", tags=["special"]), 0.5))
@@ -637,7 +637,7 @@ async def _ready() -> None:
 
 
 def _chroma_store() -> Any:
-    from agent_gantry.adapters.vector_stores.remote import ChromaVectorStore
+    from dotfetch.adapters.vector_stores.remote import ChromaVectorStore
 
     store = ChromaVectorStore.__new__(ChromaVectorStore)
     store._collection = _FakeChromaCollection()
@@ -686,7 +686,7 @@ class _FakeQdrantClient:
 
 @pytest.mark.asyncio
 async def test_qdrant_search_honours_the_tag_filter_and_close_releases_the_client() -> None:
-    from agent_gantry.adapters.vector_stores.remote import QdrantVectorStore
+    from dotfetch.adapters.vector_stores.remote import QdrantVectorStore
 
     def point(tool: ToolDefinition, score: float) -> Any:
         return types.SimpleNamespace(
@@ -740,7 +740,7 @@ class _FakePGConn:
 
 
 def _pg_store(conn: _FakePGConn) -> Any:
-    from agent_gantry.adapters.vector_stores.remote import PGVectorStore
+    from dotfetch.adapters.vector_stores.remote import PGVectorStore
 
     store = PGVectorStore.__new__(PGVectorStore)
     store._table_name = "tools"
@@ -779,7 +779,7 @@ async def test_pgvector_search_honours_the_tag_filter() -> None:
 
 class TestLazyModelMixin:
     def test_load_model_leaving_model_unset_is_an_error(self) -> None:
-        from agent_gantry.adapters.embedders.base import LazyModelMixin
+        from dotfetch.adapters.embedders.base import LazyModelMixin
 
         class Forgetful(LazyModelMixin):
             def __init__(self) -> None:
@@ -796,7 +796,7 @@ class TestLazyModelMixin:
     async def test_concurrent_first_use_loads_once(self) -> None:
         import time
 
-        from agent_gantry.adapters.embedders.base import LazyModelMixin
+        from dotfetch.adapters.embedders.base import LazyModelMixin
 
         class Slow(LazyModelMixin):
             loads = 0
@@ -818,7 +818,7 @@ class TestLazyModelMixin:
 class TestEmbedderHealthCheck:
     @pytest.mark.asyncio
     async def test_health_check_encodes_rather_than_only_loading(self) -> None:
-        from agent_gantry.adapters.embedders.sentence_transformers import (
+        from dotfetch.adapters.embedders.sentence_transformers import (
             SentenceTransformersEmbedder,
         )
 

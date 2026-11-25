@@ -33,7 +33,7 @@ async def test_agent_framework_example_runs_with_fakes(monkeypatch, request):
     af_mod.openai = af_openai_mod
 
     # The example now also imports middleware primitives from agent_framework
-    # at runtime (via GantryApprovalMiddleware/GantryObservabilityMiddleware).
+    # at runtime (via DotFetchApprovalMiddleware/DotFetchObservabilityMiddleware).
     # Provide minimal stubs so the example module is fully exercisable.
     class _StubMiddlewareTerminationError(Exception):
         pass
@@ -120,9 +120,9 @@ async def test_agent_framework_example_runs_with_fakes(monkeypatch, request):
     monkeypatch.setitem(sys.modules, "agent_framework.orchestrations", af_orchestrations_mod)
 
     # Rebuild the SDK-dependent middleware classes against the stubs, then
-    # discard them at teardown. Evicting Gantry modules from sys.modules leaves
+    # discard them at teardown. Evicting dotfetch modules from sys.modules leaves
     # stale class/module references behind and breaks tests in a different order.
-    from agent_gantry.integrations import agent_framework_middleware
+    from dotfetch.integrations import agent_framework_middleware
 
     agent_framework_middleware._build_middleware_classes.cache_clear()
     request.addfinalizer(agent_framework_middleware._build_middleware_classes.cache_clear)

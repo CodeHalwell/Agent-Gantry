@@ -1,0 +1,19 @@
+"""dotfetch × Agno.
+
+Clean per-framework import::
+
+    from dotfetch.agno import AgnoAdapter
+
+Importing this module never requires Agno to be installed; it is imported lazily
+when you call an adapter method.
+"""
+
+from __future__ import annotations
+
+from dotfetch.integrations.frameworks.agno import (
+    AgnoAdapter,
+    AgnoToolError,
+    current_run_context,
+)
+
+__all__ = ["AgnoAdapter", "AgnoToolError", "current_run_context"]

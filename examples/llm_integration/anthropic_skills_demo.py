@@ -1,14 +1,14 @@
 """
-Anthropic Skills Demo with Agent-Gantry.
+Anthropic Skills Demo with dotfetch.
 
-This example demonstrates how to use the Skills abstraction with Agent-Gantry
+This example demonstrates how to use the Skills abstraction with dotfetch
 to create reusable, composable skills that combine multiple tools.
 
 Skills inject instructions into the system prompt and provide associated
 tools to Claude, enabling coherent multi-tool workflows.
 
 Requirements:
-    pip install anthropic agent-gantry
+    pip install anthropic dotfetch
 
 Environment:
     Set ANTHROPIC_API_KEY in your environment
@@ -19,8 +19,8 @@ import os
 
 from dotenv import load_dotenv
 
-from agent_gantry import AgentGantry
-from agent_gantry.integrations.anthropic_skills import (
+from dotfetch import DotFetch
+from dotfetch.integrations.anthropic_skills import (
     create_skills_client,
 )
 
@@ -34,11 +34,11 @@ async def demo_basic_skills():
     print("=" * 80)
     print()
 
-    # Initialize Agent-Gantry with tools
-    gantry = AgentGantry()
+    # Initialize dotfetch with tools
+    fetcher = DotFetch()
 
     try:
-        @gantry.register(examples=["look up order #12345", "what's in my last order"])
+        @fetcher.register(examples=["look up order #12345", "what's in my last order"])
         def get_order(order_id: str) -> dict:
             """Get order details by ID."""
             # Mock order data
@@ -50,20 +50,20 @@ async def demo_basic_skills():
                 "status": "shipped",
             }
 
-        @gantry.register(examples=["I need a refund for order #12345", "give me my money back"])
+        @fetcher.register(examples=["I need a refund for order #12345", "give me my money back"])
         def process_refund(order_id: str, amount: float) -> str:
             """Process a refund for an order."""
             return f"Refund of ${amount} processed for order {order_id}"
 
-        @gantry.register(examples=["email the customer a confirmation", "send John a note"])
+        @fetcher.register(examples=["email the customer a confirmation", "send John a note"])
         def send_email(to: str, subject: str, body: str) -> str:
             """Send an email to a customer."""
             return f"Email sent to {to}: {subject}"
 
-        await gantry.sync()
+        await fetcher.sync()
 
         # Create Skills client
-        client = await create_skills_client(gantry=gantry)
+        client = await create_skills_client(fetcher=fetcher)
 
         # Register a customer support skill
         client.skills.register(
@@ -120,7 +120,7 @@ async def demo_basic_skills():
 
         print()
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def demo_multi_skill_workflow():
@@ -130,11 +130,11 @@ async def demo_multi_skill_workflow():
     print("=" * 80)
     print()
 
-    gantry = AgentGantry()
+    fetcher = DotFetch()
 
     try:
         # Register data analysis tools
-        @gantry.register(
+        @fetcher.register(
             examples=["what are our top performing products", "pull the sales numbers"]
         )
         def query_database(query: str) -> list[dict]:
@@ -146,7 +146,7 @@ async def demo_multi_skill_workflow():
                 {"name": "Product C", "sales": 800, "revenue": 24000},
             ]
 
-        @gantry.register(
+        @fetcher.register(
             examples=["what's the average revenue per product", "total up the sales"]
         )
         def calculate_metrics(data: list[dict], metric: str) -> float:
@@ -157,14 +157,14 @@ async def demo_multi_skill_workflow():
                 return sum(d["sales"] for d in data)
             return 0.0
 
-        @gantry.register(examples=["can you create a chart of this", "plot the revenue by product"])
+        @fetcher.register(examples=["can you create a chart of this", "plot the revenue by product"])
         def create_chart(data: list[dict], chart_type: str) -> str:
             """Create a visualization of the data."""
             return f"Created {chart_type} chart with {len(data)} data points"
 
-        await gantry.sync()
+        await fetcher.sync()
 
-        client = await create_skills_client(gantry=gantry)
+        client = await create_skills_client(fetcher=fetcher)
 
         # Register multiple skills
         client.skills.register(
@@ -209,33 +209,33 @@ async def demo_multi_skill_workflow():
 
         print()
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
-async def demo_skill_from_gantry_tools():
-    """Demonstrate creating skills directly from Agent-Gantry tools."""
+async def demo_skill_from_fetcher_tools():
+    """Demonstrate creating skills directly from dotfetch tools."""
     print("=" * 80)
-    print("Demo 3: Auto-Register Skills from Agent-Gantry")
+    print("Demo 3: Auto-Register Skills from dotfetch")
     print("=" * 80)
     print()
 
-    gantry = AgentGantry()
+    fetcher = DotFetch()
 
     try:
         # Register tools with semantic tags
-        @gantry.register(tags=["math", "calculation"], examples=["add 15 and 25", "what is 5 plus 3"])
+        @fetcher.register(tags=["math", "calculation"], examples=["add 15 and 25", "what is 5 plus 3"])
         def add(a: float, b: float) -> float:
             """Add two numbers."""
             return a + b
 
-        @gantry.register(
+        @fetcher.register(
             tags=["math", "calculation"], examples=["multiply 8 by 2", "what is 6 times 7"]
         )
         def multiply(a: float, b: float) -> float:
             """Multiply two numbers."""
             return a * b
 
-        @gantry.register(
+        @fetcher.register(
             tags=["math", "calculation"], examples=["divide 80 by 4", "what is 100 over 5"]
         )
         def divide(a: float, b: float) -> float:
@@ -244,12 +244,12 @@ async def demo_skill_from_gantry_tools():
                 raise ValueError("Cannot divide by zero")
             return a / b
 
-        await gantry.sync()
+        await fetcher.sync()
 
-        client = await create_skills_client(gantry=gantry)
+        client = await create_skills_client(fetcher=fetcher)
 
-        # Register skill using Agent-Gantry tool names
-        client.register_skill_from_gantry_tools(
+        # Register skill using dotfetch tool names
+        client.register_skill_from_fetcher_tools(
             skill_name="math_operations",
             description="Perform mathematical calculations",
             instructions="""
@@ -293,7 +293,7 @@ async def demo_skill_from_gantry_tools():
 
         print()
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def demo_skill_registry():
@@ -370,7 +370,7 @@ async def main():
     try:
         await demo_basic_skills()
         await demo_multi_skill_workflow()
-        await demo_skill_from_gantry_tools()
+        await demo_skill_from_fetcher_tools()
         await demo_skill_registry()
 
         print("=" * 80)
@@ -379,9 +379,9 @@ async def main():
         print()
         print("Key Takeaways:")
         print("  • Skills provide reusable, composable tool workflows")
-        print("  • Combine multiple Agent-Gantry tools into cohesive skills")
+        print("  • Combine multiple dotfetch tools into cohesive skills")
         print("  • Skills include instructions and examples for better results")
-        print("  • Easy integration with existing Agent-Gantry tools")
+        print("  • Easy integration with existing dotfetch tools")
         print("  • Full registry management for organizing skills")
         print()
 

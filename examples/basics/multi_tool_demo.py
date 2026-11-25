@@ -2,7 +2,7 @@
 Semantic routing across a ten-tool catalogue.
 
 Registers ten tools from unrelated domains, syncs, then shows which single
-tool Gantry picks for each of ten queries before executing one of them.
+tool dotfetch picks for each of ten queries before executing one of them.
 Runs offline with no API key.
 
 Run: python examples/basics/multi_tool_demo.py
@@ -10,18 +10,18 @@ Run: python examples/basics/multi_tool_demo.py
 
 import asyncio
 
-from agent_gantry import AgentGantry
-from agent_gantry.schema.execution import ToolCall
+from dotfetch import DotFetch
+from dotfetch.schema.execution import ToolCall
 
 
 async def main():
-    print("Initializing AgentGantry...")
-    gantry = AgentGantry()
+    print("Initializing DotFetch...")
+    fetcher = DotFetch()
 
     try:
         # --- Register 10 Different Tools ---
 
-        @gantry.register(
+        @fetcher.register(
             tags=["math", "calculation"],
             examples=["add 50 and 20", "what's 12 plus 7"],
         )
@@ -29,7 +29,7 @@ async def main():
             """Add two numbers together."""
             return a + b
 
-        @gantry.register(
+        @fetcher.register(
             tags=["string", "text"],
             examples=["join 'Hello' and 'World'", "stick these two words together"],
         )
@@ -37,7 +37,7 @@ async def main():
             """Concatenate two strings."""
             return s1 + s2
 
-        @gantry.register(
+        @fetcher.register(
             tags=["time", "date"],
             examples=["what time is it in Tokyo", "current time in New York"],
         )
@@ -45,7 +45,7 @@ async def main():
             """Get the current time in a specific timezone."""
             return f"The time in {timezone} is 12:00 PM"
 
-        @gantry.register(
+        @fetcher.register(
             tags=["weather", "forecast"],
             examples=["what's the weather like in London", "will it rain in Paris tomorrow"],
         )
@@ -53,7 +53,7 @@ async def main():
             """Get the weather forecast for a specific city."""
             return f"The weather in {city} is sunny."
 
-        @gantry.register(
+        @fetcher.register(
             tags=["communication", "email"],
             examples=["send an email to my boss", "email Sam the meeting notes"],
         )
@@ -61,7 +61,7 @@ async def main():
             """Send an email to a recipient."""
             return f"Email sent to {recipient} with subject '{subject}'"
 
-        @gantry.register(
+        @fetcher.register(
             tags=["data", "search"],
             examples=["search for customer data", "look up orders in the database"],
         )
@@ -69,7 +69,7 @@ async def main():
             """Search the internal database for a query string."""
             return [f"Result for {query}"]
 
-        @gantry.register(
+        @fetcher.register(
             tags=["file", "io"],
             examples=["create a file named notes.txt", "save this text to a new file"],
         )
@@ -77,7 +77,7 @@ async def main():
             """Create a new file with the specified content."""
             return f"File '{filename}' created."
 
-        @gantry.register(
+        @fetcher.register(
             tags=["finance", "money"],
             examples=["convert 100 USD to EUR", "how much is 50 pounds in dollars"],
         )
@@ -85,7 +85,7 @@ async def main():
             """Convert an amount from one currency to another."""
             return f"{amount} {from_curr} is equivalent to {amount * 1.2} {to_curr}"
 
-        @gantry.register(
+        @fetcher.register(
             tags=["translation", "language"],
             examples=["translate 'Hello' to Spanish", "say this in French"],
         )
@@ -93,7 +93,7 @@ async def main():
             """Translate text to a target language."""
             return f"Translated '{text}' to {target_language}"
 
-        @gantry.register(
+        @fetcher.register(
             tags=["productivity", "calendar"],
             examples=["schedule a meeting with Alice and Bob", "set up a call for 3pm"],
         )
@@ -103,8 +103,8 @@ async def main():
 
         # --- Sync Tools ---
         print("Syncing tools to vector store...")
-        await gantry.sync()
-        print(f"Registered {gantry.tool_count} tools.\n")
+        await fetcher.sync()
+        print(f"Registered {fetcher.tool_count} tools.\n")
 
         # --- Test Queries ---
         test_queries = [
@@ -121,16 +121,16 @@ async def main():
         ]
 
         print("--- Semantic Retrieval Demo ---")
-        # AgentGantry() picks its embedder from what is installed: the local
-        # sentence-transformers model when `agent-gantry[embeddings]` is present,
+        # DotFetch() picks its embedder from what is installed: the local
+        # sentence-transformers model when `dotfetch[embeddings]` is present,
         # otherwise the hash-based SimpleEmbedder, which needs nothing but has
         # poor semantic understanding. Neither needs an API key.
-        print(f"Embedder in use: {type(gantry.embedder).__name__}")
-        print("(SimpleEmbedder = hash-based fallback; install agent-gantry[embeddings] for real semantics)")
+        print(f"Embedder in use: {type(fetcher.embedder).__name__}")
+        print("(SimpleEmbedder = hash-based fallback; install dotfetch[embeddings] for real semantics)")
         print("-" * 40)
 
         for query in test_queries:
-            relevant_tools = await gantry.retrieve_tools(query, limit=1)
+            relevant_tools = await fetcher.retrieve_tools(query, limit=1)
 
             print(f"Query: '{query}'")
             if relevant_tools:
@@ -144,7 +144,7 @@ async def main():
         # --- Execution Demo ---
         print("\n--- Execution Demo ---")
         print("Executing 'convert_currency'...")
-        result = await gantry.execute(
+        result = await fetcher.execute(
             ToolCall(
                 tool_name="convert_currency",
                 arguments={"amount": 100, "from_curr": "USD", "to_curr": "EUR"},
@@ -152,7 +152,7 @@ async def main():
         )
         print(f"Result: {result.result}")
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 if __name__ == "__main__":

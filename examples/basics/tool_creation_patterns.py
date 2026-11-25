@@ -10,8 +10,8 @@ Run: python examples/basics/tool_creation_patterns.py
 
 import asyncio
 
-from agent_gantry import AgentGantry
-from agent_gantry.schema.execution import ToolCall
+from dotfetch import DotFetch
+from dotfetch.schema.execution import ToolCall
 
 
 class MathService:
@@ -26,28 +26,28 @@ class MathService:
 
 
 async def main():
-    print("=== Agent-Gantry Tool Creation Patterns ===\n")
+    print("=== dotfetch Tool Creation Patterns ===\n")
 
-    gantry = AgentGantry()
+    fetcher = DotFetch()
 
     try:
         # --- Pattern 1: The Standard Decorator ---
-        print("1. Registering via Decorator (@gantry.register)")
+        print("1. Registering via Decorator (@fetcher.register)")
 
-        @gantry.register(tags=["math", "basic"], examples=["add 5 and 3", "what's 12 plus 30"])
+        @fetcher.register(tags=["math", "basic"], examples=["add 5 and 3", "what's 12 plus 30"])
         def add(a: int, b: int) -> int:
             """Adds two integers together."""
             return a + b
 
         # --- Pattern 2: Direct Function Registration ---
-        print("2. Registering via Function Call (gantry.register(func))")
+        print("2. Registering via Function Call (fetcher.register(func))")
 
         def subtract(a: int, b: int) -> int:
             """Subtracts b from a."""
             return a - b
 
         # You can pass arguments just like the decorator
-        gantry.register(
+        fetcher.register(
             subtract,
             tags=["math", "basic"],
             examples=["take 4 away from 10", "what's 100 minus 37"],
@@ -56,7 +56,7 @@ async def main():
         # --- Pattern 3: Async Functions ---
         print("3. Registering Async Functions")
 
-        @gantry.register(
+        @fetcher.register(
             tags=["async", "io"],
             examples=["fetch the page at example.com", "download the contents of this URL"],
         )
@@ -72,7 +72,7 @@ async def main():
 
         # Register the bound method 'multiply' from the instance
         # Note: The 'self' parameter is handled automatically by the bound method
-        gantry.register(
+        fetcher.register(
             service.multiply,
             name="service_multiply",  # Good practice to give unique names to methods
             tags=["service", "math"],
@@ -90,7 +90,7 @@ async def main():
             return x * x
 
         # Expose it as 'square' to the LLM
-        gantry.register(
+        fetcher.register(
             complex_internal_function_name_v2,
             name="square",
             tags=["math"],
@@ -99,47 +99,47 @@ async def main():
 
         # --- Sync and Verify ---
         print("\nSyncing tools to registry...")
-        await gantry.sync()
-        print(f"Total tools registered: {gantry.tool_count}")
+        await fetcher.sync()
+        print(f"Total tools registered: {fetcher.tool_count}")
 
         # --- Test Execution ---
         print("\n--- Testing Executions ---")
 
         # Test Pattern 1
-        res1 = await gantry.execute(ToolCall(tool_name="add", arguments={"a": 5, "b": 3}))
+        res1 = await fetcher.execute(ToolCall(tool_name="add", arguments={"a": 5, "b": 3}))
         print(f"add(5, 3) = {res1.result}")
 
         # Test Pattern 2
-        res2 = await gantry.execute(ToolCall(tool_name="subtract", arguments={"a": 10, "b": 4}))
+        res2 = await fetcher.execute(ToolCall(tool_name="subtract", arguments={"a": 10, "b": 4}))
         print(f"subtract(10, 4) = {res2.result}")
 
         # Test Pattern 3
-        res3 = await gantry.execute(
+        res3 = await fetcher.execute(
             ToolCall(tool_name="fetch_data", arguments={"url": "example.com"})
         )
         print(f"fetch_data('example.com') = {res3.result}")
 
         # Test Pattern 4
-        res4 = await gantry.execute(
+        res4 = await fetcher.execute(
             ToolCall(tool_name="service_multiply", arguments={"value": 5.0})
         )
         print(f"service_multiply(5.0) [multiplier=10] = {res4.result}")
 
         # Test Pattern 5
-        res5 = await gantry.execute(ToolCall(tool_name="square", arguments={"x": 6}))
+        res5 = await fetcher.execute(ToolCall(tool_name="square", arguments={"x": 6}))
         print(f"square(6) = {res5.result}")
 
         # --- Retrieval Test ---
         print("\n--- Testing Retrieval ---")
         query = "I need to multiply a number by the service configuration"
-        tools = await gantry.retrieve_tools(query, limit=1)
+        tools = await fetcher.retrieve_tools(query, limit=1)
         if tools:
             print(f"Query: '{query}'")
             print(f"Retrieved: {tools[0]['function']['name']}")
         else:
             print("No tools retrieved (check embedding model configuration)")
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 if __name__ == "__main__":

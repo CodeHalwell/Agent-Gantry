@@ -2,43 +2,43 @@
 import DocsLayout from '../../../../layouts/DocsLayout.astro';
 import CodeBlock from '../../../../components/CodeBlock.astro';
 ---
-<DocsLayout title="OpenAI Agents SDK guide | Agent-Gantry" description="Integrate Agent-Gantry with the OpenAI Agents SDK: per-turn tool selection, native approvals, readable tool errors and run context.">
+<DocsLayout title="OpenAI Agents SDK guide | dotfetch" description="Integrate dotfetch with the OpenAI Agents SDK: per-turn tool selection, native approvals, readable tool errors and run context.">
   <p class="eyebrow">Framework guide</p>
   <h1>OpenAI Agents SDK</h1>
-  <p class="lead">Agent-Gantry plugs into the OpenAI Agents SDK's own mechanisms: <code>FunctionTool.is_enabled</code> for per-turn tool selection, <code>needs_approval</code> for human approval, and the run's <code>ToolContext</code> for your dependencies. Failures come back to the model as readable tool output instead of ending the run.</p>
+  <p class="lead">dotfetch plugs into the OpenAI Agents SDK's own mechanisms: <code>FunctionTool.is_enabled</code> for per-turn tool selection, <code>needs_approval</code> for human approval, and the run's <code>ToolContext</code> for your dependencies. Failures come back to the model as readable tool output instead of ending the run.</p>
   <p><a class="pill" href="/Agent-Gantry/docs/frameworks/openai-agents/advanced/">Advanced OpenAI Agents SDK usage →</a></p>
 
   <h2>Install</h2>
-  <CodeBlock lang="bash" code={`uv add "agent-gantry[openai-agents]"   # pins openai-agents>=0.23.1`} />
+  <CodeBlock lang="bash" code={`uv add "dotfetch[openai-agents]"   # pins openai-agents>=0.23.1`} />
   <div class="callout"><strong>Separate environment:</strong> <code>openai-agents</code> 0.23 and later need <code>openai&gt;=3</code>, while CrewAI (in the <code>agent-frameworks</code> extra) pins <code>openai&lt;3</code>, so install this extra on its own.</div>
 
   <h2>Basic page: per-turn tools</h2>
   <ol>
-    <li>Register tools with <code>@gantry.register</code> and <code>await gantry.sync()</code>.</li>
+    <li>Register tools with <code>@fetcher.register</code> and <code>await fetcher.sync()</code>.</li>
     <li>Give the agent <code>await adapter.dynamic_tools()</code>.</li>
-    <li>Run it normally. Each turn the model is offered only the tools Gantry selects for the newest message or tool result.</li>
+    <li>Run it normally. Each turn the model is offered only the tools dotfetch selects for the newest message or tool result.</li>
   </ol>
   <CodeBlock lang="python" title="Per-turn tool selection" code={`import asyncio
 
 from agents import Agent, Runner
-from agent_gantry import AgentGantry
-from agent_gantry.openai_agents import OpenAIAgentsAdapter
+from dotfetch import DotFetch
+from dotfetch.openai_agents import OpenAIAgentsAdapter
 
-gantry = AgentGantry()
+fetcher = DotFetch()
 
-@gantry.register(examples=["where is my order", "has order 4471 shipped"])
+@fetcher.register(examples=["where is my order", "has order 4471 shipped"])
 def get_order_status(order_id: str) -> str:
     """Return the current shipping status for an order."""
     return "in_transit"
 
-@gantry.register(examples=["refund order 4471"], requires_confirmation=True)
+@fetcher.register(examples=["refund order 4471"], requires_confirmation=True)
 def refund_order(order_id: str) -> str:
     """Refund an order in full."""
     return "refunded"
 
 async def main():
-    await gantry.sync()
-    adapter = OpenAIAgentsAdapter(gantry)
+    await fetcher.sync()
+    adapter = OpenAIAgentsAdapter(fetcher)
     agent = Agent(name="support", tools=await adapter.dynamic_tools(limit=5))
     result = await Runner.run(agent, "Has order 4471 shipped?")
     print(result.final_output)
@@ -46,14 +46,14 @@ async def main():
 asyncio.run(main())`} />
 
   <h2>What the model sees when a tool fails</h2>
-  <p>The SDK has no retry exception, and an exception from a tool would end the run. Gantry returns the failure as the tool's output instead, <code>Error: &lt;type&gt;: &lt;message&gt;</code>, capped at 2,000 characters. The model reads it and can correct a bad argument or try something else.</p>
-  <div class="callout"><strong>Redact or opt out:</strong> <code>OpenAIAgentsAdapter(gantry, error_formatter=redact)</code> rewrites the text the model sees; <code>error_mode="raise"</code> lets <code>ToolExecutionError</code> propagate instead.</div>
+  <p>The SDK has no retry exception, and an exception from a tool would end the run. dotfetch returns the failure as the tool's output instead, <code>Error: &lt;type&gt;: &lt;message&gt;</code>, capped at 2,000 characters. The model reads it and can correct a bad argument or try something else.</p>
+  <div class="callout"><strong>Redact or opt out:</strong> <code>OpenAIAgentsAdapter(fetcher, error_formatter=redact)</code> rewrites the text the model sees; <code>error_mode="raise"</code> lets <code>ToolExecutionError</code> propagate instead.</div>
 
-  <h2>Reading your context from a Gantry tool</h2>
+  <h2>Reading your context from a dotfetch tool</h2>
   <p>Whatever you pass to <code>Runner.run(..., context=...)</code> is available while the tool runs, without changing its schema.</p>
-  <CodeBlock lang="python" code={`from agent_gantry.openai_agents import current_run_context
+  <CodeBlock lang="python" code={`from dotfetch.openai_agents import current_run_context
 
-@gantry.register
+@fetcher.register
 async def get_balance(account: str) -> str:
     """Fetch an account balance for the signed-in user."""
     ctx = current_run_context()   # the call's ToolContext, or None outside a run

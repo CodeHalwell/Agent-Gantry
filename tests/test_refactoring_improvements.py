@@ -2,9 +2,9 @@
 Tests for new convenience methods and improvements added in the refactoring PR.
 
 Tests:
-- AgentGantry.quick_start()
-- AgentGantry.search_and_execute()
-- set_default_gantry() and decorator improvements
+- DotFetch.quick_start()
+- DotFetch.search_and_execute()
+- set_default_fetcher() and decorator improvements
 - build_parameters_schema() improvements
 - ToolDefinition.to_searchable_text()
 """
@@ -13,68 +13,68 @@ import json
 
 import pytest
 
-from agent_gantry import AgentGantry, set_default_gantry, with_semantic_tools
-from agent_gantry.schema.introspection import build_parameters_schema
-from agent_gantry.schema.tool import ToolDefinition
+from dotfetch import DotFetch, set_default_fetcher, with_semantic_tools
+from dotfetch.schema.introspection import build_parameters_schema
+from dotfetch.schema.tool import ToolDefinition
 
 
 class TestQuickStart:
-    """Tests for AgentGantry.quick_start() convenience method."""
+    """Tests for DotFetch.quick_start() convenience method."""
 
     @pytest.mark.asyncio
     async def test_quick_start_auto_embedder(self):
         """Test quick_start with auto embedder selection."""
-        gantry = AgentGantry.quick_start(embedder="auto")
-        assert gantry is not None
-        assert gantry._embedder is not None
+        fetcher = DotFetch.quick_start(embedder="auto")
+        assert fetcher is not None
+        assert fetcher._embedder is not None
 
     @pytest.mark.asyncio
     async def test_quick_start_simple_embedder(self):
         """Test quick_start with explicit simple embedder."""
-        gantry = AgentGantry.quick_start(embedder="simple")
-        assert gantry is not None
-        from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+        fetcher = DotFetch.quick_start(embedder="simple")
+        assert fetcher is not None
+        from dotfetch.adapters.embedders.simple import SimpleEmbedder
 
-        assert isinstance(gantry._embedder, SimpleEmbedder)
+        assert isinstance(fetcher._embedder, SimpleEmbedder)
 
     @pytest.mark.asyncio
     async def test_quick_start_openai_without_key(self):
         """Test quick_start raises error for OpenAI without API key."""
         with pytest.raises(ValueError, match="OpenAI embedder requires a valid API key"):
-            AgentGantry.quick_start(embedder="openai")
+            DotFetch.quick_start(embedder="openai")
 
     @pytest.mark.asyncio
     async def test_quick_start_with_tool_registration(self):
         """Test quick_start works with tool registration and sync."""
-        gantry = AgentGantry.quick_start()
+        fetcher = DotFetch.quick_start()
 
-        @gantry.register
+        @fetcher.register
         def test_tool(x: int) -> int:
             """Test tool."""
             return x * 2
 
-        await gantry.sync()
-        tools = await gantry.list_tools()
+        await fetcher.sync()
+        tools = await fetcher.list_tools()
         assert len(tools) == 1
         assert tools[0].name == "test_tool"
 
 
 class TestSearchAndExecute:
-    """Tests for AgentGantry.search_and_execute() convenience method."""
+    """Tests for DotFetch.search_and_execute() convenience method."""
 
     @pytest.mark.asyncio
     async def test_search_and_execute_basic(self):
         """Test basic search and execute functionality."""
-        gantry = AgentGantry.quick_start()
+        fetcher = DotFetch.quick_start()
 
-        @gantry.register
+        @fetcher.register
         def calculate_tax(amount: float) -> float:
             """Calculate 8% sales tax."""
             return amount * 0.08
 
-        await gantry.sync()
+        await fetcher.sync()
 
-        result = await gantry.search_and_execute(
+        result = await fetcher.search_and_execute(
             "calculate tax", arguments={"amount": 100.0}, score_threshold=0.0
         )
 
@@ -84,58 +84,58 @@ class TestSearchAndExecute:
     @pytest.mark.asyncio
     async def test_search_and_execute_no_tools_found(self):
         """Test search_and_execute raises error when no tools match."""
-        gantry = AgentGantry.quick_start()
+        fetcher = DotFetch.quick_start()
 
-        @gantry.register
+        @fetcher.register
         def unrelated_tool(x: int) -> int:
             """Some unrelated tool."""
             return x
 
-        await gantry.sync()
+        await fetcher.sync()
 
         with pytest.raises(ValueError, match="No tools found matching query"):
-            await gantry.search_and_execute(
+            await fetcher.search_and_execute(
                 "calculate quantum mechanics", arguments={}, score_threshold=0.9
             )
 
     @pytest.mark.asyncio
     async def test_search_and_execute_with_namespace(self):
         """Test search_and_execute respects tool namespace."""
-        gantry = AgentGantry.quick_start()
+        fetcher = DotFetch.quick_start()
 
-        @gantry.register(namespace="default")
+        @fetcher.register(namespace="default")
         def multiply(x: int, y: int) -> int:
             """Multiply two numbers."""
             return x * y
 
-        await gantry.sync()
+        await fetcher.sync()
 
-        result = await gantry.search_and_execute(
+        result = await fetcher.search_and_execute(
             "multiply numbers", arguments={"x": 5, "y": 3}, score_threshold=0.0
         )
 
         assert result.result == 15
 
 
-class TestDefaultGantryDecorator:
-    """Tests for set_default_gantry() and improved decorator."""
+class TestDefaultDotFetchDecorator:
+    """Tests for set_default_fetcher() and improved decorator."""
 
     @pytest.mark.asyncio
-    async def test_set_default_gantry(self):
-        """Test setting and using default gantry."""
-        gantry = AgentGantry.quick_start()
+    async def test_set_default_fetcher(self):
+        """Test setting and using default fetcher."""
+        fetcher = DotFetch.quick_start()
 
-        @gantry.register
+        @fetcher.register
         def get_weather(city: str) -> str:
             """Get weather for a city."""
             return f"Sunny in {city}"
 
-        await gantry.sync()
+        await fetcher.sync()
 
         # Set as default
-        set_default_gantry(gantry)
+        set_default_fetcher(fetcher)
 
-        # Use decorator without explicit gantry
+        # Use decorator without explicit fetcher
         @with_semantic_tools(limit=1, score_threshold=0.0)
         async def mock_llm_call(prompt: str, tools=None):
             return {"tools_count": len(tools) if tools else 0}
@@ -144,32 +144,32 @@ class TestDefaultGantryDecorator:
         assert result["tools_count"] == 1
 
     @pytest.mark.asyncio
-    async def test_decorator_without_default_gantry_raises(self):
-        """Test decorator without default gantry raises helpful error."""
+    async def test_decorator_without_default_fetcher_raises(self):
+        """Test decorator without default fetcher raises helpful error."""
         # Reset default
-        from agent_gantry.integrations import semantic_tools
+        from dotfetch.integrations import semantic_tools
 
-        semantic_tools._DEFAULT_GANTRY = None
+        semantic_tools._DEFAULT_DOTFETCH = None
 
-        with pytest.raises(ValueError, match="No gantry provided and no default set"):
+        with pytest.raises(ValueError, match="No fetcher provided and no default set"):
 
             @with_semantic_tools(limit=1)
             async def generate(prompt: str, tools=None):
                 pass
 
     @pytest.mark.asyncio
-    async def test_decorator_with_explicit_gantry_still_works(self):
-        """Test decorator still works with explicit gantry parameter."""
-        gantry = AgentGantry.quick_start()
+    async def test_decorator_with_explicit_fetcher_still_works(self):
+        """Test decorator still works with explicit fetcher parameter."""
+        fetcher = DotFetch.quick_start()
 
-        @gantry.register
+        @fetcher.register
         def test_tool() -> str:
             """Test tool."""
             return "result"
 
-        await gantry.sync()
+        await fetcher.sync()
 
-        @with_semantic_tools(gantry, limit=1, score_threshold=0.0)
+        @with_semantic_tools(fetcher, limit=1, score_threshold=0.0)
         async def generate(prompt: str, tools=None):
             return {"tools_count": len(tools) if tools else 0}
 
@@ -439,7 +439,7 @@ class TestSchemaFidelity:
         def func(x: int | str) -> None:
             pass
 
-        with caplog.at_level("DEBUG", logger="agent_gantry.schema.introspection"):
+        with caplog.at_level("DEBUG", logger="dotfetch.schema.introspection"):
             schema = build_parameters_schema(func)
 
         assert schema["properties"]["x"] == {"type": "integer"}
@@ -459,7 +459,7 @@ class TestSchemaFidelity:
             def emit(self, record: _logging.LogRecord) -> None:
                 records.append(record)
 
-        log = _logging.getLogger("agent_gantry.schema.introspection")
+        log = _logging.getLogger("dotfetch.schema.introspection")
         handler = _Capture()
         log.addHandler(handler)
         previous = log.level
@@ -806,7 +806,7 @@ class TestEnumEdgeCases:
 
         # And an empty enum in an incoming schema is ignored by validation
         # rather than rejecting every value.
-        from agent_gantry.integrations.frameworks.schema_bridge import (
+        from dotfetch.integrations.frameworks.schema_bridge import (
             pydantic_model_from_schema,
         )
 

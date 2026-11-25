@@ -13,14 +13,14 @@ from __future__ import annotations
 
 import pytest
 
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-from agent_gantry.evaluation import (
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
+from dotfetch.evaluation import (
     RetrievalCase,
     compare_to_baseline,
     evaluate_retrieval,
     format_reports,
 )
-from agent_gantry.schema.tool import is_reserved_namespace
+from dotfetch.schema.tool import is_reserved_namespace
 from tests.retrieval import catalogue
 from tests.retrieval.harness import flatten, load_baseline, measure
 
@@ -224,7 +224,7 @@ def _scored_retriever(scores: dict[str, list[tuple[str, float]]]):
 
 
 async def test_a_threshold_is_found_between_the_wrong_answers_and_the_right_ones() -> None:
-    from agent_gantry.evaluation import calibrate_threshold
+    from dotfetch.evaluation import calibrate_threshold
 
     scores = {
         "add": [("add_numbers", 0.62), ("other", 0.30)],
@@ -251,7 +251,7 @@ async def test_a_threshold_is_found_between_the_wrong_answers_and_the_right_ones
 
 
 async def test_when_no_threshold_separates_them_the_best_trade_off_is_returned() -> None:
-    from agent_gantry.evaluation import calibrate_threshold
+    from dotfetch.evaluation import calibrate_threshold
 
     scores = {
         "add": [("add_numbers", 0.62)],
@@ -277,7 +277,7 @@ async def test_when_no_threshold_separates_them_the_best_trade_off_is_returned()
 
 async def test_a_wrong_answer_at_zero_does_not_drag_the_threshold_down() -> None:
     """A case that is never right says nothing about where the cutoff belongs."""
-    from agent_gantry.evaluation import calibrate_threshold
+    from dotfetch.evaluation import calibrate_threshold
 
     scores = {
         "add": [("add_numbers", 0.62)],
@@ -295,7 +295,7 @@ async def test_a_wrong_answer_at_zero_does_not_drag_the_threshold_down() -> None
 
 async def test_calibration_copes_with_tuples_including_an_empty_one() -> None:
     """A retriever may answer with a tuple of ids, and an empty one is a decline."""
-    from agent_gantry.evaluation import calibrate_threshold
+    from dotfetch.evaluation import calibrate_threshold
 
     scores = {"add": [("add_numbers", 0.62), ("other", 0.3)], "book a flight": [("other", 0.31)]}
 

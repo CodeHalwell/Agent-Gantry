@@ -1,5 +1,5 @@
 """
-End-to-end Agent Framework 1.0 GA orchestration tests for Agent-Gantry.
+End-to-end Agent Framework 1.0 GA orchestration tests for dotfetch.
 
 These tests drive the *real* ``agent-framework`` package against a
 lightweight ``ScriptedChatClient`` that implements the required chat-client
@@ -14,8 +14,8 @@ orchestration pattern exercised in production deployments:
 - Group chat orchestration (``GroupChatBuilder``)
 - ``agent.as_tool()`` nested-agent pattern
 - Workflow orchestration with ``AgentExecutor`` nodes
-- ``GantryApprovalMiddleware`` halting destructive tool calls
-- ``GantryObservabilityMiddleware`` recording invocations
+- ``DotFetchApprovalMiddleware`` halting destructive tool calls
+- ``DotFetchObservabilityMiddleware`` recording invocations
 
 The tests skip automatically when ``agent-framework`` isn't installed, so
 CI environments that don't pull the optional extra still pass.
@@ -52,17 +52,17 @@ try:
 except ImportError as _af_import_err:
     pytest.skip(f"agent_framework missing required export: {_af_import_err}", allow_module_level=True)
 
-from agent_gantry import AgentGantry  # noqa: E402
-from agent_gantry.core.security import (  # noqa: E402
+from dotfetch import DotFetch  # noqa: E402
+from dotfetch.core.security import (  # noqa: E402
     ConfirmationRequiredError,
     SecurityPolicy,
 )
-from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge  # noqa: E402
-from agent_gantry.integrations.agent_framework_middleware import (  # noqa: E402
-    GantryApprovalMiddleware,
-    GantryObservabilityMiddleware,
+from dotfetch.integrations.agent_framework_bridge import DotFetchToolBridge  # noqa: E402
+from dotfetch.integrations.agent_framework_middleware import (  # noqa: E402
+    DotFetchApprovalMiddleware,
+    DotFetchObservabilityMiddleware,
 )
-from agent_gantry.schema.tool import ToolCapability  # noqa: E402
+from dotfetch.schema.tool import ToolCapability  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Scripted chat client — implements the function-calling protocol so AF's
@@ -120,37 +120,37 @@ def _fc(name: str, arguments: dict[str, Any], call_id: str) -> Content:
 
 
 # ---------------------------------------------------------------------------
-# Shared fixtures — three Gantry tools representing realistic, varied
+# Shared fixtures — three dotfetch tools representing realistic, varied
 # production tool shapes (read, multi-arg read, destructive write).
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture(autouse=True)
 def _offline_embedder(monkeypatch):
-    """Make bare ``AgentGantry()`` use the offline ``SimpleEmbedder`` so these
+    """Make bare ``DotFetch()`` use the offline ``SimpleEmbedder`` so these
     tests never download an embedder model from the HF Hub (which rate-limits /
     flakes in CI). These tests pass all registered tools to a *scripted* client
     (``limit=5`` over ≤3 tools, ``score_threshold=0.0``), so retrieval quality is
     irrelevant and the toy embedder changes no assertion. Tests passing an
     explicit ``embedder=`` (e.g. ``_KeywordEmbedder``) are unaffected.
     """
-    from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+    from dotfetch.adapters.embedders.simple import SimpleEmbedder
 
     monkeypatch.setattr(
-        "agent_gantry.core.gantry.build_embedder", lambda config: SimpleEmbedder()
+        "dotfetch.core.fetcher.build_embedder", lambda config: SimpleEmbedder()
     )
 
 
 @pytest.fixture
-async def gantry_with_tools() -> AgentGantry:
-    gantry = AgentGantry()
+async def fetcher_with_tools() -> DotFetch:
+    fetcher = DotFetch()
 
-    @gantry.register
+    @fetcher.register
     def get_weather(city: str) -> str:
         """Get current weather for a city."""
         return f"Weather in {city}: sunny, 22C"
 
-    @gantry.register
+    @fetcher.register
     def lookup_order(order_id: str, include_items: bool = False) -> dict[str, Any]:
         """Look up an order by id, optionally including line items."""
         return {
@@ -159,18 +159,18 @@ async def gantry_with_tools() -> AgentGantry:
             "items": ["widget"] if include_items else [],
         }
 
-    @gantry.register(capabilities=[ToolCapability.DELETE_DATA])
+    @fetcher.register(capabilities=[ToolCapability.DELETE_DATA])
     def delete_user(user_id: str) -> str:
         """Delete a user account. Destructive."""
         return f"deleted:{user_id}"
 
-    await gantry.sync()
-    return gantry
+    await fetcher.sync()
+    return fetcher
 
 
 @pytest.fixture
-async def bridge(gantry_with_tools: AgentGantry) -> GantryToolBridge:
-    return GantryToolBridge(gantry_with_tools, score_threshold=0.0)
+async def bridge(fetcher_with_tools: DotFetch) -> DotFetchToolBridge:
+    return DotFetchToolBridge(fetcher_with_tools, score_threshold=0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -179,8 +179,8 @@ async def bridge(gantry_with_tools: AgentGantry) -> GantryToolBridge:
 
 
 @pytest.mark.asyncio
-async def test_single_turn_tool_use(bridge: GantryToolBridge) -> None:
-    """Agent receives a query, calls one Gantry tool, returns final text."""
+async def test_single_turn_tool_use(bridge: DotFetchToolBridge) -> None:
+    """Agent receives a query, calls one dotfetch tool, returns final text."""
     tools = await bridge.get_tools(
         "weather in london", limit=5, score_threshold=0.0
     )
@@ -208,8 +208,8 @@ async def test_single_turn_tool_use(bridge: GantryToolBridge) -> None:
 
 
 @pytest.mark.asyncio
-async def test_multi_turn_conversation(bridge: GantryToolBridge) -> None:
-    """Two user turns, each triggering a distinct Gantry tool call."""
+async def test_multi_turn_conversation(bridge: DotFetchToolBridge) -> None:
+    """Two user turns, each triggering a distinct dotfetch tool call."""
     tools = await bridge.get_tools(
         "weather and orders", limit=5, score_threshold=0.0
     )
@@ -235,7 +235,7 @@ async def test_multi_turn_conversation(bridge: GantryToolBridge) -> None:
     assert "shipped" in resp2.text.lower()
     assert client.call_count == 4, "should have driven another 2 turns"
 
-    # Both Gantry tools were exercised across the conversation
+    # Both dotfetch tools were exercised across the conversation
     tool_names_used = {
         c.name
         for turn in client.seen_messages
@@ -247,18 +247,18 @@ async def test_multi_turn_conversation(bridge: GantryToolBridge) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 3. Sequential orchestration — two Gantry-tooled agents chained
+# 3. Sequential orchestration — two dotfetch-tooled agents chained
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_sequential_orchestration(bridge: GantryToolBridge) -> None:
+async def test_sequential_orchestration(bridge: DotFetchToolBridge) -> None:
     """SequentialBuilder chains Agent A (weather) -> Agent B (orders)."""
     weather_tools = bridge.wrap_tools(
-        [t for t in bridge._gantry.export_tools() if t.name == "get_weather"]
+        [t for t in bridge._fetcher.export_tools() if t.name == "get_weather"]
     )
     order_tools = bridge.wrap_tools(
-        [t for t in bridge._gantry.export_tools() if t.name == "lookup_order"]
+        [t for t in bridge._fetcher.export_tools() if t.name == "lookup_order"]
     )
 
     # Client A: calls get_weather, then answers.
@@ -283,7 +283,7 @@ async def test_sequential_orchestration(bridge: GantryToolBridge) -> None:
     # Workflow was built with two participants in order
     assert workflow is not None
     # Drive the workflow manually: both agents must be reachable and each
-    # agent's tools are real FunctionTools that Gantry can execute.
+    # agent's tools are real FunctionTools that dotfetch can execute.
     for a in (agent_a, agent_b):
         bound_tools = (a.default_options or {}).get("tools") or []
         assert bound_tools, f"{a.name} should have tools"
@@ -297,19 +297,19 @@ async def test_sequential_orchestration(bridge: GantryToolBridge) -> None:
     )
     assert "sunny" in r_a.text.lower()
     assert "shipped" in r_b.text.lower()
-    # Both Gantry tools got invoked (one per agent)
+    # Both dotfetch tools got invoked (one per agent)
     assert client_a.call_count == 2
     assert client_b.call_count == 2
 
 
 # ---------------------------------------------------------------------------
-# 4. Concurrent orchestration — fan-out/fan-in of two Gantry-tooled agents
+# 4. Concurrent orchestration — fan-out/fan-in of two dotfetch-tooled agents
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_concurrent_orchestration(bridge: GantryToolBridge) -> None:
-    """ConcurrentBuilder runs two Gantry-tooled agents in parallel on the
+async def test_concurrent_orchestration(bridge: DotFetchToolBridge) -> None:
+    """ConcurrentBuilder runs two dotfetch-tooled agents in parallel on the
     same user task, then aggregates their outputs."""
     import asyncio
 
@@ -349,7 +349,7 @@ async def test_concurrent_orchestration(bridge: GantryToolBridge) -> None:
 
 
 @pytest.mark.asyncio
-async def test_handoff_orchestration(bridge: GantryToolBridge) -> None:
+async def test_handoff_orchestration(bridge: DotFetchToolBridge) -> None:
     """HandoffBuilder composes a router plus specialist agents."""
     tools_all = await bridge.get_tools("weather and orders", limit=5, score_threshold=0.0)
 
@@ -400,8 +400,8 @@ async def test_handoff_orchestration(bridge: GantryToolBridge) -> None:
 
 
 @pytest.mark.asyncio
-async def test_group_chat_orchestration(bridge: GantryToolBridge) -> None:
-    """GroupChatBuilder composes multiple agents that share a Gantry tool set."""
+async def test_group_chat_orchestration(bridge: DotFetchToolBridge) -> None:
+    """GroupChatBuilder composes multiple agents that share a dotfetch tool set."""
     tools_all = await bridge.get_tools("", limit=5, score_threshold=0.0)
 
     analyst_client = ScriptedChatClient(
@@ -434,7 +434,7 @@ async def test_group_chat_orchestration(bridge: GantryToolBridge) -> None:
         .build()
     )
     assert workflow is not None
-    # Verify both agents share Gantry-bridged FunctionTools.
+    # Verify both agents share dotfetch-bridged FunctionTools.
     for a in (analyst, critic):
         bound = (a.default_options or {}).get("tools") or []
         assert any(isinstance(t, FunctionTool) for t in bound)
@@ -452,8 +452,8 @@ async def test_group_chat_orchestration(bridge: GantryToolBridge) -> None:
 
 
 @pytest.mark.asyncio
-async def test_agent_as_tool(bridge: GantryToolBridge) -> None:
-    """A Gantry-tooled agent is exposed as a tool to a meta-agent."""
+async def test_agent_as_tool(bridge: DotFetchToolBridge) -> None:
+    """A dotfetch-tooled agent is exposed as a tool to a meta-agent."""
     inner_tools = await bridge.get_tools("weather", limit=5, score_threshold=0.0)
     inner_client = ScriptedChatClient(
         script=[
@@ -479,7 +479,7 @@ async def test_agent_as_tool(bridge: GantryToolBridge) -> None:
 
 
 @pytest.mark.asyncio
-async def test_workflow_with_agent_executors(bridge: GantryToolBridge) -> None:
+async def test_workflow_with_agent_executors(bridge: DotFetchToolBridge) -> None:
     """Build a Workflow graph with two AgentExecutor nodes wired together."""
     from agent_framework import AgentExecutor, WorkflowBuilder
 
@@ -510,12 +510,12 @@ async def test_workflow_with_agent_executors(bridge: GantryToolBridge) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 9. GantryApprovalMiddleware blocks destructive tools
+# 9. DotFetchApprovalMiddleware blocks destructive tools
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_approval_middleware_blocks_destructive_tool(bridge: GantryToolBridge) -> None:
+async def test_approval_middleware_blocks_destructive_tool(bridge: DotFetchToolBridge) -> None:
     """The middleware should raise MiddlewareTermination for a destructive
     tool whose name matches the require_confirmation patterns."""
     tools = await bridge.get_tools("delete user", limit=5, score_threshold=0.0)
@@ -525,7 +525,7 @@ async def test_approval_middleware_blocks_destructive_tool(bridge: GantryToolBri
     assert any(t.name == "delete_user" for t in tools)
 
     policy = SecurityPolicy(require_confirmation=["delete_*"])
-    middleware = GantryApprovalMiddleware(policy)
+    middleware = DotFetchApprovalMiddleware(policy)
 
     # Directly exercise the middleware pipeline with a forged context.
     class _Ctx:
@@ -557,7 +557,7 @@ async def test_approval_middleware_blocks_destructive_tool(bridge: GantryToolBri
 
 @pytest.mark.asyncio
 async def test_approval_middleware_replays_honor_human_decision(
-    bridge: GantryToolBridge,
+    bridge: DotFetchToolBridge,
 ) -> None:
     """AF replays an approval-gated call with the human's decision in
     ``metadata['approval_response']`` — an approved replay must execute, a
@@ -565,7 +565,7 @@ async def test_approval_middleware_replays_honor_human_decision(
     tools = await bridge.get_tools("delete user", limit=5, score_threshold=0.0)
     delete_tool = next(t for t in tools if t.name == "delete_user")
     policy = SecurityPolicy(require_confirmation=["delete_*"])
-    middleware = GantryApprovalMiddleware(policy)
+    middleware = DotFetchApprovalMiddleware(policy)
 
     class _Ctx:
         def __init__(self, fn, args, approved):
@@ -596,13 +596,13 @@ async def test_approval_middleware_replays_honor_human_decision(
 
 
 @pytest.mark.asyncio
-async def test_approval_middleware_allows_safe_tool(bridge: GantryToolBridge) -> None:
+async def test_approval_middleware_allows_safe_tool(bridge: DotFetchToolBridge) -> None:
     """Safe (read-only) tools pass through the middleware unchanged."""
     tools = await bridge.get_tools("weather", limit=5, score_threshold=0.0)
     weather_tool = next(t for t in tools if t.name == "get_weather")
 
     policy = SecurityPolicy(require_confirmation=["delete_*"])
-    middleware = GantryApprovalMiddleware(policy)
+    middleware = DotFetchApprovalMiddleware(policy)
 
     calls: list[str] = []
 
@@ -622,7 +622,7 @@ async def test_approval_middleware_allows_safe_tool(bridge: GantryToolBridge) ->
 
 
 @pytest.mark.asyncio
-async def test_approval_middleware_denies_by_domain(bridge: GantryToolBridge) -> None:
+async def test_approval_middleware_denies_by_domain(bridge: DotFetchToolBridge) -> None:
     """A policy denial (here: disallowed domain in arguments) never invokes
     the tool and reports the reason as an explicit result — raising instead
     would reach the model as AF's opaque ``"Error: Function failed."`` with
@@ -631,7 +631,7 @@ async def test_approval_middleware_denies_by_domain(bridge: GantryToolBridge) ->
     tool = next(t for t in tools if t.name == "get_weather")
 
     policy = SecurityPolicy(allowed_domains=["example.com"])
-    middleware = GantryApprovalMiddleware(policy)
+    middleware = DotFetchApprovalMiddleware(policy)
 
     class _Ctx:
         def __init__(self, fn, args):
@@ -657,14 +657,14 @@ async def test_approval_middleware_denies_by_domain(bridge: GantryToolBridge) ->
 
 @pytest.mark.asyncio
 async def test_observability_middleware_records_invocations(
-    bridge: GantryToolBridge, gantry_with_tools: AgentGantry
+    bridge: DotFetchToolBridge, fetcher_with_tools: DotFetch
 ) -> None:
-    """The observability middleware should wrap ``call_next`` in a Gantry
+    """The observability middleware should wrap ``call_next`` in a dotfetch
     telemetry span so AF tool invocations show up alongside other
-    Gantry-traced operations."""
+    dotfetch-traced operations."""
     import asyncio
 
-    mw = GantryObservabilityMiddleware(gantry_with_tools)
+    mw = DotFetchObservabilityMiddleware(fetcher_with_tools)
 
     class _FakeFn:
         name = "get_weather"
@@ -677,7 +677,7 @@ async def test_observability_middleware_records_invocations(
 
     # Capture telemetry spans opened by the middleware so we can assert the
     # real observability API (telemetry.span(...)) is exercised.
-    telemetry = getattr(gantry_with_tools, "_telemetry", None)
+    telemetry = getattr(fetcher_with_tools, "_telemetry", None)
     opened_spans: list[tuple[str, dict[str, Any]]] = []
     if telemetry is not None:
         original_span = telemetry.span
@@ -710,7 +710,7 @@ async def test_observability_middleware_records_invocations(
 
 
 @pytest.mark.asyncio
-async def test_build_agent_convenience(bridge: GantryToolBridge) -> None:
+async def test_build_agent_convenience(bridge: DotFetchToolBridge) -> None:
     client = ScriptedChatClient(
         script=[
             [_fc("get_weather", {"city": "London"}, "bc0")],
@@ -731,12 +731,12 @@ async def test_build_agent_convenience(bridge: GantryToolBridge) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 12. FunctionTool invocation through Gantry
+# 12. FunctionTool invocation through dotfetch
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_function_tool_invoke_via_gantry(bridge: GantryToolBridge) -> None:
+async def test_function_tool_invoke_via_fetcher(bridge: DotFetchToolBridge) -> None:
     tools = await bridge.get_tools("weather", limit=5, score_threshold=0.0)
     weather_tool = next(t for t in tools if t.name == "get_weather")
 
@@ -744,17 +744,17 @@ async def test_function_tool_invoke_via_gantry(bridge: GantryToolBridge) -> None
     assert result, "FunctionTool.invoke should return Content list"
     # When invoked without a FunctionInvocationContext, AF returns raw text
     # Content rather than wrapping as function_result; the important thing is
-    # that Gantry actually executed and the result surfaced through.
+    # that dotfetch actually executed and the result surfaced through.
     assert "Dublin" in result[0].text
 
 
 # ---------------------------------------------------------------------------
-# 13. approval_mode correctly derived from Gantry capabilities
+# 13. approval_mode correctly derived from dotfetch capabilities
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_approval_mode_maps_from_gantry_capabilities(bridge: GantryToolBridge) -> None:
+async def test_approval_mode_maps_from_fetcher_capabilities(bridge: DotFetchToolBridge) -> None:
     tools = await bridge.get_tools("", limit=10, score_threshold=0.0)
     by_name = {t.name: t for t in tools}
 
@@ -767,17 +767,17 @@ async def test_approval_mode_maps_from_gantry_capabilities(bridge: GantryToolBri
 
 @pytest.mark.parametrize("approved", [False, True])
 async def test_native_approval_round_trip_executes_only_after_approval(approved):
-    """Drive AF's own pause/resume flow through a confirmation-gated Gantry tool."""
+    """Drive AF's own pause/resume flow through a confirmation-gated dotfetch tool."""
     calls = []
-    async with AgentGantry() as gantry:
+    async with DotFetch() as fetcher:
 
-        @gantry.register(requires_confirmation=True)
+        @fetcher.register(requires_confirmation=True)
         async def submit_request() -> str:
             """Submit a request after human approval."""
             calls.append(1)
             return "submitted"
 
-        tools = GantryToolBridge(gantry).wrap_tools(gantry.list_tools_sync())
+        tools = DotFetchToolBridge(fetcher).wrap_tools(fetcher.list_tools_sync())
         client = ScriptedChatClient(
             script=[[_fc("submit_request", {}, "approval-call")], [Content.from_text("done")]]
         )
@@ -809,7 +809,7 @@ async def test_native_approval_round_trip_executes_only_after_approval(approved)
 
 
 @pytest.mark.asyncio
-async def test_as_agent_constructs_agent_with_tools(bridge: GantryToolBridge) -> None:
+async def test_as_agent_constructs_agent_with_tools(bridge: DotFetchToolBridge) -> None:
     """bridge.as_agent() should return a plain Agent with semantically-selected tools."""
     client = ScriptedChatClient(
         script=[
@@ -829,7 +829,7 @@ async def test_as_agent_constructs_agent_with_tools(bridge: GantryToolBridge) ->
     assert isinstance(agent, Agent)
     assert agent.name == "WeatherAgent"
     tools = (agent.default_options or {}).get("tools") or []
-    assert tools, "as_agent should attach Gantry tools"
+    assert tools, "as_agent should attach dotfetch tools"
     assert any(getattr(t, "name", None) == "get_weather" for t in tools)
 
     resp = await agent.run("Weather in Vienna?")
@@ -837,7 +837,7 @@ async def test_as_agent_constructs_agent_with_tools(bridge: GantryToolBridge) ->
 
 
 @pytest.mark.asyncio
-async def test_as_agent_query_kwargs_forwarded(bridge: GantryToolBridge) -> None:
+async def test_as_agent_query_kwargs_forwarded(bridge: DotFetchToolBridge) -> None:
     """query_kwargs passed to as_agent are forwarded to get_tools."""
     client = ScriptedChatClient(script=[[Content.from_text("done")]])
     # score_threshold via query_kwargs should not raise; limit 0 returns no tools
@@ -859,7 +859,7 @@ async def test_as_agent_query_kwargs_forwarded(bridge: GantryToolBridge) -> None
 
 
 @pytest.mark.asyncio
-async def test_build_workflow_chain(bridge: GantryToolBridge) -> None:
+async def test_build_workflow_chain(bridge: DotFetchToolBridge) -> None:
     """build_workflow(chain=True) wires agents in order and each gets its own tools."""
     from agent_framework import WorkflowAgent
 
@@ -892,7 +892,7 @@ async def test_build_workflow_chain(bridge: GantryToolBridge) -> None:
 
 
 @pytest.mark.asyncio
-async def test_build_workflow_edge_routing(bridge: GantryToolBridge) -> None:
+async def test_build_workflow_edge_routing(bridge: DotFetchToolBridge) -> None:
     """build_workflow with edges wires conditional handoffs."""
     from agent_framework import WorkflowAgent
 
@@ -920,7 +920,7 @@ async def test_build_workflow_edge_routing(bridge: GantryToolBridge) -> None:
 
 
 @pytest.mark.asyncio
-async def test_build_workflow_unknown_edge_name_raises(bridge: GantryToolBridge) -> None:
+async def test_build_workflow_unknown_edge_name_raises(bridge: DotFetchToolBridge) -> None:
     """build_workflow should raise ValueError for edges referencing unknown agent names."""
     client = ScriptedChatClient(script=[[Content.from_text("done")]])
     with pytest.raises(ValueError, match="unknown agent name"):
@@ -934,23 +934,23 @@ async def test_build_workflow_unknown_edge_name_raises(bridge: GantryToolBridge)
 
 
 @pytest.mark.asyncio
-async def test_build_workflow_empty_specs_raises(bridge: GantryToolBridge) -> None:
+async def test_build_workflow_empty_specs_raises(bridge: DotFetchToolBridge) -> None:
     """build_workflow with no specs should raise ValueError."""
     with pytest.raises(ValueError, match="at least one agent"):
         await bridge.build_workflow(agent_specs=[])
 
 
 # ---------------------------------------------------------------------------
-# 16. build_agent end-to-end with extra_tools + multi-arg Gantry tool
+# 16. build_agent end-to-end with extra_tools + multi-arg dotfetch tool
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_build_agent_extra_tools_and_multi_arg_roundtrip(
-    bridge: GantryToolBridge,
+    bridge: DotFetchToolBridge,
 ) -> None:
-    """build_agent must surface both Gantry-selected and extra tools, and the
-    Agent must round-trip a multi-arg Gantry tool call (call_id + result)."""
+    """build_agent must surface both dotfetch-selected and extra tools, and the
+    Agent must round-trip a multi-arg dotfetch tool call (call_id + result)."""
     from agent_framework import tool
 
     @tool(name="echo_note", description="Echo a short operator note.")
@@ -988,14 +988,14 @@ async def test_build_agent_extra_tools_and_multi_arg_roundtrip(
     assert client.call_count == 2, "expected one function-call turn + final turn"
 
     # The Agent's response must include a tool-result message with our call_id
-    # and the actual Gantry-executed payload.
+    # and the actual dotfetch-executed payload.
     function_results = [
         c
         for m in resp.messages
         for c in (m.contents or [])
         if getattr(c, "type", None) == "function_result"
     ]
-    assert function_results, "Agent must surface the Gantry tool result"
+    assert function_results, "Agent must surface the dotfetch tool result"
     fr = function_results[0]
     assert fr.call_id == "c0"
     rendered = str(fr.result) + str(getattr(fr, "items", ""))
@@ -1004,13 +1004,13 @@ async def test_build_agent_extra_tools_and_multi_arg_roundtrip(
 
 
 # ---------------------------------------------------------------------------
-# 17. as_agent end-to-end with a multi-arg Gantry tool
+# 17. as_agent end-to-end with a multi-arg dotfetch tool
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_as_agent_runs_multi_arg_tool(bridge: GantryToolBridge) -> None:
-    """as_agent must produce an Agent that executes a Gantry tool with bool+str args."""
+async def test_as_agent_runs_multi_arg_tool(bridge: DotFetchToolBridge) -> None:
+    """as_agent must produce an Agent that executes a dotfetch tool with bool+str args."""
     client = ScriptedChatClient(
         script=[
             [_fc("lookup_order", {"order_id": "ORD-AA", "include_items": False}, "k0")],
@@ -1046,7 +1046,7 @@ async def test_as_agent_runs_multi_arg_tool(bridge: GantryToolBridge) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 18. Gantry actually reduces the tool surface the Agent sees
+# 18. dotfetch actually reduces the tool surface the Agent sees
 # ---------------------------------------------------------------------------
 
 
@@ -1054,80 +1054,80 @@ async def test_as_agent_runs_multi_arg_tool(bridge: GantryToolBridge) -> None:
 async def test_bridge_filters_tool_surface_for_agent() -> None:
     """Register many tools, prove the Agent only receives the relevant subset.
 
-    This is Agent-Gantry's headline value proposition: semantic routing must
+    This is dotfetch's headline value proposition: semantic routing must
     keep the LLM's tool surface small. ``ScriptedChatClient.seen_tools``
     records exactly which tools were forwarded on each AF turn, so this test
     asserts (a) the AF Agent saw `limit` tools, not all registered, and
     (b) the unrelated tools were filtered out.
     """
-    gantry = AgentGantry()
+    fetcher = DotFetch()
 
-    @gantry.register
+    @fetcher.register
     def get_weather(city: str) -> str:
         """Get current weather forecast for a city."""
         return f"{city}: sunny"
 
-    @gantry.register
+    @fetcher.register
     def get_forecast(city: str, days: int = 3) -> str:
         """Multi-day weather forecast for a city."""
         return f"{city}: sunny for {days} days"
 
-    @gantry.register
+    @fetcher.register
     def get_air_quality(city: str) -> str:
         """Air quality index lookup for a city."""
         return f"{city} AQI: 42"
 
-    @gantry.register
+    @fetcher.register
     def lookup_order(order_id: str) -> str:
         """Look up an e-commerce order by id."""
         return f"order {order_id}: shipped"
 
-    @gantry.register
+    @fetcher.register
     def refund_order(order_id: str) -> str:
         """Issue a refund for an e-commerce order."""
         return f"refunded {order_id}"
 
-    @gantry.register
+    @fetcher.register
     def list_invoices(user_id: str) -> list[str]:
         """List billing invoices for a customer."""
         return ["INV-1", "INV-2"]
 
-    @gantry.register
+    @fetcher.register
     def compute_tax(amount: float, rate: float) -> float:
         """Compute sales tax for a transaction amount."""
         return amount * rate
 
-    @gantry.register
+    @fetcher.register
     def read_file(path: str) -> str:
         """Read the contents of a file from disk."""
         return f"contents of {path}"
 
-    @gantry.register
+    @fetcher.register
     def write_file(path: str, contents: str) -> str:
         """Write contents to a file on disk."""
         return f"wrote {path}"
 
-    @gantry.register
+    @fetcher.register
     def send_email(to: str, body: str) -> str:
         """Send an email message to a recipient."""
         return f"sent to {to}"
 
-    @gantry.register
+    @fetcher.register
     def search_codebase(query: str) -> list[str]:
         """Search the source code repository for a string."""
         return [f"hit for {query}"]
 
-    @gantry.register
+    @fetcher.register
     def schedule_meeting(title: str, when: str) -> str:
         """Schedule a calendar meeting."""
         return f"booked {title}"
 
-    await gantry.sync()
+    await fetcher.sync()
 
-    total_registered = len(gantry.export_tools())
+    total_registered = len(fetcher.export_tools())
     assert total_registered == 12, total_registered
 
-    bridge = GantryToolBridge(gantry, score_threshold=0.0)
+    bridge = DotFetchToolBridge(fetcher, score_threshold=0.0)
 
     client = ScriptedChatClient(
         script=[
@@ -1152,7 +1152,7 @@ async def test_bridge_filters_tool_surface_for_agent() -> None:
         f"build_agent must attach exactly limit=3 tools (got {len(bound)}: {bound_names})"
     )
     assert len(bound) < total_registered, (
-        "Gantry must reduce the tool surface vs. all registered tools"
+        "dotfetch must reduce the tool surface vs. all registered tools"
     )
 
     # Drive the Agent so the ScriptedChatClient records what the LLM saw.
@@ -1160,7 +1160,7 @@ async def test_bridge_filters_tool_surface_for_agent() -> None:
     assert "sunny" in resp.text.lower()
 
     # The AF Agent forwards its bound tool set to the chat client per turn.
-    # seen_tools[0] is the very first turn → exactly the Gantry-filtered set.
+    # seen_tools[0] is the very first turn → exactly the dotfetch-filtered set.
     seen_first_turn = client.seen_tools[0]
     assert seen_first_turn, "ScriptedChatClient must have received tools"
     assert len(seen_first_turn) == 3, (
@@ -1200,7 +1200,7 @@ async def test_bridge_filters_tool_surface_for_agent() -> None:
 
 @pytest.mark.asyncio
 async def test_context_provider_reroutes_per_user_turn() -> None:
-    """As the agent loops over user turns, the GantryContextProvider must
+    """As the agent loops over user turns, the DotFetchContextProvider must
     re-query the router on every ``agent.run`` invocation so the LLM only
     sees tools relevant to the *current* turn — not a static set frozen at
     agent construction.
@@ -1210,47 +1210,47 @@ async def test_context_provider_reroutes_per_user_turn() -> None:
     ``before_run`` at the start of each ``agent.run`` call, derives a fresh
     query from the latest user message, and rewrites the injected tool set.
     """
-    from agent_gantry import GantryContextProvider
+    from dotfetch import DotFetchContextProvider
 
-    gantry = AgentGantry()
+    fetcher = DotFetch()
 
-    @gantry.register
+    @fetcher.register
     def get_weather(city: str) -> str:
         """Get current weather for a city."""
         return f"{city}: sunny"
 
-    @gantry.register
+    @fetcher.register
     def get_forecast(city: str, days: int = 3) -> str:
         """Multi-day weather forecast for a city."""
         return f"{city}: sunny"
 
-    @gantry.register
+    @fetcher.register
     def lookup_invoice(invoice_id: str) -> str:
         """Look up a billing invoice."""
         return f"invoice {invoice_id}: $42 due"
 
-    @gantry.register
+    @fetcher.register
     def refund_invoice(invoice_id: str) -> str:
         """Refund a billing invoice."""
         return f"refunded {invoice_id}"
 
-    @gantry.register
+    @fetcher.register
     def read_file(path: str) -> str:
         """Read file contents from disk."""
         return f"contents:{path}"
 
-    @gantry.register
+    @fetcher.register
     def write_file(path: str, contents: str) -> str:
         """Write file contents to disk."""
         return f"wrote {path}"
 
-    await gantry.sync()
-    total_registered = len(gantry.export_tools())
+    await fetcher.sync()
+    total_registered = len(fetcher.export_tools())
     assert total_registered == 6
 
     # Per-run strategy: re-query before each agent.run call.
-    provider = GantryContextProvider(
-        gantry,
+    provider = DotFetchContextProvider(
+        fetcher,
         top_k=2,
         score_threshold=0.0,
         query_strategy="per_run",
@@ -1330,35 +1330,35 @@ async def test_context_provider_per_turn_refresh_mechanism() -> None:
     query. Complementary to ``test_context_provider_per_turn_end_to_end``,
     which exercises the same code path through ``agent.run``.
     """
-    from agent_gantry import GantryContextProvider
-    from agent_gantry.query import concatenate_recent
+    from dotfetch import DotFetchContextProvider
+    from dotfetch.query import concatenate_recent
 
-    gantry = AgentGantry()
+    fetcher = DotFetch()
 
-    @gantry.register
+    @fetcher.register
     def get_weather(city: str) -> str:
         """Get current weather for a city."""
         return f"{city}: sunny"
 
-    @gantry.register
+    @fetcher.register
     def get_forecast(city: str, days: int = 3) -> str:
         """Multi-day weather forecast for a city."""
         return f"{city}: sunny"
 
-    @gantry.register
+    @fetcher.register
     def lookup_invoice(invoice_id: str) -> str:
         """Look up a billing invoice."""
         return f"invoice {invoice_id}"
 
-    @gantry.register
+    @fetcher.register
     def refund_invoice(invoice_id: str) -> str:
         """Refund a billing invoice."""
         return f"refunded {invoice_id}"
 
-    await gantry.sync()
+    await fetcher.sync()
 
-    provider = GantryContextProvider(
-        gantry,
+    provider = DotFetchContextProvider(
+        fetcher,
         top_k=2,
         score_threshold=0.0,
         query_strategy="per_turn",
@@ -1439,25 +1439,25 @@ async def test_context_provider_per_turn_end_to_end() -> None:
     but ``FunctionInvocationLayer.mutable_options`` kept its original
     reference and failed to locate the tool to execute.
     """
-    from agent_gantry import GantryContextProvider
-    from agent_gantry.query import concatenate_recent
+    from dotfetch import DotFetchContextProvider
+    from dotfetch.query import concatenate_recent
 
-    gantry = AgentGantry()
+    fetcher = DotFetch()
 
-    @gantry.register
+    @fetcher.register
     def get_weather(city: str) -> str:
         """Get current weather for a city."""
         return f"Weather in {city}: 22C sunny"
 
-    @gantry.register
+    @fetcher.register
     def lookup_invoice(invoice_id: str) -> str:
         """Look up a billing invoice."""
         return f"invoice {invoice_id}"
 
-    await gantry.sync()
+    await fetcher.sync()
 
-    provider = GantryContextProvider(
-        gantry,
+    provider = DotFetchContextProvider(
+        fetcher,
         top_k=2,
         score_threshold=0.0,
         query_strategy="per_turn",
@@ -1466,7 +1466,7 @@ async def test_context_provider_per_turn_end_to_end() -> None:
 
     client = ScriptedChatClient(
         script=[
-            # Round 1: model emits a function_call for the Gantry tool.
+            # Round 1: model emits a function_call for the dotfetch tool.
             [_fc("get_weather", {"city": "Paris"}, "e2e0")],
             # Round 2: model produces the final text answer using the result.
             [Content.from_text("Paris weather: 22C sunny.")],
@@ -1506,7 +1506,7 @@ async def test_context_provider_per_turn_end_to_end() -> None:
         )
 
     # The function_result message is present in the response — proof the
-    # tool actually executed end-to-end through the Gantry-wrapped path.
+    # tool actually executed end-to-end through the dotfetch-wrapped path.
     function_results = [
         c
         for m in resp.messages
@@ -1523,7 +1523,7 @@ async def test_context_provider_per_turn_end_to_end() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 22. SkillsProvider co-existence: Gantry's per-turn refresh must not strip
+# 22. SkillsProvider co-existence: dotfetch's per-turn refresh must not strip
 #     skill tools (load_skill, read_skill_resource, run_skill_script) that
 #     another provider injected.
 # ---------------------------------------------------------------------------
@@ -1533,36 +1533,36 @@ async def test_context_provider_per_turn_end_to_end() -> None:
 async def test_context_provider_preserves_skill_tools_across_refresh() -> None:
     """``SkillsProvider`` injects its own tools (``load_skill`` et al.) via
     ``context.extend_tools(self.source_id, tools)`` in ``before_run``. The
-    Gantry per-turn refresh must preserve those tools — only Gantry-owned
+    dotfetch per-turn refresh must preserve those tools — only dotfetch-owned
     tools should be dropped & re-injected.
 
     Rather than spin up a real SkillsProvider (which needs a skills source
     on disk), we simulate its effect: pre-seed the chat context with a
-    foreign tool whose name is *not* in the Gantry registry, then run the
+    foreign tool whose name is *not* in the dotfetch registry, then run the
     refresh and assert the foreign tool survives.
     """
     from agent_framework import tool
 
-    from agent_gantry import GantryContextProvider
-    from agent_gantry.query import concatenate_recent
+    from dotfetch import DotFetchContextProvider
+    from dotfetch.query import concatenate_recent
 
-    gantry = AgentGantry()
+    fetcher = DotFetch()
 
-    @gantry.register
+    @fetcher.register
     def get_weather(city: str) -> str:
         """Get current weather for a city."""
         return f"{city}: sunny"
 
-    await gantry.sync()
+    await fetcher.sync()
 
-    # Foreign tool not in the Gantry registry — represents what a peer
+    # Foreign tool not in the dotfetch registry — represents what a peer
     # provider (e.g. SkillsProvider) would have injected via extend_tools.
     @tool(name="load_skill", description="Load a skill bundle by name (foreign).")
     def load_skill(name: str) -> str:
         return f"loaded {name}"
 
-    provider = GantryContextProvider(
-        gantry,
+    provider = DotFetchContextProvider(
+        fetcher,
         top_k=2,
         score_threshold=0.0,
         query_strategy="per_turn",
@@ -1575,7 +1575,7 @@ async def test_context_provider_preserves_skill_tools_across_refresh() -> None:
             self.options = options
 
     # Round 1: only the foreign skill tool is in options (as if SkillsProvider
-    # had just injected it in before_run and no Gantry refresh has run yet).
+    # had just injected it in before_run and no dotfetch refresh has run yet).
     options: dict[str, Any] = {"tools": [load_skill]}
     ctx = _FakeChatContext(
         messages=[Message(role="user", contents=[Content.from_text("Weather in Paris?")])],
@@ -1588,11 +1588,11 @@ async def test_context_provider_preserves_skill_tools_across_refresh() -> None:
 
     # The skill tool must survive the refresh.
     assert "load_skill" in tool_names, (
-        f"Foreign skill tool was stripped by Gantry refresh: {tool_names}"
+        f"Foreign skill tool was stripped by dotfetch refresh: {tool_names}"
     )
-    # And Gantry's dynamic selection was layered on top.
+    # And dotfetch's dynamic selection was layered on top.
     assert "get_weather" in tool_names, (
-        f"Gantry's semantically-selected tool was not injected: {tool_names}"
+        f"dotfetch's semantically-selected tool was not injected: {tool_names}"
     )
 
     # Critical: the refresh must mutate the SAME options dict (not replace
@@ -1604,7 +1604,7 @@ async def test_context_provider_preserves_skill_tools_across_refresh() -> None:
     )
 
     # Now simulate a follow-up round where the user shifts topic. The
-    # refresh should re-route Gantry's dynamic slot (none of get_weather's
+    # refresh should re-route dotfetch's dynamic slot (none of get_weather's
     # synonyms match) while still keeping load_skill.
     ctx.messages.append(
         Message(role="user", contents=[Content.from_text("Now load the math skill please.")])
@@ -1688,7 +1688,7 @@ async def test_context_provider_per_turn_surface_adapts_to_tool_result() -> None
 
     The user asks a weather question. Round 1's router (driven by the
     user message) surfaces weather-flavoured tools. The model emits a
-    function_call; the Gantry tool runs and its result legitimately
+    function_call; the dotfetch tool runs and its result legitimately
     introduces a *new* domain (billing/refund). On round 2 the query
     generator (``last_tool_result``) picks up the tool's output, and the
     router must re-rank — surfacing the refund tool that wasn't in the
@@ -1697,12 +1697,12 @@ async def test_context_provider_per_turn_surface_adapts_to_tool_result() -> None
     Uses a deterministic keyword-overlap embedder so the test runs in CI
     without any model download or hash-based-embedder flake.
     """
-    from agent_gantry import GantryContextProvider
-    from agent_gantry.query import last_tool_result, last_user_text
+    from dotfetch import DotFetchContextProvider
+    from dotfetch.query import last_tool_result, last_user_text
 
-    gantry = AgentGantry(embedder=_KeywordEmbedder())
+    fetcher = DotFetch(embedder=_KeywordEmbedder())
 
-    @gantry.register
+    @fetcher.register
     def get_weather(city: str) -> str:
         """Get the current weather forecast temperature for a city."""
         # Result legitimately introduces a NEW domain — billing.
@@ -1711,28 +1711,28 @@ async def test_context_provider_per_turn_surface_adapts_to_tool_result() -> None
             "overdue billing."
         )
 
-    @gantry.register
+    @fetcher.register
     def refund_invoice(invoice_id: str) -> str:
         """Issue a refund payment on a customer billing invoice."""
         return f"refunded {invoice_id}"
 
-    @gantry.register
+    @fetcher.register
     def read_file(path: str) -> str:
         """Read file contents from the local filesystem disk path."""
         return ""
 
-    @gantry.register
+    @fetcher.register
     def write_file(path: str, contents: str) -> str:
         """Write content to a file on the local filesystem disk path."""
         return ""
 
-    await gantry.sync()
+    await fetcher.sync()
 
     def query_gen(messages: Any) -> str:
         return last_tool_result(messages) or last_user_text(messages)
 
-    provider = GantryContextProvider(
-        gantry,
+    provider = DotFetchContextProvider(
+        fetcher,
         top_k=2,
         score_threshold=0.0,
         query_strategy="per_turn",
@@ -1808,7 +1808,7 @@ def test_last_tool_result_extracts_text_from_af_function_result_message() -> Non
     "" and the per-turn refresh's query collapses back to the original
     user prompt across the entire run.
     """
-    from agent_gantry.query import last_tool_result
+    from dotfetch.query import last_tool_result
 
     fr = Content.from_function_result(
         call_id="r0",
@@ -1830,7 +1830,7 @@ def test_last_tool_result_extracts_text_from_af_function_result_message() -> Non
 
 
 def test_msg_text_function_result_fallback_is_per_content() -> None:
-    from agent_gantry.query.strategies import _msg_text
+    from dotfetch.query.strategies import _msg_text
 
     # function_result Content with empty items and a primitive .result.
     fr = Content.from_function_result(call_id="r0", result="")
@@ -1864,16 +1864,16 @@ def test_msg_text_function_result_fallback_is_per_content() -> None:
 async def test_context_provider_refresh_mutates_non_dict_options_in_place() -> None:
     from agent_framework import tool
 
-    from agent_gantry import GantryContextProvider
+    from dotfetch import DotFetchContextProvider
 
-    gantry = AgentGantry()
+    fetcher = DotFetch()
 
-    @gantry.register
+    @fetcher.register
     def get_weather(city: str) -> str:
         """Get current weather for a city."""
         return f"{city}: sunny"
 
-    await gantry.sync()
+    await fetcher.sync()
 
     @tool(name="load_skill", description="Foreign peer-provider tool.")
     def load_skill(name: str) -> str:
@@ -1897,8 +1897,8 @@ async def test_context_provider_refresh_mutates_non_dict_options_in_place() -> N
         options=options,
     )
 
-    provider = GantryContextProvider(
-        gantry, top_k=2, score_threshold=0.0, query_strategy="per_turn",
+    provider = DotFetchContextProvider(
+        fetcher, top_k=2, score_threshold=0.0, query_strategy="per_turn",
     )
     await provider._refresh_tools_on_chat_context(ctx)
 
@@ -1907,13 +1907,13 @@ async def test_context_provider_refresh_mutates_non_dict_options_in_place() -> N
     tool_names = [getattr(t, "name", None) for t in options.tools]
     # Peer-provider tool preserved.
     assert "load_skill" in tool_names, tool_names
-    # Gantry's dynamic selection added.
+    # dotfetch's dynamic selection added.
     assert "get_weather" in tool_names, tool_names
 
 
 @pytest.mark.asyncio
 async def test_approved_replay_still_enforces_denial_checks(
-    bridge: GantryToolBridge,
+    bridge: DotFetchToolBridge,
 ) -> None:
     """A human's approval clears only the confirmation gate — never the
     denial checks. SecurityPolicy raises its ConfirmationRequiredError
@@ -1926,7 +1926,7 @@ async def test_approved_replay_still_enforces_denial_checks(
     policy = SecurityPolicy(
         require_confirmation=["delete_*"], allowed_domains=["example.com"]
     )
-    middleware = GantryApprovalMiddleware(policy)
+    middleware = DotFetchApprovalMiddleware(policy)
 
     class _Ctx:
         def __init__(self, fn, args):
@@ -1960,7 +1960,7 @@ async def test_approved_replay_still_enforces_denial_checks(
 
 @pytest.mark.asyncio
 async def test_approved_replay_with_legacy_policy_stays_blocked(
-    bridge: GantryToolBridge,
+    bridge: DotFetchToolBridge,
 ) -> None:
     """A duck-typed policy that predates the ``confirmation_approved``
     keyword has no way to selectively skip just the confirmation gate while
@@ -1979,7 +1979,7 @@ async def test_approved_replay_with_legacy_policy_stays_blocked(
             if tool_name.startswith("delete_"):
                 raise ConfirmationRequiredError(f"{tool_name} requires approval")
 
-    middleware = GantryApprovalMiddleware(LegacyPolicy())
+    middleware = DotFetchApprovalMiddleware(LegacyPolicy())
 
     class _Ctx:
         def __init__(self, fn, args):

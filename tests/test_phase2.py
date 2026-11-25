@@ -10,34 +10,34 @@ import asyncio
 
 import pytest
 
-from agent_gantry import AgentGantry
-from agent_gantry.core.security import (
+from dotfetch import DotFetch
+from dotfetch.core.security import (
     ConfirmationRequiredError,
     PermissionChecker,
     PermissionDeniedError,
     SecurityPolicy,
 )
-from agent_gantry.schema.execution import ExecutionStatus, ToolCall
-from agent_gantry.schema.tool import ToolCapability
+from dotfetch.schema.execution import ExecutionStatus, ToolCall
+from dotfetch.schema.tool import ToolCapability
 
 
 class TestCircuitBreaker:
     """Tests for circuit breaker functionality."""
 
     @pytest.mark.asyncio
-    async def test_circuit_breaker_opens_after_failures(self, gantry: AgentGantry) -> None:
+    async def test_circuit_breaker_opens_after_failures(self, fetcher: DotFetch) -> None:
         """Test that circuit breaker opens after consecutive failures."""
 
-        @gantry.register
+        @fetcher.register
         def failing_tool(x: int) -> int:
             """A tool that always fails for testing circuit breaker."""
             raise ValueError("Intentional failure")
 
-        await gantry.sync()
+        await fetcher.sync()
 
         # Execute multiple times to trigger circuit breaker (threshold is 5 by default)
         for i in range(6):
-            result = await gantry.execute(
+            result = await fetcher.execute(
                 ToolCall(tool_name="failing_tool", arguments={"x": i}, retry_count=0)
             )
             if i < 5:
@@ -47,35 +47,35 @@ class TestCircuitBreaker:
                 assert result.status == ExecutionStatus.CIRCUIT_OPEN
 
     @pytest.mark.asyncio
-    async def test_circuit_breaker_recovers(self, gantry: AgentGantry) -> None:
+    async def test_circuit_breaker_recovers(self, fetcher: DotFetch) -> None:
         """Test that circuit breaker allows recovery attempts after timeout."""
-        from agent_gantry.core.executor import ExecutionEngine
+        from dotfetch.core.executor import ExecutionEngine
 
         # Use a custom executor with very short timeout for testing
         custom_executor = ExecutionEngine(
-            registry=gantry._registry,
+            registry=fetcher._registry,
             circuit_breaker_threshold=3,
             circuit_breaker_timeout_s=1,  # 1 second timeout
-            security_policy=gantry._security_policy,
-            telemetry=gantry._telemetry,
+            security_policy=fetcher._security_policy,
+            telemetry=fetcher._telemetry,
         )
-        gantry._executor = custom_executor
+        fetcher._executor = custom_executor
 
-        @gantry.register
+        @fetcher.register
         def recovering_tool(x: int) -> int:
             """A tool that always fails for testing recovery."""
             raise ValueError("Failing")
 
-        await gantry.sync()
+        await fetcher.sync()
 
         # Trigger circuit breaker (3 failures)
         for i in range(3):
-            await gantry.execute(
+            await fetcher.execute(
                 ToolCall(tool_name="recovering_tool", arguments={"x": i}, retry_count=0)
             )
 
         # Circuit should be open now
-        result = await gantry.execute(
+        result = await fetcher.execute(
             ToolCall(tool_name="recovering_tool", arguments={"x": 10}, retry_count=0)
         )
         assert result.status == ExecutionStatus.CIRCUIT_OPEN
@@ -84,7 +84,7 @@ class TestCircuitBreaker:
         await asyncio.sleep(1.1)
 
         # Should attempt execution again (will fail but circuit is attempting recovery)
-        result = await gantry.execute(
+        result = await fetcher.execute(
             ToolCall(tool_name="recovering_tool", arguments={"x": 10}, retry_count=0)
         )
         # After timeout, it should try again and fail (not be circuit_open)
@@ -95,12 +95,12 @@ class TestRetryAndTimeout:
     """Tests for retry and timeout behavior."""
 
     @pytest.mark.asyncio
-    async def test_retry_on_failure(self, gantry: AgentGantry) -> None:
+    async def test_retry_on_failure(self, fetcher: DotFetch) -> None:
         """Test that failed executions are retried."""
 
         attempt_count = 0
 
-        @gantry.register
+        @fetcher.register
         def flaky_tool(x: int) -> int:
             """A tool that fails twice then succeeds."""
             nonlocal attempt_count
@@ -109,9 +109,9 @@ class TestRetryAndTimeout:
                 raise ValueError("Temporary failure")
             return x * 2
 
-        await gantry.sync()
+        await fetcher.sync()
 
-        result = await gantry.execute(
+        result = await fetcher.execute(
             ToolCall(tool_name="flaky_tool", arguments={"x": 5}, retry_count=3)
         )
         assert result.status == ExecutionStatus.SUCCESS
@@ -119,18 +119,18 @@ class TestRetryAndTimeout:
         assert attempt_count == 3
 
     @pytest.mark.asyncio
-    async def test_timeout_handling(self, gantry: AgentGantry) -> None:
+    async def test_timeout_handling(self, fetcher: DotFetch) -> None:
         """Test that long-running tools timeout correctly."""
 
-        @gantry.register
+        @fetcher.register
         async def slow_tool(x: int) -> int:
             """A tool that takes too long."""
             await asyncio.sleep(2)
             return x * 2
 
-        await gantry.sync()
+        await fetcher.sync()
 
-        result = await gantry.execute(
+        result = await fetcher.execute(
             ToolCall(
                 tool_name="slow_tool",
                 arguments={"x": 5},
@@ -153,17 +153,17 @@ class TestSecurityPolicy:
         assert "github.com" not in domains
 
     @pytest.mark.asyncio
-    async def test_destructive_tool_requires_confirmation(self, gantry: AgentGantry) -> None:
+    async def test_destructive_tool_requires_confirmation(self, fetcher: DotFetch) -> None:
         """Test that destructive tools require confirmation."""
 
-        @gantry.register(requires_confirmation=True)
+        @fetcher.register(requires_confirmation=True)
         def delete_user(user_id: str) -> str:
             """Delete a user from the system."""
             return f"Deleted user {user_id}"
 
-        await gantry.sync()
+        await fetcher.sync()
 
-        result = await gantry.execute(
+        result = await fetcher.execute(
             ToolCall(tool_name="delete_user", arguments={"user_id": "123"})
         )
         assert result.status == ExecutionStatus.PENDING_CONFIRMATION
@@ -171,7 +171,7 @@ class TestSecurityPolicy:
     @pytest.mark.asyncio
     async def test_security_policy_rate_limiting(self) -> None:
         """Test that security policy enforces max_requests_per_minute."""
-        from agent_gantry.core.security import PermissionDeniedError
+        from dotfetch.core.security import PermissionDeniedError
 
         policy = SecurityPolicy(max_requests_per_minute=2)
 
@@ -201,18 +201,18 @@ class TestSecurityPolicy:
         policy.check_permission("get_user", {})
 
     @pytest.mark.asyncio
-    async def test_confirmation_override(self, gantry: AgentGantry) -> None:
+    async def test_confirmation_override(self, fetcher: DotFetch) -> None:
         """Test that confirmation can be explicitly set in tool call."""
 
-        @gantry.register
+        @fetcher.register
         def safe_tool(x: int) -> int:
             """A safe tool that doesn't normally require confirmation."""
             return x * 2
 
-        await gantry.sync()
+        await fetcher.sync()
 
         # Force confirmation even though tool doesn't require it
-        result = await gantry.execute(
+        result = await fetcher.execute(
             ToolCall(tool_name="safe_tool", arguments={"x": 5}, require_confirmation=True)
         )
         assert result.status == ExecutionStatus.PENDING_CONFIRMATION
@@ -274,7 +274,7 @@ class TestPermissionChecker:
 
     def test_permission_checker_allows_with_capabilities(self) -> None:
         """Test that users with required capabilities can use tools."""
-        from agent_gantry.schema.tool import ToolDefinition
+        from dotfetch.schema.tool import ToolDefinition
 
         tool = ToolDefinition(
             name="test_tool",
@@ -290,7 +290,7 @@ class TestPermissionChecker:
 
     def test_permission_checker_denies_without_capabilities(self) -> None:
         """Test that users without required capabilities cannot use tools."""
-        from agent_gantry.schema.tool import ToolDefinition
+        from dotfetch.schema.tool import ToolDefinition
 
         tool = ToolDefinition(
             name="test_tool",
@@ -307,7 +307,7 @@ class TestPermissionChecker:
 
     def test_permission_checker_filters_tools(self) -> None:
         """Test that permission checker filters tool lists correctly."""
-        from agent_gantry.schema.tool import ToolDefinition
+        from dotfetch.schema.tool import ToolDefinition
 
         tools = [
             ToolDefinition(
@@ -340,126 +340,126 @@ class TestArgumentValidation:
     """Tests for argument validation."""
 
     @pytest.mark.asyncio
-    async def test_missing_required_argument(self, gantry: AgentGantry) -> None:
+    async def test_missing_required_argument(self, fetcher: DotFetch) -> None:
         """Test that missing required arguments are caught."""
 
-        @gantry.register
+        @fetcher.register
         def add_numbers(a: int, b: int) -> int:
             """Add two numbers together for validation testing."""
             return a + b
 
-        await gantry.sync()
+        await fetcher.sync()
 
-        result = await gantry.execute(
+        result = await fetcher.execute(
             ToolCall(tool_name="add_numbers", arguments={"a": 5})  # Missing 'b'
         )
         assert result.status == ExecutionStatus.FAILURE
         assert "missing required parameter" in result.error.lower()
 
     @pytest.mark.asyncio
-    async def test_wrong_argument_type(self, gantry: AgentGantry) -> None:
+    async def test_wrong_argument_type(self, fetcher: DotFetch) -> None:
         """Test that wrong argument types are caught."""
 
-        @gantry.register
+        @fetcher.register
         def multiply(x: int, y: int) -> int:
             """Multiply two integers for type validation testing."""
             return x * y
 
-        await gantry.sync()
+        await fetcher.sync()
 
-        result = await gantry.execute(
+        result = await fetcher.execute(
             ToolCall(tool_name="multiply", arguments={"x": "not_a_number", "y": 5})
         )
         assert result.status == ExecutionStatus.FAILURE
         assert "must be an integer" in result.error.lower()
 
     @pytest.mark.asyncio
-    async def test_unknown_argument(self, gantry: AgentGantry) -> None:
+    async def test_unknown_argument(self, fetcher: DotFetch) -> None:
         """Test that unknown arguments are caught."""
 
-        @gantry.register
+        @fetcher.register
         def simple_tool(x: int) -> int:
             """A simple tool for testing unknown argument detection."""
             return x * 2
 
-        await gantry.sync()
+        await fetcher.sync()
 
-        result = await gantry.execute(
+        result = await fetcher.execute(
             ToolCall(tool_name="simple_tool", arguments={"x": 5, "unknown_param": "value"})
         )
         assert result.status == ExecutionStatus.FAILURE
         assert "unknown parameter" in result.error.lower()
 
     @pytest.mark.asyncio
-    async def test_array_validation(self, gantry: AgentGantry) -> None:
+    async def test_array_validation(self, fetcher: DotFetch) -> None:
         """Test validation of array types and items."""
 
-        @gantry.register
+        @fetcher.register
         def process_list(items: list[int]) -> int:
             """Process a list of integers."""
             return sum(items)
 
-        await gantry.sync()
+        await fetcher.sync()
 
         # Valid array
-        result = await gantry.execute(
+        result = await fetcher.execute(
             ToolCall(tool_name="process_list", arguments={"items": [1, 2, 3]})
         )
         assert result.status == ExecutionStatus.SUCCESS
 
         # Invalid array type
-        result = await gantry.execute(
+        result = await fetcher.execute(
             ToolCall(tool_name="process_list", arguments={"items": "not_a_list"})
         )
         assert result.status == ExecutionStatus.FAILURE
         assert "must be an array" in result.error.lower()
 
         # Invalid array item type
-        result = await gantry.execute(
+        result = await fetcher.execute(
             ToolCall(tool_name="process_list", arguments={"items": [1, "two", 3]})
         )
         assert result.status == ExecutionStatus.FAILURE
         assert "must be an integer" in result.error.lower()
 
     @pytest.mark.asyncio
-    async def test_boolean_edge_cases(self, gantry: AgentGantry) -> None:
+    async def test_boolean_edge_cases(self, fetcher: DotFetch) -> None:
         """Test boolean edge cases (bool is subclass of int)."""
 
-        @gantry.register
+        @fetcher.register
         def process_number(value: int) -> int:
             """Process a number."""
             return value * 2
 
-        @gantry.register
+        @fetcher.register
         def process_bool(flag: bool) -> str:
             """Process a boolean."""
             return str(flag)
 
-        await gantry.sync()
+        await fetcher.sync()
 
         # Bool where int expected
-        result = await gantry.execute(
+        result = await fetcher.execute(
             ToolCall(tool_name="process_number", arguments={"value": True})
         )
         assert result.status == ExecutionStatus.FAILURE
         assert "must be an integer" in result.error.lower()
 
         # Int where bool expected
-        result = await gantry.execute(ToolCall(tool_name="process_bool", arguments={"flag": 1}))
+        result = await fetcher.execute(ToolCall(tool_name="process_bool", arguments={"flag": 1}))
         assert result.status == ExecutionStatus.FAILURE
         assert "must be a boolean" in result.error.lower()
 
     @pytest.mark.asyncio
-    async def test_nested_object_validation(self, gantry: AgentGantry) -> None:
+    async def test_nested_object_validation(self, fetcher: DotFetch) -> None:
         """Test validation of nested object types."""
 
-        @gantry.register
+        @fetcher.register
         def process_model(data: dict) -> bool:
             """Process a nested model."""
             return True
 
         # Override the auto-generated schema to test nested validation explicitly
-        tool = gantry._registry.get_tool("process_model")
+        tool = fetcher._registry.get_tool("process_model")
         tool.parameters_schema = {
             "type": "object",
             "properties": {
@@ -479,10 +479,10 @@ class TestArgumentValidation:
             "required": ["data"],
         }
 
-        await gantry.sync()
+        await fetcher.sync()
 
         # Valid nested object
-        result = await gantry.execute(
+        result = await fetcher.execute(
             ToolCall(
                 tool_name="process_model",
                 arguments={"data": {"inner": {"active": True}, "name": "test"}},
@@ -491,21 +491,21 @@ class TestArgumentValidation:
         assert result.status == ExecutionStatus.SUCCESS
 
         # Invalid top-level type
-        result = await gantry.execute(
+        result = await fetcher.execute(
             ToolCall(tool_name="process_model", arguments={"data": "not_an_object"})
         )
         assert result.status == ExecutionStatus.FAILURE
         assert "must be an object" in result.error.lower()
 
         # Missing required property in nested object
-        result = await gantry.execute(
+        result = await fetcher.execute(
             ToolCall(tool_name="process_model", arguments={"data": {"inner": {}, "name": "test"}})
         )
         assert result.status == ExecutionStatus.FAILURE
         assert "missing required parameter" in result.error.lower()
 
         # Invalid type in nested object
-        result = await gantry.execute(
+        result = await fetcher.execute(
             ToolCall(
                 tool_name="process_model",
                 arguments={"data": {"inner": {"active": "yes"}, "name": "test"}},
@@ -519,52 +519,52 @@ class TestAsyncOperations:
     """Tests for async tool execution."""
 
     @pytest.mark.asyncio
-    async def test_async_tool_execution(self, gantry: AgentGantry) -> None:
+    async def test_async_tool_execution(self, fetcher: DotFetch) -> None:
         """Test that async tools execute correctly."""
 
-        @gantry.register
+        @fetcher.register
         async def async_tool(x: int) -> int:
             """An async tool for testing async execution."""
             await asyncio.sleep(0.1)
             return x * 2
 
-        await gantry.sync()
+        await fetcher.sync()
 
-        result = await gantry.execute(ToolCall(tool_name="async_tool", arguments={"x": 5}))
+        result = await fetcher.execute(ToolCall(tool_name="async_tool", arguments={"x": 5}))
         assert result.status == ExecutionStatus.SUCCESS
         assert result.result == 10
 
     @pytest.mark.asyncio
-    async def test_sync_tool_execution(self, gantry: AgentGantry) -> None:
+    async def test_sync_tool_execution(self, fetcher: DotFetch) -> None:
         """Test that sync tools execute correctly in async context."""
 
-        @gantry.register
+        @fetcher.register
         def sync_tool(x: int) -> int:
             """A sync tool for testing sync execution in async context."""
             return x * 3
 
-        await gantry.sync()
+        await fetcher.sync()
 
-        result = await gantry.execute(ToolCall(tool_name="sync_tool", arguments={"x": 5}))
+        result = await fetcher.execute(ToolCall(tool_name="sync_tool", arguments={"x": 5}))
         assert result.status == ExecutionStatus.SUCCESS
         assert result.result == 15
 
     @pytest.mark.asyncio
-    async def test_batch_execution(self, gantry: AgentGantry) -> None:
+    async def test_batch_execution(self, fetcher: DotFetch) -> None:
         """Test batch execution of multiple tools."""
-        from agent_gantry.schema.execution import BatchToolCall
+        from dotfetch.schema.execution import BatchToolCall
 
-        @gantry.register
+        @fetcher.register
         def tool_one(x: int) -> int:
             """First tool for batch execution testing."""
             return x + 1
 
-        @gantry.register
+        @fetcher.register
         def tool_two(x: int) -> int:
             """Second tool for batch execution testing."""
             return x * 2
 
-        await gantry.sync()
+        await fetcher.sync()
 
         batch = BatchToolCall(
             calls=[
@@ -573,7 +573,7 @@ class TestAsyncOperations:
             ]
         )
 
-        result = await gantry.execute_batch(batch)
+        result = await fetcher.execute_batch(batch)
         assert result.successful_count == 2
         assert result.failed_count == 0
         assert len(result.results) == 2
@@ -583,16 +583,16 @@ class TestHealthTracking:
     """Tests for health metrics tracking."""
 
     @pytest.mark.asyncio
-    async def test_health_metrics_update_on_success(self, gantry: AgentGantry) -> None:
+    async def test_health_metrics_update_on_success(self, fetcher: DotFetch) -> None:
         """Test that health metrics update correctly on success."""
 
-        @gantry.register
+        @fetcher.register
         def success_tool(x: int) -> int:
             """A tool that succeeds for health metrics testing."""
             return x * 2
 
-        await gantry.sync()
-        tool = await gantry.get_tool("success_tool")
+        await fetcher.sync()
+        tool = await fetcher.get_tool("success_tool")
         assert tool is not None
 
         # Initial health state
@@ -600,11 +600,11 @@ class TestHealthTracking:
         assert tool.health.success_rate == 1.0
 
         # Execute successfully
-        result = await gantry.execute(ToolCall(tool_name="success_tool", arguments={"x": 5}))
+        result = await fetcher.execute(ToolCall(tool_name="success_tool", arguments={"x": 5}))
         assert result.status == ExecutionStatus.SUCCESS
 
         # Check health updated
-        tool_after = await gantry.get_tool("success_tool")
+        tool_after = await fetcher.get_tool("success_tool")
         assert tool_after is not None
         assert tool_after.health.total_calls == 1
         assert tool_after.health.success_rate == 1.0
@@ -612,24 +612,24 @@ class TestHealthTracking:
         assert not tool_after.health.circuit_breaker_open
 
     @pytest.mark.asyncio
-    async def test_health_metrics_update_on_failure(self, gantry: AgentGantry) -> None:
+    async def test_health_metrics_update_on_failure(self, fetcher: DotFetch) -> None:
         """Test that health metrics update correctly on failure."""
 
-        @gantry.register
+        @fetcher.register
         def failing_tool(x: int) -> int:
             """A tool that fails for health metrics testing."""
             raise ValueError("Intentional failure")
 
-        await gantry.sync()
+        await fetcher.sync()
 
         # Execute and fail
-        result = await gantry.execute(
+        result = await fetcher.execute(
             ToolCall(tool_name="failing_tool", arguments={"x": 5}, retry_count=0)
         )
         assert result.status == ExecutionStatus.FAILURE
 
         # Check health updated
-        tool = await gantry.get_tool("failing_tool")
+        tool = await fetcher.get_tool("failing_tool")
         assert tool is not None
         assert tool.health.total_calls == 1
         assert tool.health.success_rate < 1.0

@@ -2,38 +2,38 @@
 import DocsLayout from '../../../../layouts/DocsLayout.astro';
 import CodeBlock from '../../../../components/CodeBlock.astro';
 ---
-<DocsLayout title="DSPy guide | Agent-Gantry" description="Integrate Agent-Gantry with dspy.ReAct: Gantry-selected dspy.Tool objects, error tool results, an approver for gated calls, and the running module as run context.">
+<DocsLayout title="DSPy guide | dotfetch" description="Integrate dotfetch with dspy.ReAct: dotfetch-selected dspy.Tool objects, error tool results, an approver for gated calls, and the running module as run context.">
   <p class="eyebrow">Framework guide</p>
   <h1>DSPy</h1>
-  <p class="lead">Agent-Gantry hands <code>dspy.ReAct</code> the relevant <code>dspy.Tool</code> objects for each task. Failures become DSPy error tool results, an approver decides confirmation-gated calls, and a tool can read the module running it.</p>
+  <p class="lead">dotfetch hands <code>dspy.ReAct</code> the relevant <code>dspy.Tool</code> objects for each task. Failures become DSPy error tool results, an approver decides confirmation-gated calls, and a tool can read the module running it.</p>
   <p><a class="pill" href="/Agent-Gantry/docs/frameworks/dspy/advanced/">Advanced DSPy usage →</a></p>
 
   <h2>Install</h2>
-  <CodeBlock lang="bash" code={`uv add "agent-gantry[dspy]"   # dspy >= 3.5 (ReAct with native tool_calls and submit)`} />
+  <CodeBlock lang="bash" code={`uv add "dotfetch[dspy]"   # dspy >= 3.5 (ReAct with native tool_calls and submit)`} />
 
   <h2>Basic page: tools picked for the task</h2>
   <CodeBlock lang="python" code={`import dspy
-from agent_gantry import AgentGantry
-from agent_gantry.dspy import DSPyAdapter
+from dotfetch import DotFetch
+from dotfetch.dspy import DSPyAdapter
 
 dspy.configure(lm=dspy.LM("openai/gpt-5.5"))
-gantry = AgentGantry()
+fetcher = DotFetch()
 
-@gantry.register(examples=["where is my order", "has order 4471 shipped"])
+@fetcher.register(examples=["where is my order", "has order 4471 shipped"])
 def get_order_status(order_id: str) -> str:
     """Return the current shipping status for an order."""
     return "in_transit"
 
-await gantry.sync()
-tools = await DSPyAdapter(gantry).select("check an order", limit=3)   # dspy.Tool objects
+await fetcher.sync()
+tools = await DSPyAdapter(fetcher).select("check an order", limit=3)   # dspy.Tool objects
 react = dspy.ReAct("question -> answer", tools=tools)
 pred = react(question="Has order 4471 shipped?")                     # or await react.acall(...)`} />
-  <p>Tools run synchronously through Gantry, so both <code>react(...)</code> and <code>await react.acall(...)</code> work with no DSPy setting.</p>
+  <p>Tools run synchronously through dotfetch, so both <code>react(...)</code> and <code>await react.acall(...)</code> work with no DSPy setting.</p>
 
   <h2>What the model sees when a tool fails</h2>
-  <p>A failed call raises <code>DSPyToolError</code>, and <code>dspy.ReAct</code> records it as an error tool result (<code>is_error=True</code>) so the model gets another turn. DSPy adds its own short traceback to every tool error; the text ends with Gantry's <code>"&lt;type&gt;: &lt;message&gt;"</code>, capped at 2,000 characters, and the original error is not chained onto it.</p>
-  <div class="callout"><strong>Redact or opt out:</strong> <code>DSPyAdapter(gantry, error_formatter=redact)</code> rewrites the text; <code>error_mode="raise"</code> raises the plain <code>ToolExecutionError</code> instead.</div>
+  <p>A failed call raises <code>DSPyToolError</code>, and <code>dspy.ReAct</code> records it as an error tool result (<code>is_error=True</code>) so the model gets another turn. DSPy adds its own short traceback to every tool error; the text ends with dotfetch's <code>"&lt;type&gt;: &lt;message&gt;"</code>, capped at 2,000 characters, and the original error is not chained onto it.</p>
+  <div class="callout"><strong>Redact or opt out:</strong> <code>DSPyAdapter(fetcher, error_formatter=redact)</code> rewrites the text; <code>error_mode="raise"</code> raises the plain <code>ToolExecutionError</code> instead.</div>
 
   <h2>Testing offline</h2>
-  <p>DSPy's <code>dspy.utils.dummies.DummyLM</code> scripts each turn's <code>tool_calls</code> (finishing with a <code>submit</code> call), so a test can run a full <code>ReAct</code> loop, with Gantry tools really executing, and no API key. <code>examples/agent_frameworks/dspy_example.py</code> does exactly that.</p>
+  <p>DSPy's <code>dspy.utils.dummies.DummyLM</code> scripts each turn's <code>tool_calls</code> (finishing with a <code>submit</code> call), so a test can run a full <code>ReAct</code> loop, with dotfetch tools really executing, and no API key. <code>examples/agent_frameworks/dspy_example.py</code> does exactly that.</p>
 </DocsLayout>

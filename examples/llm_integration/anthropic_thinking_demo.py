@@ -4,10 +4,10 @@ Anthropic Interleaved & Extended Thinking Demo.
 This example demonstrates how to use Anthropic's advanced thinking features:
 1. Interleaved Thinking - Shows the model's reasoning process
 2. Extended Thinking - Allows deeper reasoning with budget tokens
-3. Tool use with Agent-Gantry integration
+3. Tool use with dotfetch integration
 
 Requirements:
-    pip install anthropic agent-gantry
+    pip install anthropic dotfetch
 
 Environment:
     Set ANTHROPIC_API_KEY in your environment
@@ -18,8 +18,8 @@ import os
 
 from dotenv import load_dotenv
 
-from agent_gantry import AgentGantry
-from agent_gantry.integrations.anthropic_features import (
+from dotfetch import DotFetch
+from dotfetch.integrations.anthropic_features import (
     AnthropicClient,
     AnthropicFeatures,
     create_anthropic_client,
@@ -114,11 +114,11 @@ async def demo_thinking_with_tools():
     print("=" * 80)
     print()
 
-    # Initialize Agent-Gantry
-    gantry = AgentGantry()
+    # Initialize dotfetch
+    fetcher = DotFetch()
 
     try:
-        @gantry.register(examples=["calculate 15% tip on $47.50", "what is 12 * 8 + 3"])
+        @fetcher.register(examples=["calculate 15% tip on $47.50", "what is 12 * 8 + 3"])
         def calculate(expression: str) -> float:
             """Evaluate a mathematical expression safely."""
             import ast
@@ -148,7 +148,7 @@ async def demo_thinking_with_tools():
             except Exception as e:
                 return f"Error: {str(e)}"
 
-        @gantry.register(
+        @fetcher.register(
             examples=["what's the weather in San Francisco", "is it sunny in Leeds today"]
         )
         def get_weather(city: str) -> str:
@@ -156,11 +156,11 @@ async def demo_thinking_with_tools():
             # Mock weather data
             return f"Weather in {city}: 72°F, Sunny"
 
-        await gantry.sync()
+        await fetcher.sync()
 
         # Initialize client with thinking and tools
         client = await create_anthropic_client(
-            gantry=gantry,
+            fetcher=fetcher,
             enable_thinking="interleaved",
         )
 
@@ -200,7 +200,7 @@ async def demo_thinking_with_tools():
 
         print()
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def demo_comparison():
@@ -279,7 +279,7 @@ async def main():
         print("Key Takeaways:")
         print("  • Interleaved thinking shows the model's reasoning process")
         print("  • Extended thinking allows deeper reasoning with budget control")
-        print("  • Both features work seamlessly with Agent-Gantry tool use")
+        print("  • Both features work seamlessly with dotfetch tool use")
         print("  • Use thinking when you need transparency and better decision-making")
         print()
 

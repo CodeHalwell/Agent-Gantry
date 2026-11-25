@@ -26,27 +26,27 @@ from typing import Any, Literal
 import pytest
 from pydantic import BaseModel
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.tool_spec.providers import (
+from dotfetch import DotFetch
+from dotfetch.adapters.tool_spec.providers import (
     AgentFrameworkAdapter,
     AnthropicAdapter,
     GeminiAdapter,
     OpenAIAdapter,
     OpenAIResponsesAdapter,
 )
-from agent_gantry.adapters.tool_spec.round_trip import (
+from dotfetch.adapters.tool_spec.round_trip import (
     StreamingToolCallAccumulator,
     extract_tool_calls,
 )
-from agent_gantry.adapters.tool_spec.schema_utils import (
+from dotfetch.adapters.tool_spec.schema_utils import (
     sanitize_gemini_schema,
     strict_json_schema,
     unsupported_strict_paths,
 )
-from agent_gantry.schema.introspection import build_parameters_schema
-from agent_gantry.schema.tool import SchemaDialect, ToolDefinition
+from dotfetch.schema.introspection import build_parameters_schema
+from dotfetch.schema.tool import SchemaDialect, ToolDefinition
 
-_PROVIDERS_LOGGER = "agent_gantry.adapters.tool_spec.providers"
+_PROVIDERS_LOGGER = "dotfetch.adapters.tool_spec.providers"
 
 
 def _tool(schema: dict[str, Any]) -> ToolDefinition:
@@ -229,15 +229,15 @@ class TestGeminiEnums:
     async def test_the_emitted_shape_round_trips_through_execute(self) -> None:
         """The point of the rewrite: what Gemini can answer must be a value
         the executor accepts, and the enum must still be enforced."""
-        gantry = AgentGantry()
+        fetcher = DotFetch()
 
-        @gantry.register
+        @fetcher.register
         def set_level(level: Literal[1, 2]) -> str:
             """Set the level to one of the allowed values."""
             return f"level={level}"
 
-        await gantry.sync()
-        declarations = await gantry.retrieve_tools("set the level", limit=1, dialect="gemini")
+        await fetcher.sync()
+        declarations = await fetcher.retrieve_tools("set the level", limit=1, dialect="gemini")
         parameters = declarations[0]["parameters"]
         assert parameters["properties"]["level"] == {
             "type": "integer",
@@ -245,18 +245,18 @@ class TestGeminiEnums:
         }
         _gemini_declaration(parameters)
 
-        from agent_gantry.schema.execution import ExecutionStatus, ToolCall
+        from dotfetch.schema.execution import ExecutionStatus, ToolCall
 
-        ok = await gantry.execute(ToolCall(tool_name="set_level", arguments={"level": 1}))
+        ok = await fetcher.execute(ToolCall(tool_name="set_level", arguments={"level": 1}))
         assert ok.status is ExecutionStatus.SUCCESS, ok.error
         assert ok.result == "level=1"
 
         # The canonical schema still carries the enum, so a value outside it
         # is rejected even though Gemini was not told to constrain itself.
-        bad = await gantry.execute(ToolCall(tool_name="set_level", arguments={"level": 3}))
+        bad = await fetcher.execute(ToolCall(tool_name="set_level", arguments={"level": 3}))
         assert bad.status is ExecutionStatus.FAILURE
         assert "one of [1, 2]" in (bad.error or "")
-        await gantry.close()
+        await fetcher.close()
 
     def test_const_conversion_drops_a_non_string_enum_too(self) -> None:
         """The sanitizer's own ``const`` → ``enum`` rewrite produced a
@@ -444,7 +444,7 @@ class TestGeminiPrefixItems:
 
 
 def test_a_tool_using_all_three_gemini_shapes_is_accepted_by_the_sdk() -> None:
-    """End to end through the adapter: what ``AgentGantry`` actually emits."""
+    """End to end through the adapter: what ``DotFetch`` actually emits."""
 
     def handler(
         name: str | None,
@@ -516,7 +516,7 @@ class TestToolResultSerialization:
         self, adapter: Any, result: Any, expected: Any
     ) -> None:
         """A bare ``json.dumps`` raised ``TypeError`` for every one of these,
-        which ``AgentGantry.execute_tool_calls`` surfaced as a crash rather
+        which ``DotFetch.execute_tool_calls`` surfaced as a crash rather
         than a result the model could read."""
         formatted = adapter.format_tool_result("probe", result, "call_1")
         decoded = json.loads(_text_of(formatted))
@@ -551,13 +551,13 @@ class TestToolResultSerialization:
         ] == {"k": 1}
 
     @pytest.mark.asyncio
-    async def test_execute_tool_calls_survives_a_datetime_result(self, gantry: AgentGantry) -> None:
-        @gantry.register(tags=["time"])
+    async def test_execute_tool_calls_survives_a_datetime_result(self, fetcher: DotFetch) -> None:
+        @fetcher.register(tags=["time"])
         def when() -> datetime.datetime:
             """Return a fixed timestamp."""
             return _STAMP
 
-        await gantry.sync()
+        await fetcher.sync()
 
         openai_response = {
             "choices": [
@@ -570,13 +570,13 @@ class TestToolResultSerialization:
                 }
             ]
         }
-        [reply] = await gantry.execute_tool_calls(openai_response, dialect="openai")
+        [reply] = await fetcher.execute_tool_calls(openai_response, dialect="openai")
         assert json.loads(reply["content"]) == "2024-01-02T03:04:05"
 
         gemini_response = {
             "candidates": [{"content": {"parts": [{"functionCall": {"name": "when", "args": {}}}]}}]
         }
-        [reply] = await gantry.execute_tool_calls(gemini_response, dialect="gemini")
+        [reply] = await fetcher.execute_tool_calls(gemini_response, dialect="gemini")
         assert reply["functionResponse"]["response"] == {"result": "2024-01-02T03:04:05"}
 
 
@@ -766,7 +766,7 @@ class TestAnthropicStrictClosesEveryObject:
         ``{"$ref": "#/$defs/Anything"}`` pointing at a description-only
         definition was published ``strict: true`` with no type for the
         provider to read -- the failure this check exists to report."""
-        from agent_gantry.adapters.tool_spec.schema_utils import unsupported_strict_paths
+        from dotfetch.adapters.tool_spec.schema_utils import unsupported_strict_paths
 
         typeless = {
             "type": "object",
@@ -815,7 +815,7 @@ class TestAnthropicStrictClosesEveryObject:
         """As with ``$ref``, the combinator existing counted as a declared
         type, so ``{"anyOf": [{"description": "free form"}]}`` went out
         ``strict: true`` with nothing for the provider to read."""
-        from agent_gantry.adapters.tool_spec.schema_utils import unsupported_strict_paths
+        from dotfetch.adapters.tool_spec.schema_utils import unsupported_strict_paths
 
         def _paths(prop: dict[str, Any], **extra: Any) -> list[str]:
             return unsupported_strict_paths(
@@ -1113,7 +1113,7 @@ def test_a_result_keyed_by_a_non_string_survives_the_gemini_round_trip() -> None
     of a result that previously passed through untouched."""
     import enum
 
-    from agent_gantry.adapters.tool_spec.providers import _json_native
+    from dotfetch.adapters.tool_spec.providers import _json_native
 
     class Kind(enum.Enum):
         PRIMARY = "primary"
@@ -1137,7 +1137,7 @@ def test_anthropic_strict_is_not_gated_on_openais_ref_inlining_limit() -> None:
     transform never inlines a ``$ref``, so sharing that probe withheld
     grammar-constrained sampling from a required self-referential model for an
     unrelated provider's limitation."""
-    from agent_gantry.adapters.tool_spec.schema_utils import unsupported_strict_paths
+    from dotfetch.adapters.tool_spec.schema_utils import unsupported_strict_paths
 
     recursive = {
         "type": "object",
@@ -1175,7 +1175,7 @@ def test_the_legacy_definitions_keyword_is_closed_too() -> None:
     its pre-2019 spelling; the Anthropic object-closing walk only had
     ``$defs``. A hand-authored or Pydantic v1 schema went out ``strict: true``
     with the ``$ref`` target's nested objects still open."""
-    from agent_gantry.adapters.tool_spec.providers import _close_objects_in_place
+    from dotfetch.adapters.tool_spec.providers import _close_objects_in_place
 
     schema = {
         "type": "object",
@@ -1194,7 +1194,7 @@ def test_an_all_permissive_boolean_property_is_not_strict_safe() -> None:
     ``{}``. Only ``false`` was special cased, so this passed the scan and the
     tool went out ``strict: true`` with a property the provider has no type to
     read."""
-    from agent_gantry.adapters.tool_spec.schema_utils import unsupported_strict_paths
+    from dotfetch.adapters.tool_spec.schema_utils import unsupported_strict_paths
 
     assert unsupported_strict_paths({"type": "object", "properties": {"value": True}}) == [
         "value"
@@ -1211,7 +1211,7 @@ def test_a_typeless_nested_subschema_is_reported_too() -> None:
     ``properties``, so an array whose ``items`` were typeless passed on the
     strength of the property's own ``array`` and went out ``strict: true``
     with nothing for the provider to read in the item schema."""
-    from agent_gantry.adapters.tool_spec.schema_utils import unsupported_strict_paths
+    from dotfetch.adapters.tool_spec.schema_utils import unsupported_strict_paths
 
     typeless_items = {
         "type": "object",

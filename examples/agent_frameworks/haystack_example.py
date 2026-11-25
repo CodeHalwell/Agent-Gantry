@@ -1,23 +1,23 @@
-"""Haystack + Agent-Gantry integration example (haystack-ai >= 3.0).
+"""Haystack + dotfetch integration example (haystack-ai >= 3.0).
 
 Runs offline: a small scripted chat generator stands in for an LLM and issues
 the tool calls, so Haystack's real ``Agent`` loop does the rest. It shows:
 
-1. ``HaystackAdapter.agent()`` — Gantry re-selects tools after every tool
+1. ``HaystackAdapter.agent()`` — dotfetch re-selects tools after every tool
    step: looking up a customer surfaces the email tool for the next step.
 2. A failing tool — the Agent records an error tool result
    (``"<type>: <message>"``) and the model gets another step.
 3. A confirmation-gated tool — Haystack's ``ConfirmationHook`` asks a
    ``ConfirmationUI`` (here a scripted one; ``SimpleConsoleUI()`` asks in the
    terminal) about the gated call only, and it runs once when confirmed.
-4. Run context — a Gantry tool reads the Agent's ``State`` through
+4. Run context — a dotfetch tool reads the Agent's ``State`` through
    ``current_agent_state()``.
 
 Set ``OPENAI_API_KEY`` to also run one turn on a real model.
 
 Install:
 
-    pip install 'agent-gantry[haystack]'
+    pip install 'dotfetch[haystack]'
 
 Run:
 
@@ -30,28 +30,28 @@ import asyncio
 import os
 from typing import Any
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
 
 
-def build_gantry() -> AgentGantry:
-    from agent_gantry.haystack import current_agent_state
+def build_fetcher() -> DotFetch:
+    from dotfetch.haystack import current_agent_state
 
-    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
+    fetcher = DotFetch(embedder=SimpleEmbedder(dimension=256))
 
-    @gantry.register(examples=["look up the customer record", "find customer details"])
+    @fetcher.register(examples=["look up the customer record", "find customer details"])
     def lookup_customer(name: str) -> str:
         """Look up a customer's record by name."""
         return f"{name} prefers to be contacted by email message"
 
-    @gantry.register(examples=["how much is 50 euros in pounds", "convert 100 dollars to yen"])
+    @fetcher.register(examples=["how much is 50 euros in pounds", "convert 100 dollars to yen"])
     def convert_currency(amount: float, frm: str, to: str) -> str:
         """Convert an amount of money from one currency to another."""
         if frm == to:
             raise ValueError("pick two different currencies")
         return f"{amount} {frm} = {amount * 1.1:.2f} {to}"
 
-    @gantry.register(
+    @fetcher.register(
         requires_confirmation=True,
         examples=["email the team about the delay", "send an email message to Sam"],
     )
@@ -59,12 +59,12 @@ def build_gantry() -> AgentGantry:
         """Compose and send an email message to a recipient."""
         return f"Email sent to {to}."
 
-    @gantry.register(examples=["who am I", "which account is this"])
+    @fetcher.register(examples=["who am I", "which account is this"])
     def whoami() -> str:
         """Say which user this run belongs to."""
         return f"user {current_agent_state().get('user')}"
 
-    return gantry
+    return fetcher
 
 
 def scripted_generator(*steps: list[tuple[str, dict[str, Any]]]) -> Any:
@@ -117,16 +117,16 @@ async def main() -> None:
     except ImportError as exc:
         print(
             f"Haystack 3.x is not installed ({exc}).\n"
-            "Install it with `pip install 'agent-gantry[haystack]'`."
+            "Install it with `pip install 'dotfetch[haystack]'`."
         )
         return
 
-    from agent_gantry.haystack import HaystackAdapter
+    from dotfetch.haystack import HaystackAdapter
 
-    gantry = build_gantry()
+    fetcher = build_fetcher()
     try:
-        await gantry.sync()
-        adapter = HaystackAdapter(gantry)
+        await fetcher.sync()
+        adapter = HaystackAdapter(fetcher)
 
         # --- 1. Tools re-selected after every tool step --------------------- #
         generator = scripted_generator([("lookup_customer", {"name": "Jo"})])
@@ -154,7 +154,7 @@ async def main() -> None:
         )
         print(f"[approve]  after confirming: {tool_results(result)[0].result!r}")
 
-        # --- 4. The Agent's State reaches the Gantry tool ------------------- #
+        # --- 4. The Agent's State reaches the dotfetch tool ------------------- #
         generator = scripted_generator([("whoami", {})])
         agent = adapter.agent(
             chat_generator=generator, limit=1, state_schema={"user": {"type": str}}
@@ -172,7 +172,7 @@ async def main() -> None:
         else:
             print("(Set OPENAI_API_KEY to also run a turn on a real model.)")
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 if __name__ == "__main__":

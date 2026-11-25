@@ -2,14 +2,14 @@
 import DocsLayout from '../../../../layouts/DocsLayout.astro';
 import CodeBlock from '../../../../components/CodeBlock.astro';
 ---
-<DocsLayout title="Advanced Pydantic AI guide | Agent-Gantry" description="Approvals, tool search, skills, toolset ids, tracing and error modes for the Agent-Gantry Pydantic AI integration.">
+<DocsLayout title="Advanced Pydantic AI guide | dotfetch" description="Approvals, tool search, skills, toolset ids, tracing and error modes for the dotfetch Pydantic AI integration.">
   <p class="eyebrow">Advanced framework guide</p>
   <h1>Advanced Pydantic AI</h1>
-  <p class="lead">Human-in-the-loop approval, Gantry-backed tool search, per-turn skills, multiple toolsets, tracing, and how per-turn selection behaves inside a run.</p>
+  <p class="lead">Human-in-the-loop approval, dotfetch-backed tool search, per-turn skills, multiple toolsets, tracing, and how per-turn selection behaves inside a run.</p>
   <p><a class="pill" href="/Agent-Gantry/docs/frameworks/pydantic-ai/">← Basic Pydantic AI usage</a></p>
 
   <h2>Human-in-the-loop approval</h2>
-  <p>A tool registered with <code>requires_confirmation=True</code>, or matched by a <code>SecurityPolicy(require_confirmation=[...])</code> pattern, pauses the run with Pydantic AI's <code>DeferredToolRequests</code>. Approving it with <code>DeferredToolResults</code> replays the call once through <code>gantry.execute</code> with the confirmation gate cleared; every other policy check still runs. A denial never executes the tool.</p>
+  <p>A tool registered with <code>requires_confirmation=True</code>, or matched by a <code>SecurityPolicy(require_confirmation=[...])</code> pattern, pauses the run with Pydantic AI's <code>DeferredToolRequests</code>. Approving it with <code>DeferredToolResults</code> replays the call once through <code>fetcher.execute</code> with the confirmation gate cleared; every other policy check still runs. A denial never executes the tool.</p>
   <CodeBlock lang="python" code={`from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults
 
 agent = Agent(
@@ -25,10 +25,10 @@ if isinstance(result.output, DeferredToolRequests):
         message_history=result.all_messages(),
         deferred_tool_results=DeferredToolResults(approvals=decisions),
     )`} />
-  <p>Each request's metadata carries Gantry's identity for the tool under <code>"agent_gantry"</code> (its qualified name and the reason it needs approval).</p>
+  <p>Each request's metadata carries dotfetch's identity for the tool under <code>"dotfetch"</code> (its qualified name and the reason it needs approval).</p>
 
-  <h2>Tool search backed by Gantry</h2>
-  <p><code>capability(mode="search")</code> combines a deferred catalogue (every Gantry tool marked <code>defer_loading</code>) with Pydantic AI's <code>ToolSearch</code>, using Gantry's semantic router as the search strategy. The model calls <code>search_tools</code>, or the provider's native tool search where supported, and only discovered tools reach it. Tools passed as <code>required</code> or <code>always_include</code> stay visible.</p>
+  <h2>Tool search backed by dotfetch</h2>
+  <p><code>capability(mode="search")</code> combines a deferred catalogue (every dotfetch tool marked <code>defer_loading</code>) with Pydantic AI's <code>ToolSearch</code>, using dotfetch's semantic router as the search strategy. The model calls <code>search_tools</code>, or the provider's native tool search where supported, and only discovered tools reach it. Tools passed as <code>required</code> or <code>always_include</code> stay visible.</p>
   <CodeBlock lang="python" code={`agent = Agent(model, capabilities=[adapter.capability(mode="search", limit=5)])
 
 # Or compose the parts yourself:
@@ -37,7 +37,7 @@ agent = Agent(
     toolsets=[adapter.deferred_toolset(always_include=["get_order_status"])],
     capabilities=[adapter.tool_search(limit=5)],
 )`} />
-  <p>Other deferred tools on the same agent (not managed by Gantry) are ranked by keyword and merged with Gantry's semantic ranking under the same <code>limit</code>, so an exact keyword match is not crowded out by an unrelated Gantry hit.</p>
+  <p>Other deferred tools on the same agent (not managed by dotfetch) are ranked by keyword and merged with dotfetch's semantic ranking under the same <code>limit</code>, so an exact keyword match is not crowded out by an unrelated dotfetch hit.</p>
 
   <h2>Per-turn selection inside a run</h2>
   <ul>
@@ -49,7 +49,7 @@ agent = Agent(
     <li><strong>Failure:</strong> if retrieval fails mid-run, the step keeps the run's earlier tools and logs a warning; the run continues.</li>
   </ul>
 
-  <h2>Several Gantry toolsets on one agent</h2>
+  <h2>Several dotfetch toolsets on one agent</h2>
   <p>Give each one a distinct <code>id</code> (durable execution keys on it) and avoid name clashes with a namespace filter or a prefix.</p>
   <CodeBlock lang="python" code={`agent = Agent(
     model,
@@ -60,16 +60,16 @@ agent = Agent(
 )`} />
 
   <h2>Skills as instructions</h2>
-  <p><code>capability(skills=2)</code> injects up to two Gantry skills relevant to the current turn as dynamic instructions. Restrict them with <code>skill_namespaces=[...]</code>. If skill retrieval fails, the step continues without them.</p>
+  <p><code>capability(skills=2)</code> injects up to two dotfetch skills relevant to the current turn as dynamic instructions. Restrict them with <code>skill_namespaces=[...]</code>. If skill retrieval fails, the step continues without them.</p>
 
   <h2>Tracing</h2>
-  <p>When Pydantic AI is instrumented (Logfire or any OpenTelemetry backend), the active tool span's ids become the Gantry <code>ToolCall</code>'s <code>trace_id</code> and <code>parent_span_id</code>, so <code>gantry.on_tool_call</code> events and Gantry's own telemetry join the agent's trace.</p>
+  <p>When Pydantic AI is instrumented (Logfire or any OpenTelemetry backend), the active tool span's ids become the dotfetch <code>ToolCall</code>'s <code>trace_id</code> and <code>parent_span_id</code>, so <code>fetcher.on_tool_call</code> events and dotfetch's own telemetry join the agent's trace.</p>
 
   <h2>Production checklist</h2>
   <ul>
     <li>Add <code>DeferredToolRequests</code> to <code>output_type</code> on any agent that can reach a confirmation-gated tool.</li>
     <li>Use search mode for large catalogues or prompt-cache-sensitive agents; per-turn mode for small, fast-moving tool sets.</li>
     <li>Read <code>deps</code> through <code>current_run_context()</code>. It is not available to out-of-process executors (sandbox, MCP, A2A, HTTP).</li>
-    <li>Keep <code>error_mode="model"</code> unless your application handles <code>ToolExecutionError</code> itself. To keep internals (paths, hostnames, connection strings) out of what the model sees, pass <code>PydanticAIAdapter(gantry, error_formatter=redact)</code>; a formatter that raises is replaced by a generic message.</li>
+    <li>Keep <code>error_mode="model"</code> unless your application handles <code>ToolExecutionError</code> itself. To keep internals (paths, hostnames, connection strings) out of what the model sees, pass <code>PydanticAIAdapter(fetcher, error_formatter=redact)</code>; a formatter that raises is replaced by a generic message.</li>
   </ul>
 </DocsLayout>

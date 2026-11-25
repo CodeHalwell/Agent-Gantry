@@ -12,23 +12,23 @@ from __future__ import annotations
 
 import pytest
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-from agent_gantry.adapters.tool_spec.providers import (
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
+from dotfetch.adapters.tool_spec.providers import (
     GroqAdapter,
     MistralAdapter,
     OpenAIAdapter,
 )
-from agent_gantry.adapters.vector_stores.memory import InMemoryVectorStore
-from agent_gantry.core.executor import ExecutionEngine
-from agent_gantry.core.rate_limiter import RateLimiter, RateLimitExceeded
-from agent_gantry.core.registry import ToolRegistry
-from agent_gantry.core.security import PermissionDeniedError, SecurityPolicy
-from agent_gantry.core.sync_manager import SyncManager
-from agent_gantry.schema.config import RateLimitConfig
-from agent_gantry.schema.execution import ToolCall
-from agent_gantry.schema.query import ConversationContext, ToolQuery
-from agent_gantry.schema.tool import ToolDefinition
+from dotfetch.adapters.vector_stores.memory import InMemoryVectorStore
+from dotfetch.core.executor import ExecutionEngine
+from dotfetch.core.rate_limiter import RateLimiter, RateLimitExceeded
+from dotfetch.core.registry import ToolRegistry
+from dotfetch.core.security import PermissionDeniedError, SecurityPolicy
+from dotfetch.core.sync_manager import SyncManager
+from dotfetch.schema.config import RateLimitConfig
+from dotfetch.schema.execution import ToolCall
+from dotfetch.schema.query import ConversationContext, ToolQuery
+from dotfetch.schema.tool import ToolDefinition
 
 # ---------------------------------------------------------------------------
 # Phase 1: MMR with diversity_factor > 0
@@ -38,24 +38,24 @@ from agent_gantry.schema.tool import ToolDefinition
 @pytest.mark.asyncio
 async def test_mmr_does_not_crash_with_diversity() -> None:
     """Phase 1.1+1.3: MMR should not crash when diversity_factor > 0."""
-    gantry = AgentGantry()
+    fetcher = DotFetch()
 
-    @gantry.register(tags=["math"])
+    @fetcher.register(tags=["math"])
     def add(a: int, b: int) -> int:
         """Add two numbers."""
         return a + b
 
-    @gantry.register(tags=["math"])
+    @fetcher.register(tags=["math"])
     def subtract(a: int, b: int) -> int:
         """Subtract two numbers."""
         return a - b
 
-    @gantry.register(tags=["text"])
+    @fetcher.register(tags=["text"])
     def uppercase(text: str) -> str:
         """Convert text to uppercase."""
         return text.upper()
 
-    await gantry.sync()
+    await fetcher.sync()
 
     # This should NOT crash (previously raised NameError: math not defined)
     context = ConversationContext(query="do some math")
@@ -63,7 +63,7 @@ async def test_mmr_does_not_crash_with_diversity() -> None:
     # poor similarity scores. The point of this test is to verify MMR doesn't
     # crash with diversity_factor > 0, not to test semantic accuracy.
     query = ToolQuery(context=context, limit=2, diversity_factor=0.3, score_threshold=0.0)
-    result = await gantry.retrieve(query)
+    result = await fetcher.retrieve(query)
 
     assert len(result.tools) > 0
 
@@ -223,25 +223,25 @@ def test_groq_adapter_inherits_from_openai() -> None:
 
 @pytest.mark.asyncio
 async def test_async_context_manager() -> None:
-    """Phase 3.3: AgentGantry should support async context manager."""
-    async with AgentGantry() as gantry:
-        @gantry.register(tags=["test"])
+    """Phase 3.3: DotFetch should support async context manager."""
+    async with DotFetch() as fetcher:
+        @fetcher.register(tags=["test"])
         def hello() -> str:
             """Say hello."""
             return "hello"
 
-        assert gantry.tool_count == 1
+        assert fetcher.tool_count == 1
 
-    # After exiting, gantry should be cleaned up
-    assert gantry._initialized is False
+    # After exiting, fetcher should be cleaned up
+    assert fetcher._initialized is False
 
 
 @pytest.mark.asyncio
 async def test_close_is_idempotent() -> None:
     """Phase 3.3: close() should be safe to call multiple times."""
-    gantry = AgentGantry()
-    await gantry.close()
-    await gantry.close()  # Should not raise
+    fetcher = DotFetch()
+    await fetcher.close()
+    await fetcher.close()  # Should not raise
 
 
 # ---------------------------------------------------------------------------
@@ -313,17 +313,17 @@ async def test_permission_denied_status_is_not_flattened_to_failure() -> None:
     exception to FAILURE, so whether a permission failure was distinguishable
     depended on which code path raised it. Carried from PR #316.
     """
-    from agent_gantry import AgentGantry
-    from agent_gantry.core.security import PermissionDeniedError
-    from agent_gantry.schema.execution import ExecutionStatus, ToolCall
-    from agent_gantry.schema.tool import ToolDefinition
+    from dotfetch import DotFetch
+    from dotfetch.core.security import PermissionDeniedError
+    from dotfetch.schema.execution import ExecutionStatus, ToolCall
+    from dotfetch.schema.tool import ToolDefinition
 
-    gantry = AgentGantry()
+    fetcher = DotFetch()
 
     async def denied() -> str:
         raise PermissionDeniedError("not allowed to touch this resource")
 
-    await gantry.add_tool(
+    await fetcher.add_tool(
         ToolDefinition(
             name="denied_tool",
             description="A tool whose handler refuses on permission grounds.",
@@ -332,7 +332,7 @@ async def test_permission_denied_status_is_not_flattened_to_failure() -> None:
         handler=denied,
     )
 
-    result = await gantry.execute(ToolCall(tool_name="denied_tool", arguments={}))
+    result = await fetcher.execute(ToolCall(tool_name="denied_tool", arguments={}))
 
     assert result.error_type == "PermissionDeniedError"
     assert result.status == ExecutionStatus.PERMISSION_DENIED

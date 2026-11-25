@@ -27,11 +27,11 @@ from rdkit import Chem
 from rdkit.Chem import Descriptors
 from sympy import solve, symbols, sympify
 
-from agent_gantry import create_default_gantry
+from dotfetch import create_default_fetcher
 
 # Create the instance using the factory function
-# Users can also call create_default_gantry() for a fresh instance
-tools = create_default_gantry()
+# Users can also call create_default_fetcher() for a fresh instance
+tools = create_default_fetcher()
 
 
 @tools.register(
@@ -113,7 +113,7 @@ def fetch_web_content(url: str) -> str:
         with requests.get(
             url,
             timeout=30,
-            headers={"User-Agent": "Agent-Gantry/0.1.0"},
+            headers={"User-Agent": "dotfetch/0.1.0"},
             stream=True,
         ) as response:
             response.raise_for_status()

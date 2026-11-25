@@ -2,20 +2,20 @@
 import DocsLayout from '../../../../layouts/DocsLayout.astro';
 import CodeBlock from '../../../../components/CodeBlock.astro';
 ---
-<DocsLayout title="Advanced LangChain guide | Agent-Gantry" description="Approval, run context, tracing and error modes for Agent-Gantry's LangChain tools.">
+<DocsLayout title="Advanced LangChain guide | dotfetch" description="Approval, run context, tracing and error modes for dotfetch's LangChain tools.">
   <p class="eyebrow">Advanced framework guide</p>
   <h1>Advanced LangChain</h1>
-  <p class="lead">Approval, run context and tracing for Gantry's LangChain tools. Per-turn selection is covered in the LangGraph guide, since <code>create_agent</code> runs on LangGraph.</p>
+  <p class="lead">Approval, run context and tracing for dotfetch's LangChain tools. Per-turn selection is covered in the LangGraph guide, since <code>create_agent</code> runs on LangGraph.</p>
   <p><a class="pill" href="/Agent-Gantry/docs/frameworks/langchain/">← Basic LangChain usage</a></p>
 
   <h2>Human approval</h2>
   <p>A confirmation-gated tool (<code>requires_confirmation=True</code> or a <code>SecurityPolicy</code> pattern) pauses a LangGraph-backed run, which includes every <code>create_agent</code> agent, with <code>interrupt()</code>. Resume with <code>Command(resume=True)</code> to run it once. The run needs a checkpointer. Outside a graph, for example when you call <code>model.bind_tools(tools)</code> and invoke tools yourself, the model is told the call needs approval and it is not run. See <a href="/Agent-Gantry/docs/frameworks/langgraph/advanced/">Advanced LangGraph</a> for the full flow.</p>
 
   <h2>Run context</h2>
-  <p><code>current_tool_runtime()</code> returns the run a Gantry tool is executing in: <code>.config</code> (the <code>RunnableConfig</code>), <code>.tool_call_id</code>, and inside LangGraph <code>.context</code> and <code>.store</code>.</p>
-  <CodeBlock lang="python" code={`from agent_gantry.langchain import current_tool_runtime
+  <p><code>current_tool_runtime()</code> returns the run a dotfetch tool is executing in: <code>.config</code> (the <code>RunnableConfig</code>), <code>.tool_call_id</code>, and inside LangGraph <code>.context</code> and <code>.store</code>.</p>
+  <CodeBlock lang="python" code={`from dotfetch.langchain import current_tool_runtime
 
-@gantry.register
+@fetcher.register
 def audit_note(text: str) -> str:
     """Attach a note to the current conversation's audit log."""
     runtime = current_tool_runtime()
@@ -23,7 +23,7 @@ def audit_note(text: str) -> str:
     return audit.write(thread, runtime.tool_call_id, text)`} />
 
   <h2>Tracing</h2>
-  <p>An active OpenTelemetry span, or else the current LangSmith run, becomes the Gantry <code>ToolCall</code>'s <code>trace_id</code> and <code>parent_span_id</code>.</p>
+  <p>An active OpenTelemetry span, or else the current LangSmith run, becomes the dotfetch <code>ToolCall</code>'s <code>trace_id</code> and <code>parent_span_id</code>.</p>
 
   <h2>Error modes</h2>
   <ul>

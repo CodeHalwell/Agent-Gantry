@@ -1,9 +1,9 @@
 """Tests for the deep, per-turn Google ADK dynamic-tool provider.
 
-Exercises :func:`gantry_before_model_callback` against the *real* installed
+Exercises :func:`fetcher_before_model_callback` against the *real* installed
 ``google.adk`` contract. The callback is what ADK invokes via
 ``Agent(before_model_callback=...)`` before every model request: it must derive
-the turn's query from the ``callback_context``, re-select tools from Gantry, and
+the turn's query from the ``callback_context``, re-select tools from dotfetch, and
 inject their ``FunctionDeclaration``s into the ``LlmRequest`` the model sees this
 turn (via :meth:`LlmRequest.append_tools`). Because selection is re-run per call,
 the injected tool surface must change turn-to-turn as the user's intent changes.
@@ -25,14 +25,14 @@ pytest.importorskip("google.adk")
 from google.adk.models import LlmRequest
 from google.genai import types
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-from agent_gantry.integrations.frameworks.google_adk import GoogleADKAdapter
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
+from dotfetch.integrations.frameworks.google_adk import GoogleADKAdapter
 
 
 @pytest.fixture
-async def gantry():
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+async def fetcher():
+    g = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
     @g.register(tags=["weather", "forecast"])
     def get_weather(city: str) -> str:
@@ -74,8 +74,8 @@ def _injected_declaration_names(llm_request: LlmRequest) -> set[str]:
     return names
 
 
-async def test_callback_injects_weather_tool_for_weather_turn(gantry):
-    callback = GoogleADKAdapter(gantry).before_model_callback(limit=2)
+async def test_callback_injects_weather_tool_for_weather_turn(fetcher):
+    callback = GoogleADKAdapter(fetcher).before_model_callback(limit=2)
     llm_request = LlmRequest()
 
     result = await callback(
@@ -92,8 +92,8 @@ async def test_callback_injects_weather_tool_for_weather_turn(gantry):
     assert "get_weather" in llm_request.tools_dict
 
 
-async def test_callback_reselects_email_tool_for_email_turn(gantry):
-    callback = GoogleADKAdapter(gantry).before_model_callback(limit=2)
+async def test_callback_reselects_email_tool_for_email_turn(fetcher):
+    callback = GoogleADKAdapter(fetcher).before_model_callback(limit=2)
     llm_request = LlmRequest()
 
     await callback(
@@ -106,9 +106,9 @@ async def test_callback_reselects_email_tool_for_email_turn(gantry):
     assert "send_email" in llm_request.tools_dict
 
 
-async def test_per_turn_reselection_changes_tool_surface(gantry):
+async def test_per_turn_reselection_changes_tool_surface(fetcher):
     """Each model request gets a freshly selected slice of tools."""
-    callback = GoogleADKAdapter(gantry).before_model_callback(limit=1)
+    callback = GoogleADKAdapter(fetcher).before_model_callback(limit=1)
 
     weather_req = LlmRequest()
     await callback(_context_with_text("weather forecast for the city"), weather_req)
@@ -122,8 +122,8 @@ async def test_per_turn_reselection_changes_tool_surface(gantry):
     assert email_injected == {"send_email"}
 
 
-async def test_empty_query_injects_nothing(gantry):
-    callback = GoogleADKAdapter(gantry).before_model_callback(limit=3)
+async def test_empty_query_injects_nothing(fetcher):
+    callback = GoogleADKAdapter(fetcher).before_model_callback(limit=3)
     llm_request = LlmRequest()
 
     # No user_content and no session -> empty query -> no injection.
@@ -133,10 +133,10 @@ async def test_empty_query_injects_nothing(gantry):
     assert llm_request.tools_dict == {}
 
 
-async def test_gantry_adk_agent_builds_agent_with_no_static_tools(gantry):
+async def test_fetcher_adk_agent_builds_agent_with_no_static_tools(fetcher):
     from google.adk.agents import Agent
 
-    agent = GoogleADKAdapter(gantry).agent(
+    agent = GoogleADKAdapter(fetcher).agent(
         model="gemini-2.0-flash",
         name="assistant",
         instruction="You are helpful.",

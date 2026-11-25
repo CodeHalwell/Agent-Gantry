@@ -16,7 +16,7 @@ import time
 
 import pytest
 
-from agent_gantry.integrations.frameworks import base as fw_base
+from dotfetch.integrations.frameworks import base as fw_base
 
 #: Generous enough that a serialized run blows through it, tight enough that a
 #: genuine deadlock fails the test rather than hanging the suite.

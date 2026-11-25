@@ -4,14 +4,14 @@ End-to-end check with 30 real tools: retrieve -> LLM -> execute.
 Registers 30 working Python functions, retrieves the top 3 for each of seven
 queries with the Nomic embedder, and — when ``OPENAI_API_KEY`` is set — hands
 that slice to ``gpt-5.5``, then executes whatever it calls through
-``gantry.execute``. Without a key the retrieval step still runs and is scored;
+``fetcher.execute``. Without a key the retrieval step still runs and is scored;
 the LLM step is skipped. Needs the ``nomic`` extra (falls back to the hashing
 ``SimpleEmbedder`` when sentence-transformers is not installed) and the
 ``openai`` extra for the LLM step.
 
 Run with::
 
-    pip install agent-gantry[nomic,openai]
+    pip install dotfetch[nomic,openai]
     export OPENAI_API_KEY=...        # optional; enables the LLM + execution step
     python examples/testing_limits/real_world_30_tools_test.py
 """
@@ -24,9 +24,9 @@ import re
 from datetime import datetime, timedelta
 from typing import Any
 
-from agent_gantry import AgentGantry
-from agent_gantry.schema.config import AgentGantryConfig, EmbedderConfig
-from agent_gantry.schema.execution import ToolCall
+from dotfetch import DotFetch
+from dotfetch.schema.config import DotFetchConfig, EmbedderConfig
+from dotfetch.schema.execution import ToolCall
 
 try:
     from dotenv import load_dotenv
@@ -300,7 +300,7 @@ TOOL_EXAMPLES: dict[str, list[str]] = {
 
 
 async def main():
-    print("=== Agent-Gantry Real-World 30 Tools Test ===\n")
+    print("=== dotfetch Real-World 30 Tools Test ===\n")
 
     # Check for OpenAI API Key
     api_key = os.environ.get("OPENAI_API_KEY")
@@ -311,21 +311,21 @@ async def main():
     else:
         print("✅ OPENAI_API_KEY found. Will perform actual LLM calls.\n")
 
-    # Initialize Gantry
-    print("1. Initializing AgentGantry with Nomic Embedder...")
+    # Initialize dotfetch
+    print("1. Initializing DotFetch with Nomic Embedder...")
     # NomicEmbedder imports sentence-transformers lazily (at sync), so probe
     # for it here rather than at construction.
     try:
         import sentence_transformers  # noqa: F401
 
-        config = AgentGantryConfig(
+        config = DotFetchConfig(
             embedder=EmbedderConfig(type="nomic", model="nomic-ai/nomic-embed-text-v1.5")
         )
-        gantry = AgentGantry(config=config)
+        fetcher = DotFetch(config=config)
     except ImportError:
-        print("   sentence-transformers missing (pip install agent-gantry[nomic]).")
+        print("   sentence-transformers missing (pip install dotfetch[nomic]).")
         print("   Falling back to SimpleEmbedder.")
-        gantry = AgentGantry()
+        fetcher = DotFetch()
 
     try:
         # Register Tools
@@ -364,16 +364,16 @@ async def main():
         ]
 
         for func in tools_to_register:
-            gantry.register(func, examples=TOOL_EXAMPLES[func.__name__])
+            fetcher.register(func, examples=TOOL_EXAMPLES[func.__name__])
 
-        await gantry.sync()
-        print(f"   Registered {gantry.tool_count} tools.\n")
+        await fetcher.sync()
+        print(f"   Registered {fetcher.tool_count} tools.\n")
 
         # Test Cases
         test_queries = [
             ("What is the area of a circle with radius 5?", "calculate_circle_area"),
             ("How many days are there between 2023-01-01 and 2023-12-31?", "days_between_dates"),
-            ("Reverse the string 'Agent Gantry is awesome'", "reverse_string"),
+            ("Reverse the string 'dotfetch is awesome'", "reverse_string"),
             ("Is 2024 a leap year?", "is_leap_year"),
             ("Sort this list of numbers: 5, 2, 9, 1, 100, 42", "sort_list_of_numbers"),
             ("Convert 25 degrees Celsius to Fahrenheit", "convert_celsius_to_fahrenheit"),
@@ -396,7 +396,7 @@ async def main():
             print(f"🔹 Query: '{query}'")
 
             # A. Retrieval
-            retrieved_tools = await gantry.retrieve_tools(query, limit=3)
+            retrieved_tools = await fetcher.retrieve_tools(query, limit=3)
             retrieved_names = [t["function"]["name"] for t in retrieved_tools]
 
             print(f"   [Retrieval] Top 3: {retrieved_names}")
@@ -438,7 +438,7 @@ async def main():
 
                             # C. Execution
                             print("   [Execution] Running tool...")
-                            result = await gantry.execute(
+                            result = await fetcher.execute(
                                 ToolCall(tool_name=fn_name, arguments=fn_args)
                             )
                             print(f"   [Result] Output: {result.result}")
@@ -453,7 +453,7 @@ async def main():
 
             print("-" * 60)
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 if __name__ == "__main__":

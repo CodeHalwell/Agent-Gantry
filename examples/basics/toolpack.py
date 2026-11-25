@@ -1,15 +1,15 @@
 """
 Reusable tool catalog for plug-and-play demos.
 
-Expose an AgentGantry instance named ``tools`` so other scripts can import and
+Expose a DotFetch instance named ``tools`` so other scripts can import and
 run semantic filtering without redefining tools.
 """
 
 import datetime
 
-from agent_gantry import create_default_gantry
+from dotfetch import create_default_fetcher
 
-tools = create_default_gantry()
+tools = create_default_fetcher()
 
 
 @tools.register(

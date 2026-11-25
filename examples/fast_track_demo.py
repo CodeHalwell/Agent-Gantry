@@ -2,11 +2,11 @@
 Fast Track Demo: Upgrade vanilla OpenAI to semantic tools in ~10 lines
 
 This example shows how to take a basic OpenAI chat completion call and
-upgrade it to use Agent-Gantry's semantic tool routing with minimal changes.
+upgrade it to use dotfetch's semantic tool routing with minimal changes.
 
 Runs without an API key: it registers three tools, syncs, and prints what
-Gantry selects for each query. Set OPENAI_API_KEY (and install
-``agent-gantry[openai]``) to also send the selected tools to a real model.
+dotfetch selects for each query. Set OPENAI_API_KEY (and install
+``dotfetch[openai]``) to also send the selected tools to a real model.
 """
 
 import asyncio
@@ -43,31 +43,31 @@ response = await chat("What's the weather in Tokyo?")
     """)
 
     # ============================================================================
-    # AFTER: Add Agent-Gantry in ~10 lines
+    # AFTER: Add dotfetch in ~10 lines
     # ============================================================================
-    print("\n✨ AFTER: Add Agent-Gantry's semantic tool routing\n")
+    print("\n✨ AFTER: Add dotfetch's semantic tool routing\n")
     print("""
 from openai import AsyncOpenAI
-from agent_gantry import AgentGantry, with_semantic_tools, set_default_gantry
+from dotfetch import DotFetch, with_semantic_tools, set_default_fetcher
 
 client = AsyncOpenAI()
 
-# 1. Initialize Agent-Gantry (1 line)
-gantry = AgentGantry()
-set_default_gantry(gantry)
+# 1. Initialize dotfetch (1 line)
+fetcher = DotFetch()
+set_default_fetcher(fetcher)
 
 # 2. Register tools with simple decorators (3 lines)
-@gantry.register(examples=["what's the weather in Tokyo", "is it raining in Leeds"])
+@fetcher.register(examples=["what's the weather in Tokyo", "is it raining in Leeds"])
 def get_weather(city: str) -> str:
     '''Get current weather for a city.'''
     return f"Weather in {city}: Sunny, 72°F"
 
-@gantry.register(examples=["what's AAPL trading at", "current share price for MSFT"])
+@fetcher.register(examples=["what's AAPL trading at", "current share price for MSFT"])
 def get_stock_price(symbol: str) -> str:
     '''Get current stock price for a symbol.'''
     return f"{symbol}: $150.00"
 
-@gantry.register(examples=["email john about the meeting", "send a message to Sam"])
+@fetcher.register(examples=["email john about the meeting", "send a message to Sam"])
 def send_email(to: str, subject: str) -> str:
     '''Send an email.'''
     return f"Email sent to {to}"
@@ -93,30 +93,30 @@ response = await chat("What's the weather in Tokyo?")
     # None of this needs a key, so it always runs: the selection *is* the
     # thing this demo is about, and printing a code listing instead would be
     # showing the reader a picture of the feature rather than the feature.
-    from agent_gantry import AgentGantry, set_default_gantry, with_semantic_tools
+    from dotfetch import DotFetch, set_default_fetcher, with_semantic_tools
 
-    gantry = AgentGantry()
-    set_default_gantry(gantry)
+    fetcher = DotFetch()
+    set_default_fetcher(fetcher)
 
     try:
         # `examples=[...]` is the text the router embeds — the single
         # highest-value field on a tool definition.
-        @gantry.register(examples=["what's the weather in Tokyo", "is it raining in Leeds"])
+        @fetcher.register(examples=["what's the weather in Tokyo", "is it raining in Leeds"])
         def get_weather(city: str) -> str:
             """Get current weather for a city."""
             return f"Weather in {city}: Sunny, 72°F"
 
-        @gantry.register(examples=["what's AAPL trading at", "current share price for MSFT"])
+        @fetcher.register(examples=["what's AAPL trading at", "current share price for MSFT"])
         def get_stock_price(symbol: str) -> str:
             """Get current stock price for a symbol."""
             return f"{symbol}: $150.00"
 
-        @gantry.register(examples=["email john about the meeting", "send a message to Sam"])
+        @fetcher.register(examples=["email john about the meeting", "send a message to Sam"])
         def send_email(to: str, subject: str) -> str:
             """Send an email."""
             return f"Email sent to {to}"
 
-        await gantry.sync()
+        await fetcher.sync()
 
         queries = [
             "What's the weather in Tokyo?",
@@ -124,11 +124,11 @@ response = await chat("What's the weather in Tokyo?")
             "Send an email to john@example.com with subject 'Meeting'",
         ]
 
-        print("\n🔍 What Gantry selects for each query (no API key needed):\n")
+        print("\n🔍 What dotfetch selects for each query (no API key needed):\n")
         for query in queries:
             # No score_threshold: it defaults to 0.0, and raising it is a
             # silent-drop trap on longer queries.
-            selected = await gantry.retrieve_tools(query, limit=1)
+            selected = await fetcher.retrieve_tools(query, limit=1)
             names = [t["function"]["name"] for t in selected]
             print(f"   📨 {query}")
             print(f"      → {names} (1 of 3 tools sent, not all 3)")
@@ -146,9 +146,9 @@ response = await chat("What's the weather in Tokyo?")
 
         @with_semantic_tools(limit=1)
         async def chat(prompt: str, *, tools=None):
-            print(f"   [Agent-Gantry] Injected {len(tools) if tools else 0} relevant tools")
+            print(f"   [dotfetch] Injected {len(tools) if tools else 0} relevant tools")
             if tools:
-                print(f"   [Agent-Gantry] Tools: {[t['function']['name'] for t in tools]}")
+                print(f"   [dotfetch] Tools: {[t['function']['name'] for t in tools]}")
             return await client.chat.completions.create(
                 model="gpt-5.5", messages=[{"role": "user", "content": prompt}], tools=tools
             )
@@ -163,7 +163,7 @@ response = await chat("What's the weather in Tokyo?")
             else:
                 print(f"   [LLM] Response: {response.choices[0].message.content[:100]}...")
     finally:
-        await gantry.close()
+        await fetcher.close()
 
     # ============================================================================
     # Summary

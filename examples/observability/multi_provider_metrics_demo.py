@@ -14,9 +14,9 @@ Run with::
 
 import asyncio
 
-from agent_gantry import enable_console_logging
-from agent_gantry.metrics.token_usage import calculate_token_savings
-from agent_gantry.observability.console import ConsoleTelemetryAdapter
+from dotfetch import enable_console_logging
+from dotfetch.metrics.token_usage import calculate_token_savings
+from dotfetch.observability.console import ConsoleTelemetryAdapter
 
 # Opt in to console output so record_token_usage() lines are visible.
 enable_console_logging()

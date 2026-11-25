@@ -13,14 +13,14 @@ import types
 
 import pytest
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-from agent_gantry.llamaindex import LlamaIndexAdapter
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
+from dotfetch.llamaindex import LlamaIndexAdapter
 
 
 @pytest.fixture
-async def gantry() -> AgentGantry:
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=64))
+async def fetcher() -> DotFetch:
+    g = DotFetch(embedder=SimpleEmbedder(dimension=64))
 
     @g.register(tags=["email"])
     def send_email(to: str, body: str = "") -> str:
@@ -63,19 +63,19 @@ def fake_llama_index(monkeypatch: pytest.MonkeyPatch) -> type:
     return FunctionTool
 
 
-async def _first_spec(gantry: AgentGantry):
-    from agent_gantry.integrations.frameworks.base import GantryToolset
+async def _first_spec(fetcher: DotFetch):
+    from dotfetch.integrations.frameworks.base import DotFetchToolset
 
-    specs = await GantryToolset(gantry).select("send an email", limit=5)
+    specs = await DotFetchToolset(fetcher).select("send an email", limit=5)
     by_name = {s.name: s for s in specs}
     assert "send_email" in by_name, f"send_email not selected: {list(by_name)}"
     return by_name["send_email"]
 
 
 async def test_spec_to_llamaindex_captures_metadata(
-    gantry: AgentGantry, fake_llama_index: type
+    fetcher: DotFetch, fake_llama_index: type
 ) -> None:
-    spec = await _first_spec(gantry)
+    spec = await _first_spec(fetcher)
     tool = LlamaIndexAdapter.convert(spec)
 
     assert tool.name == "send_email"
@@ -85,17 +85,17 @@ async def test_spec_to_llamaindex_captures_metadata(
 
 
 async def test_spec_to_llamaindex_async_fn_executes(
-    gantry: AgentGantry, fake_llama_index: type
+    fetcher: DotFetch, fake_llama_index: type
 ) -> None:
-    spec = await _first_spec(gantry)
+    spec = await _first_spec(fetcher)
     tool = LlamaIndexAdapter.convert(spec)
 
     result = await tool.async_fn(to="boss@x.com")
     assert result == "sent:boss@x.com"
 
 
-async def test_for_llamaindex_maps_all_specs(gantry: AgentGantry, fake_llama_index: type) -> None:
-    tools = await LlamaIndexAdapter(gantry).select("send an email", limit=5)
+async def test_for_llamaindex_maps_all_specs(fetcher: DotFetch, fake_llama_index: type) -> None:
+    tools = await LlamaIndexAdapter(fetcher).select("send an email", limit=5)
 
     assert len(tools) >= 1
     names = {t.name for t in tools}
@@ -125,5 +125,5 @@ def test_spec_to_llamaindex_missing_dependency(
 
             return _fn
 
-    with pytest.raises(ImportError, match=r"agent-gantry\[llamaindex\]"):
+    with pytest.raises(ImportError, match=r"dotfetch\[llamaindex\]"):
         LlamaIndexAdapter.convert(_DummySpec())

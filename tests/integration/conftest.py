@@ -32,4 +32,4 @@ def qdrant_url() -> str:
 @pytest.fixture
 def pgvector_url() -> str:
     """PGVector connection URL from environment or default."""
-    return os.getenv("PGVECTOR_URL", "postgresql://postgres:postgres@localhost:5432/agent_gantry")
+    return os.getenv("PGVECTOR_URL", "postgresql://postgres:postgres@localhost:5432/dotfetch")

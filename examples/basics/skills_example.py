@@ -13,14 +13,14 @@ from __future__ import annotations
 
 import asyncio
 
-from agent_gantry import AgentGantry, Skill, SkillCategory
+from dotfetch import DotFetch, Skill, SkillCategory
 
 
 async def main() -> None:
-    gantry = AgentGantry()
+    fetcher = DotFetch()
 
     try:
-        await gantry.add_skills(
+        await fetcher.add_skills(
             [
                 Skill(
                     name="api_pagination",
@@ -49,18 +49,18 @@ async def main() -> None:
         )
 
         # Retrieve the most relevant skills for a prompt...
-        results = await gantry.retrieve_skills("my HTTP requests keep timing out", limit=1)
+        results = await fetcher.retrieve_skills("my HTTP requests keep timing out", limit=1)
         for result in results:
             print(f"[{result.score:.2f}] {result.skill.qualified_name}")
 
         # ...or get them pre-formatted for system-prompt injection
-        prompt_block = await gantry.retrieve_skills_as_prompt(
+        prompt_block = await fetcher.retrieve_skills_as_prompt(
             "my HTTP requests keep timing out", limit=1
         )
         print()
         print(prompt_block)
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 if __name__ == "__main__":

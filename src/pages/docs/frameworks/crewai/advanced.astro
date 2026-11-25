@@ -2,23 +2,23 @@
 import DocsLayout from '../../../../layouts/DocsLayout.astro';
 import CodeBlock from '../../../../components/CodeBlock.astro';
 ---
-<DocsLayout title="Advanced CrewAI guide | Agent-Gantry" description="Approval through CrewAI's before_tool_call hook, agent/task context, failure policy and per-run selection for the Agent-Gantry CrewAI integration.">
+<DocsLayout title="Advanced CrewAI guide | dotfetch" description="Approval through CrewAI's before_tool_call hook, agent/task context, failure policy and per-run selection for the dotfetch CrewAI integration.">
   <p class="eyebrow">Advanced framework guide</p>
   <h1>Advanced CrewAI</h1>
   <p class="lead">Approval, run context, failure policy and per-run selection.</p>
   <p><a class="pill" href="/Agent-Gantry/docs/frameworks/crewai/">← Basic CrewAI usage</a></p>
 
   <h2>Approval</h2>
-  <p>CrewAI has no pause-and-resume for a tool call; its native gate is a <code>before_tool_call</code> hook. Gantry registers one, once per process, and asks the adapter's approver about every confirmation-gated call (<code>requires_confirmation=True</code> or a <code>SecurityPolicy(require_confirmation=[...])</code> pattern).</p>
-  <CodeBlock lang="python" code={`from agent_gantry.crewai import ApprovalRequest, CrewAIAdapter
+  <p>CrewAI has no pause-and-resume for a tool call; its native gate is a <code>before_tool_call</code> hook. dotfetch registers one, once per process, and asks the adapter's approver about every confirmation-gated call (<code>requires_confirmation=True</code> or a <code>SecurityPolicy(require_confirmation=[...])</code> pattern).</p>
+  <CodeBlock lang="python" code={`from dotfetch.crewai import ApprovalRequest, CrewAIAdapter
 
 def approve(request: ApprovalRequest) -> bool:
     # request.tool_name, request.arguments, request.agent, request.task, request.crew
     return reviewer.allow(request.tool_name, request.arguments)
 
-adapter = CrewAIAdapter(gantry, approve=approve)
-# or CrewAIAdapter(gantry, approve="console") to use CrewAI's request_human_input prompt`} />
-  <p>An approved call runs once through <code>gantry.execute</code> with only the confirmation gate cleared; a refused one is blocked by CrewAI. With no approver, the agent is told the call needs approval and it is not run. If the approver raises, the call is blocked.</p>
+adapter = CrewAIAdapter(fetcher, approve=approve)
+# or CrewAIAdapter(fetcher, approve="console") to use CrewAI's request_human_input prompt`} />
+  <p>An approved call runs once through <code>fetcher.execute</code> with only the confirmation gate cleared; a refused one is blocked by CrewAI. With no approver, the agent is told the call needs approval and it is not run. If the approver raises, the call is blocked.</p>
 
   <h2>Run context</h2>
   <p><code>current_crew_context()</code> returns CrewAI's <code>ToolCallHookContext</code> for the call: <code>.agent</code>, <code>.task</code> and <code>.crew</code>. <code>current_tool_invocation()</code> carries the same object, with <code>deps</code> set to the crew and <code>metadata</code> holding <code>agent_role</code>, <code>task_name</code> and <code>task_id</code>.</p>
@@ -31,5 +31,5 @@ adapter = CrewAIAdapter(gantry, approve=approve)
   </ul>
 
   <h2>Per-run selection</h2>
-  <p>CrewAI builds an agent's tool list once and exposes no hook to change it between model turns, so Gantry re-selects per call: <code>adapter.agent_builder(...)</code> returns a builder whose <code>build(query)</code> makes a fresh agent with that task's tools, using the adapter's error mode, formatter and approver.</p>
+  <p>CrewAI builds an agent's tool list once and exposes no hook to change it between model turns, so dotfetch re-selects per call: <code>adapter.agent_builder(...)</code> returns a builder whose <code>build(query)</code> makes a fresh agent with that task's tools, using the adapter's error mode, formatter and approver.</p>
 </DocsLayout>

@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import pytest
 
-from agent_gantry.adapters.llm_client import LLMClient
-from agent_gantry.core.router import TaskIntent, classify_intent
-from agent_gantry.schema.config import LLMConfig
+from dotfetch.adapters.llm_client import LLMClient
+from dotfetch.core.router import TaskIntent, classify_intent
+from dotfetch.schema.config import LLMConfig
 
 
 class MockLLMClient:
@@ -235,7 +235,7 @@ async def test_reasoning_model_request_shape():
     silently degrades to the UNKNOWN fallback."""
     from types import SimpleNamespace
 
-    from agent_gantry.adapters.llm_client import LLMClient
+    from dotfetch.adapters.llm_client import LLMClient
 
     captured: dict = {}
 
@@ -291,7 +291,7 @@ async def test_keywords_match_at_token_start_only():
 
 def test_tool_text_patterns_share_the_token_start_rule():
     """The per-tool intent boost uses the same keyword rule as classification."""
-    from agent_gantry.core.router import INTENT_TAG_PATTERNS
+    from dotfetch.core.router import INTENT_TAG_PATTERNS
 
     communication = INTENT_TAG_PATTERNS[TaskIntent.COMMUNICATION]
     assert communication.search("admin_panel manage the administrators") is None

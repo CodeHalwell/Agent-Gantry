@@ -2,7 +2,7 @@
 Cross-event-loop integration tests for the executor and rate limiter.
 
 These tests reproduce the scenario described by integrators using
-``agent_framework.DurableAIAgentWorker``: the :class:`AgentGantry` is built
+``agent_framework.DurableAIAgentWorker``: the :class:`DotFetch` is built
 in one context (often module import time, often with no running loop) and
 then driven from a *different* event loop running on a worker thread. With
 synchronisation primitives that bind eagerly to a loop, this previously
@@ -17,8 +17,8 @@ The fixes exercised here:
 - ``ExecutionEngine._execute_with_timeout`` dispatches sync handlers via
   ``asyncio.to_thread`` instead of ``asyncio.get_event_loop().run_in_executor``,
   removing the deprecated cross-loop API call.
-- ``GantryToolBridge``'s wrapper catches exceptions from
-  ``gantry.execute(...)`` and surfaces them as a structured JSON error,
+- ``DotFetchToolBridge``'s wrapper catches exceptions from
+  ``fetcher.execute(...)`` and surfaces them as a structured JSON error,
   so any future cross-loop regression yields a debuggable error string.
 """
 
@@ -31,20 +31,20 @@ from typing import Any
 
 import pytest
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-from agent_gantry.integrations.agent_framework_bridge import GantryToolBridge
-from agent_gantry.schema.execution import ToolCall
+from dotfetch import DotFetch
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
+from dotfetch.integrations.agent_framework_bridge import DotFetchToolBridge
+from dotfetch.schema.execution import ToolCall
 
 
-def _build_gantry_no_loop() -> AgentGantry:
-    """Build a populated gantry with no running event loop.
+def _build_fetcher_no_loop() -> DotFetch:
+    """Build a populated fetcher with no running event loop.
 
-    Mirrors the integrator's setup where ``AgentGantry`` is constructed at
+    Mirrors the integrator's setup where ``DotFetch`` is constructed at
     module import time so a durable worker can register the instance
     correctly. We use ``SimpleEmbedder`` to avoid touching the network.
     """
-    g = AgentGantry(embedder=SimpleEmbedder())
+    g = DotFetch(embedder=SimpleEmbedder())
 
     @g.register
     def constant_tool(seed: int) -> str:
@@ -65,7 +65,7 @@ def _run_in_worker_loop(coro_factory: Any) -> Any:
 
     Returns the coroutine's result (or re-raises the exception). This is
     the same shape ``DurableAIAgentWorker`` produces — a different loop
-    from the one (if any) that constructed the gantry.
+    from the one (if any) that constructed the fetcher.
     """
     box: dict[str, Any] = {}
 
@@ -90,13 +90,13 @@ def _run_in_worker_loop(coro_factory: Any) -> Any:
 
 
 # ---------------------------------------------------------------------------
-# Direct executor: gantry built without a running loop, executed from a
+# Direct executor: fetcher built without a running loop, executed from a
 # worker-thread loop. Both sync and async handlers must succeed.
 # ---------------------------------------------------------------------------
 
 
 def test_sync_handler_executes_on_worker_loop():
-    g = _build_gantry_no_loop()
+    g = _build_fetcher_no_loop()
 
     async def _do() -> Any:
         return await g.execute(
@@ -109,7 +109,7 @@ def test_sync_handler_executes_on_worker_loop():
 
 
 def test_async_handler_executes_on_worker_loop():
-    g = _build_gantry_no_loop()
+    g = _build_fetcher_no_loop()
 
     async def _do() -> Any:
         return await g.execute(
@@ -138,7 +138,7 @@ def test_rate_limiter_lock_is_bound_to_running_loop_under_contention():
     ``RuntimeError: ... is bound to a different event loop`` on its first
     contended acquire. The per-loop fix gives each loop its own lock.
     """
-    g = _build_gantry_no_loop()
+    g = _build_fetcher_no_loop()
     rate_limiter = g._rate_limiter
     assert rate_limiter is not None, "rate limiter should be enabled by default"
 
@@ -180,9 +180,9 @@ def test_rate_limiter_full_acquire_release_works_across_loops():
     """End-to-end ``acquire``/``release`` on the public RateLimiter API.
 
     Mirrors the realistic integrator path where the limiter is exercised
-    indirectly via :class:`AgentGantry.execute` from a worker-thread loop.
+    indirectly via :class:`DotFetch.execute` from a worker-thread loop.
     """
-    g = _build_gantry_no_loop()
+    g = _build_fetcher_no_loop()
     rate_limiter = g._rate_limiter
     assert rate_limiter is not None
 
@@ -207,7 +207,7 @@ def test_rate_limiter_full_acquire_release_works_across_loops():
 
 @pytest.mark.asyncio
 async def test_bridge_wrapper_surfaces_handler_exception_as_json():
-    g = AgentGantry(embedder=SimpleEmbedder())
+    g = DotFetch(embedder=SimpleEmbedder())
 
     @g.register
     def boom(x: int) -> str:
@@ -216,7 +216,7 @@ async def test_bridge_wrapper_surfaces_handler_exception_as_json():
 
     await g.sync()
 
-    bridge = GantryToolBridge(g, as_function_tool=False)
+    bridge = DotFetchToolBridge(g, as_function_tool=False)
     tools = await bridge.get_tools("trigger boom", limit=1, score_threshold=0.0)
     assert tools, "expected at least one tool"
     boom_wrapper = next(
@@ -235,11 +235,11 @@ async def test_bridge_wrapper_surfaces_handler_exception_as_json():
 async def test_bridge_wrapper_surfaces_executor_failure_as_json(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Exceptions raised *inside* gantry.execute (not just inside the
+    """Exceptions raised *inside* fetcher.execute (not just inside the
     handler) are also wrapped — guarding against the cross-loop scenario
     where the rate limiter or any other infrastructure layer fails before
     the handler runs."""
-    g = AgentGantry(embedder=SimpleEmbedder())
+    g = DotFetch(embedder=SimpleEmbedder())
 
     @g.register
     def some_tool(x: int) -> str:
@@ -253,7 +253,7 @@ async def test_bridge_wrapper_surfaces_executor_failure_as_json(
 
     monkeypatch.setattr(g, "execute", _broken_execute)
 
-    bridge = GantryToolBridge(g, as_function_tool=False)
+    bridge = DotFetchToolBridge(g, as_function_tool=False)
     wrapper = bridge.wrap_single(g.list_tools_sync()[0])
 
     out = await wrapper(x=1)
@@ -268,18 +268,18 @@ async def test_bridge_wrapper_surfaces_executor_failure_as_json(
 # ``agent_framework_durabletask.DurableAIAgentWorker`` calls
 # ``asyncio.run(self._agent_entity.run(request))`` per inbound request, which
 # constructs and tears down a fresh event loop every time. A module-level
-# gantry therefore sees N distinct loops over its lifetime — the exact
+# fetcher therefore sees N distinct loops over its lifetime — the exact
 # scenario where eager ``asyncio.Lock`` binding fails.
 # ---------------------------------------------------------------------------
 
 
-def test_module_level_gantry_survives_asyncio_run_per_request():
+def test_module_level_fetcher_survives_asyncio_run_per_request():
     """Smoke-test ``DurableAIAgentWorker``'s per-request ``asyncio.run``
     pattern: ``DurableAIAgentWorker.process_request`` calls
     ``asyncio.run(self._agent_entity.run(request))`` per inbound request,
     constructing and tearing down a fresh event loop every time.
 
-    A single ``AgentGantry`` is constructed at "module load" (no running
+    A single ``DotFetch`` is constructed at "module load" (no running
     loop), then driven via ``asyncio.run`` repeatedly. This exercises
     the full wrapper → executor → rate-limiter path on N distinct loops.
 
@@ -290,13 +290,13 @@ def test_module_level_gantry_survives_asyncio_run_per_request():
     for the targeted regression test. This one guards against new
     cross-loop primitives sneaking into the per-request path.
     """
-    gantry = _build_gantry_no_loop()
-    bridge = GantryToolBridge(gantry, as_function_tool=False)
+    fetcher = _build_fetcher_no_loop()
+    bridge = DotFetchToolBridge(fetcher, as_function_tool=False)
     sync_wrapper = bridge.wrap_single(
-        next(t for t in gantry.list_tools_sync() if t.name == "constant_tool")
+        next(t for t in fetcher.list_tools_sync() if t.name == "constant_tool")
     )
     async_wrapper = bridge.wrap_single(
-        next(t for t in gantry.list_tools_sync() if t.name == "async_constant_tool")
+        next(t for t in fetcher.list_tools_sync() if t.name == "async_constant_tool")
     )
 
     async def _one_request(seed: int) -> list[str]:

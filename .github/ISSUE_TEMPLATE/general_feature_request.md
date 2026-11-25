@@ -20,7 +20,7 @@ assignees: []
 
 ```python
 # Example usage
-from agent_gantry import AgentGantry
+from dotfetch import DotFetch
 
 # Your example here
 ```

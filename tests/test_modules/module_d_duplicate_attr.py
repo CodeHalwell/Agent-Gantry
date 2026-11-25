@@ -4,9 +4,9 @@ Exists so duplicate detection can be tested across module specs that name
 *different* attributes, which the CLI once collected in separate passes.
 """
 
-from agent_gantry import AgentGantry
+from dotfetch import DotFetch
 
-other_tools = AgentGantry()
+other_tools = DotFetch()
 
 
 @other_tools.register

@@ -1,7 +1,7 @@
 {
   "mcpServers": {
-    "agent-gantry": {
-      "command": "agent-gantry",
+    "dotfetch": {
+      "command": "dotfetch",
       "args": [
         "serve-mcp",
         "--transport",

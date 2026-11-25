@@ -39,11 +39,11 @@ assignees: []
 
 ```python
 # Example usage
-from agent_gantry import AgentGantry
+from dotfetch import DotFetch
 
-gantry = AgentGantry()
+fetcher = DotFetch()
 
-@gantry.register
+@fetcher.register
 async def read_file(filename: str, ctx) -> str:
     """Read a file and remember it."""
     # Store in session memory
@@ -52,7 +52,7 @@ async def read_file(filename: str, ctx) -> str:
     ctx.memory["file_content"] = content
     return content
 
-@gantry.register
+@fetcher.register
 async def summarize_last_file(ctx) -> str:
     """Summarize the last file that was read."""
     # Access from session memory
@@ -72,7 +72,7 @@ async def summarize_last_file(ctx) -> str:
 
 ## Context: Current State Handling
 
-Currently, Agent-Gantry is largely stateless:
+Currently, dotfetch is largely stateless:
 - ✅ Tools are pure functions or async callables
 - ✅ Context is passed via LLM conversation history
 - ⚠️ No built-in mechanism for tools to share state
@@ -96,20 +96,20 @@ This feature request aims to add **session-scoped state management** for tools.
 ### State API Design Considerations
 ```python
 # Option 1: Context parameter
-@gantry.register
+@fetcher.register
 async def my_tool(arg: str, ctx: ExecutionContext) -> str:
     ctx.memory["key"] = "value"
     return ctx.memory.get("other_key", default="")
 
 # Option 2: Session object
-@gantry.register(stateful=True)
+@fetcher.register(stateful=True)
 async def my_tool(arg: str, session: Session) -> str:
     await session.set("key", "value")
     return await session.get("other_key")
 
 # Option 3: Decorator-based
-@gantry.register
-@gantry.with_memory(scope="session")
+@fetcher.register
+@fetcher.with_memory(scope="session")
 async def my_tool(arg: str, memory: dict) -> str:
     memory["key"] = "value"
     return memory.get("other_key", "")

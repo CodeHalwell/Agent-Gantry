@@ -14,10 +14,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent_gantry import AgentGantry
-from agent_gantry.adapters.vector_stores.memory import InMemoryVectorStore
-from agent_gantry.schema.query import ConversationContext, ToolQuery
-from agent_gantry.schema.tool import ToolDefinition
+from dotfetch import DotFetch
+from dotfetch.adapters.vector_stores.memory import InMemoryVectorStore
+from dotfetch.schema.query import ConversationContext, ToolQuery
+from dotfetch.schema.tool import ToolDefinition
 
 
 class _RankedStore(InMemoryVectorStore):
@@ -60,7 +60,7 @@ def _tool(name: str, description: str, tags: list[str]) -> ToolDefinition:
     )
 
 
-async def _gantry_with_target_at_rank(rank: int) -> tuple[AgentGantry, _RankedStore]:
+async def _fetcher_with_target_at_rank(rank: int) -> tuple[DotFetch, _RankedStore]:
     """Thirteen+ distractors that embed closer, and the intent-matching tool at ``rank``."""
     distractors = [
         _tool(
@@ -78,17 +78,17 @@ async def _gantry_with_target_at_rank(rank: int) -> tuple[AgentGantry, _RankedSt
     ranked = [(d.name, 0.60 - 0.005 * i) for i, d in enumerate(distractors)]
     ranked.append((target.name, 0.60 - 0.005 * rank))
     store = _RankedStore(ranked)
-    gantry = AgentGantry(vector_store=store)
+    fetcher = DotFetch(vector_store=store)
     for tool in [*distractors, target]:
-        await gantry.add_tool(tool, lambda **kw: kw)
-    return gantry, store
+        await fetcher.add_tool(tool, lambda **kw: kw)
+    return fetcher, store
 
 
 async def test_an_intent_match_just_outside_limit_times_four_still_wins() -> None:
     """The demo's shape: the right tool at cosine rank 13, query limit 3."""
-    gantry, store = await _gantry_with_target_at_rank(13)
+    fetcher, store = await _fetcher_with_target_at_rank(13)
     try:
-        result = await gantry.retrieve(
+        result = await fetcher.retrieve(
             ToolQuery(
                 context=ConversationContext(query="calculate the mean of these numbers"),
                 limit=3,
@@ -98,14 +98,14 @@ async def test_an_intent_match_just_outside_limit_times_four_still_wins() -> Non
         names = [scored.tool.name for scored in result.tools]
         assert names[0] == "calculate_mean", names
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def test_the_pool_still_scales_with_a_large_limit() -> None:
     """A floor must not become a ceiling: ``limit=20`` keeps asking for 80."""
-    gantry, store = await _gantry_with_target_at_rank(5)
+    fetcher, store = await _fetcher_with_target_at_rank(5)
     try:
-        await gantry.retrieve(
+        await fetcher.retrieve(
             ToolQuery(
                 context=ConversationContext(query="calculate the mean"),
                 limit=20,
@@ -114,4 +114,4 @@ async def test_the_pool_still_scales_with_a_large_limit() -> None:
         )
         assert store.requested[-1] >= 80
     finally:
-        await gantry.close()
+        await fetcher.close()

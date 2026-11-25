@@ -1,11 +1,11 @@
 """
-``GantryContextProvider`` — the AF-native way to plug Gantry into an Agent.
+``DotFetchContextProvider`` — the AF-native way to plug dotfetch into an Agent.
 
 This example shows the *idiomatic* Microsoft Agent Framework integration:
-attach Agent-Gantry as an :class:`agent_framework.ContextProvider` and let
+attach dotfetch as an :class:`agent_framework.ContextProvider` and let
 AF call ``before_run`` on every ``agent.run(...)``. The provider extracts
 the latest user message, retrieves the top-k semantically relevant tools
-from Gantry, and injects them into the per-invocation
+from dotfetch, and injects them into the per-invocation
 ``SessionContext.tools``.
 
 Why this matters:
@@ -13,18 +13,18 @@ Why this matters:
 * **Per-turn dynamic tool selection** — no need to pre-bake a tool list
   before constructing the agent. Each turn picks fresh tools.
 * **Zero interference with AF Skills** — :class:`SkillsProvider` and
-  :class:`GantryContextProvider` are sibling :class:`ContextProvider`
+  :class:`DotFetchContextProvider` are sibling :class:`ContextProvider`
   instances that AF merges by ``source_id``. Both providers contribute
   tools and instructions; nobody overwrites anybody.
 * **Workflow-builder compatible** — ``WorkflowBuilder``,
   ``SequentialBuilder``, ``HandoffBuilder``, ``AgentExecutor`` and
   ``WorkflowAgent`` all dispatch through ``agent.run()``, which fires the
-  provider pipeline. Drop a Gantry-backed agent into any orchestration
+  provider pipeline. Drop a dotfetch-backed agent into any orchestration
   primitive without further changes.
 
 The example walks through three patterns:
 
-1. **Bare Agent** with ``GantryContextProvider`` — minimum-viable wiring.
+1. **Bare Agent** with ``DotFetchContextProvider`` — minimum-viable wiring.
 2. **Coexistence** with :class:`SkillsProvider` — both providers attached,
    each with its own ``source_id``.
 3. **Workflow** — the same provider-equipped agent dropped into
@@ -36,8 +36,8 @@ import asyncio
 from agent_framework import Agent, Skill, SkillsProvider
 from dotenv import load_dotenv
 
-from agent_gantry import AgentGantry, GantryContextProvider
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
+from dotfetch import DotFetch, DotFetchContextProvider
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
 
 try:
     from agent_framework.openai import OpenAIChatClient
@@ -45,11 +45,11 @@ except ImportError:
     OpenAIChatClient = None  # Install agent-framework-openai for the live step.
 
 
-def build_gantry() -> AgentGantry:
-    """Create a Gantry instance with a few representative tools."""
-    gantry = AgentGantry(embedder=SimpleEmbedder(dimension=256))
+def build_fetcher() -> DotFetch:
+    """Create a dotfetch instance with a few representative tools."""
+    fetcher = DotFetch(embedder=SimpleEmbedder(dimension=256))
 
-    @gantry.register(
+    @fetcher.register(
         examples=[
             "what's the weather in London",
             "is it raining in Leeds",
@@ -59,7 +59,7 @@ def build_gantry() -> AgentGantry:
         """Get the current weather for a city."""
         return f"Weather in {city}: Sunny, 22C"
 
-    @gantry.register(
+    @fetcher.register(
         examples=[
             "book me a flight to Berlin",
             "I need to fly from Manchester to Dublin",
@@ -69,7 +69,7 @@ def build_gantry() -> AgentGantry:
         """Book a flight between two cities."""
         return f"Booked flight: {origin} -> {destination}"
 
-    @gantry.register(
+    @fetcher.register(
         examples=[
             "who is user 4821",
             "pull up that customer's profile",
@@ -79,7 +79,7 @@ def build_gantry() -> AgentGantry:
         """Look up a user profile from the CRM."""
         return {"id": user_id, "plan": "pro"}
 
-    @gantry.register(
+    @fetcher.register(
         examples=[
             "refund this customer",
             "give them their money back",
@@ -89,11 +89,11 @@ def build_gantry() -> AgentGantry:
         """Issue a refund to a user."""
         return f"Refunded ${amount:.2f} to {user_id}"
 
-    return gantry
+    return fetcher
 
 
-async def example_bare_agent(gantry: AgentGantry) -> None:
-    """Pattern 1: minimum-viable Agent + GantryContextProvider.
+async def example_bare_agent(fetcher: DotFetch) -> None:
+    """Pattern 1: minimum-viable Agent + DotFetchContextProvider.
 
     Each ``agent.run(query)`` triggers semantic retrieval against
     ``query`` and injects the top-k matching tools — *without* the caller
@@ -103,7 +103,7 @@ async def example_bare_agent(gantry: AgentGantry) -> None:
         OpenAIChatClient(),
         "You are a helpful concierge. Use tools to fulfil requests.",
         context_providers=[
-            GantryContextProvider(gantry, top_k=3, score_threshold=0.0),
+            DotFetchContextProvider(fetcher, top_k=3, score_threshold=0.0),
         ],
     )
 
@@ -111,16 +111,16 @@ async def example_bare_agent(gantry: AgentGantry) -> None:
     print("[bare] →", result.text)
 
 
-async def example_with_af_skills(gantry: AgentGantry) -> None:
-    """Pattern 2: GantryContextProvider alongside AF SkillsProvider.
+async def example_with_af_skills(fetcher: DotFetch) -> None:
+    """Pattern 2: DotFetchContextProvider alongside AF SkillsProvider.
 
     Both providers are first-class ``ContextProvider`` instances, attached
     to the same agent with distinct ``source_id`` values. AF merges their
     contributions cleanly: SkillsProvider adds skill tools and prompt
-    instructions, Gantry adds the dynamically retrieved tool set.
+    instructions, dotfetch adds the dynamically retrieved tool set.
 
-    The ``skills=True`` flag on the Gantry provider additionally pins the
-    union of tools bound to *Gantry's* registered skills (separate from
+    The ``skills=True`` flag on the dotfetch provider additionally pins the
+    union of tools bound to *dotfetch's* registered skills (separate from
     AF skills) on every run.
     """
     summarise_skill = Skill(
@@ -136,11 +136,11 @@ async def example_with_af_skills(gantry: AgentGantry) -> None:
         OpenAIChatClient(),
         "You are a customer-service assistant.",
         context_providers=[
-            GantryContextProvider(
-                gantry,
+            DotFetchContextProvider(
+                fetcher,
                 top_k=3,
                 score_threshold=0.0,
-                skills=True,           # always include Gantry-skill-bound tools
+                skills=True,           # always include dotfetch-skill-bound tools
                 always_include=["lookup_user"],  # pinned utility tool
             ),
             SkillsProvider(skills=[summarise_skill]),
@@ -151,11 +151,11 @@ async def example_with_af_skills(gantry: AgentGantry) -> None:
     print("[skills] →", result.text)
 
 
-async def example_workflow(gantry: AgentGantry) -> None:
+async def example_workflow(fetcher: DotFetch) -> None:
     """Pattern 3: provider-equipped agents inside a SequentialBuilder.
 
     ``SequentialBuilder`` calls each agent's ``run`` in turn, which fires
-    the provider pipeline on every step. The same Gantry instance can
+    the provider pipeline on every step. The same dotfetch instance can
     feed multiple agents — each one gets tools tailored to its role
     because each retrieval is driven by the previous step's output.
     """
@@ -165,13 +165,13 @@ async def example_workflow(gantry: AgentGantry) -> None:
         client,
         "You triage customer requests.",
         name="Triage",
-        context_providers=[GantryContextProvider(gantry, top_k=2, score_threshold=0.0)],
+        context_providers=[DotFetchContextProvider(fetcher, top_k=2, score_threshold=0.0)],
     )
     resolver = Agent(
         client,
         "You resolve the customer's issue using the available tools.",
         name="Resolver",
-        context_providers=[GantryContextProvider(gantry, top_k=3, score_threshold=0.0)],
+        context_providers=[DotFetchContextProvider(fetcher, top_k=3, score_threshold=0.0)],
     )
 
     from agent_framework.orchestrations import SequentialBuilder
@@ -183,13 +183,13 @@ async def example_workflow(gantry: AgentGantry) -> None:
 
 async def main() -> None:
     load_dotenv()
-    gantry = build_gantry()
+    fetcher = build_fetcher()
     try:
-        await gantry.sync()
+        await fetcher.sync()
 
         # What the provider will inject, visible without a client:
         # `dry_run_retrieve` runs the exact retrieval path `before_run` uses.
-        provider = GantryContextProvider(gantry, top_k=3, score_threshold=0.0)
+        provider = DotFetchContextProvider(fetcher, top_k=3, score_threshold=0.0)
         print("Catalogue: 4 tools. What each `agent.run(...)` below would inject:\n")
         for query in (
             "What's the weather in Tokyo?",
@@ -216,11 +216,11 @@ async def main() -> None:
             print("agents themselves. Everything above works without one.")
             return
 
-        await example_bare_agent(gantry)
-        await example_with_af_skills(gantry)
-        await example_workflow(gantry)
+        await example_bare_agent(fetcher)
+        await example_with_af_skills(fetcher)
+        await example_workflow(fetcher)
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 if __name__ == "__main__":

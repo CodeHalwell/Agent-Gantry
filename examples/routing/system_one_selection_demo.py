@@ -12,7 +12,7 @@ Two ways to use the same model:
 
 Run with::
 
-    pip install agent-gantry[system-one]
+    pip install dotfetch[system-one]
     export TYPESAFE_API_KEY=...
     python examples/routing/system_one_selection_demo.py
 
@@ -25,32 +25,32 @@ from __future__ import annotations
 import asyncio
 import os
 
-from agent_gantry import AgentGantry, Skill, SystemOneReranker, SystemOneSelector
+from dotfetch import DotFetch, Skill, SystemOneReranker, SystemOneSelector
 
 
-async def build_gantry(
+async def build_fetcher(
     selector: SystemOneSelector | None = None,
     reranker: SystemOneReranker | None = None,
-) -> AgentGantry:
+) -> DotFetch:
     """A small catalogue spanning two namespaces, plus one skill."""
-    gantry = AgentGantry(selector=selector, reranker=reranker)
+    fetcher = DotFetch(selector=selector, reranker=reranker)
     try:
 
-        @gantry.register(
+        @fetcher.register(
             tags=["math"], namespace="numbers", examples=["add 3 and 4", "what is 10 plus 5"]
         )
         async def add_numbers(a: float, b: float) -> float:
             """Add two numbers together and return the sum."""
             return a + b
 
-        @gantry.register(
+        @fetcher.register(
             tags=["math"], namespace="numbers", examples=["divide 10 by 2", "what is 12 over 4"]
         )
         async def divide_numbers(a: float, b: float) -> float:
             """Divide the first number by the second and return the quotient."""
             return a / b
 
-        @gantry.register(
+        @fetcher.register(
             tags=["email"],
             namespace="comms",
             examples=["email Bob about the meeting", "send a note to the team"],
@@ -59,14 +59,14 @@ async def build_gantry(
             """Send an email message to a named recipient."""
             return f"sent to {to}"
 
-        @gantry.register(
+        @fetcher.register(
             tags=["email"], namespace="comms", examples=["show my messages", "any new mail"]
         )
         async def list_inbox(limit: int = 10) -> list[str]:
             """List the most recent messages sitting in the inbox."""
             return ["a message"][:limit]
 
-        await gantry.add_skill(
+        await fetcher.add_skill(
             Skill(
                 name="refund_policy",
                 description="How to decide whether a customer qualifies for a refund.",
@@ -74,15 +74,15 @@ async def build_gantry(
             )
         )
     except BaseException:
-        await gantry.close()
+        await fetcher.close()
         raise
-    return gantry
+    return fetcher
 
 
 async def demo_selection() -> None:
     """Choose tools with no embeddings involved."""
     print("\n=== selector: no embeddings, no vector search ===")
-    gantry = await build_gantry(selector=SystemOneSelector(threshold=0.3))
+    fetcher = await build_fetcher(selector=SystemOneSelector(threshold=0.3))
     try:
         for query in (
             "what's 12 divided by 4?",
@@ -92,7 +92,7 @@ async def demo_selection() -> None:
             # tools it is explicitly ruling out.
             "show me my messages, but do not send anything",
         ):
-            result = await gantry.retrieve(
+            result = await fetcher.retrieve(
                 _query(query, limit=2),
             )
             names = [scored.tool.name for scored in result.tools]
@@ -103,26 +103,26 @@ async def demo_selection() -> None:
             )
             print(f"  {query!r}\n    -> {names}  [{timing}]")
 
-        skills = await gantry.retrieve_skills("can this customer get their money back?", limit=1)
+        skills = await fetcher.retrieve_skills("can this customer get their money back?", limit=1)
         print(f"  skill -> {[s.skill.name for s in skills]}")
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def demo_reranking() -> None:
     """Keep semantic search, but reorder its shortlist with the same model."""
     print("\n=== reranker: semantic search first, the decision model second ===")
-    gantry = await build_gantry(reranker=SystemOneReranker())
+    fetcher = await build_fetcher(reranker=SystemOneReranker())
     try:
-        await gantry.sync()
-        tools = await gantry.retrieve_tools("what's 12 divided by 4?", limit=2)
+        await fetcher.sync()
+        tools = await fetcher.retrieve_tools("what's 12 divided by 4?", limit=2)
         print(f"  -> {[t['function']['name'] for t in tools]}")
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 def _query(text: str, limit: int):
-    from agent_gantry import ConversationContext, ToolQuery
+    from dotfetch import ConversationContext, ToolQuery
 
     return ToolQuery(context=ConversationContext(query=text), limit=limit, score_threshold=0.0)
 

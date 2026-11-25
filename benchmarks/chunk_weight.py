@@ -30,12 +30,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import agent_gantry.core.router as router_module
-from agent_gantry import AgentGantry
-from agent_gantry.core.chunks import tool_chunks
-from agent_gantry.evaluation import RetrievalReport, evaluate_retrieval, tool_retriever
-from agent_gantry.schema.config import AgentGantryConfig, RoutingConfig
-from agent_gantry.schema.tool import ToolDefinition
+import dotfetch.core.router as router_module
+from dotfetch import DotFetch
+from dotfetch.core.chunks import tool_chunks
+from dotfetch.evaluation import RetrievalReport, evaluate_retrieval, tool_retriever
+from dotfetch.schema.config import DotFetchConfig, RoutingConfig
+from dotfetch.schema.tool import ToolDefinition
 from tests.retrieval import catalogue
 
 SMALL_PRINT = [
@@ -76,24 +76,24 @@ def _catalogue(share: float, seed: int) -> tuple[list[ToolDefinition], int]:
 
 
 async def _measure(tools: list[ToolDefinition], *, chunk: bool, weight: float) -> RetrievalReport:
-    from agent_gantry.adapters.embedders.sentence_transformers import (
+    from dotfetch.adapters.embedders.sentence_transformers import (
         SentenceTransformersEmbedder,
     )
 
     router_module.CHUNK_SCORE_WEIGHT = weight
-    gantry = AgentGantry(
-        config=AgentGantryConfig(routing=RoutingConfig(chunk_long_text=chunk)),
+    fetcher = DotFetch(
+        config=DotFetchConfig(routing=RoutingConfig(chunk_long_text=chunk)),
         embedder=SentenceTransformersEmbedder(),
     )
     try:
         for tool in tools:
-            await gantry.add_tool(tool)
-        await gantry.sync()
+            await fetcher.add_tool(tool)
+        await fetcher.sync()
         return await evaluate_retrieval(
-            tool_retriever(gantry, score_threshold=0.0), catalogue.TOOL_CASES, k=5
+            tool_retriever(fetcher, score_threshold=0.0), catalogue.TOOL_CASES, k=5
         )
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 async def _run(shares: list[float], weights: list[float], seed: int) -> None:

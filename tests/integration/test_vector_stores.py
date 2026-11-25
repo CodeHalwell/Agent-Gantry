@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import pytest
 
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder
-from agent_gantry.schema.tool import ToolDefinition
+from dotfetch.adapters.embedders.simple import SimpleEmbedder
+from dotfetch.schema.tool import ToolDefinition
 
 
 def _make_tools(count: int = 5) -> list[ToolDefinition]:
@@ -38,7 +38,7 @@ async def test_qdrant_basic_flow(qdrant_url: str) -> None:
     """Test basic add/search/delete flow with Qdrant."""
     pytest.importorskip("qdrant_client")
 
-    from agent_gantry.adapters.vector_stores.remote import QdrantVectorStore
+    from dotfetch.adapters.vector_stores.remote import QdrantVectorStore
 
     store = QdrantVectorStore(
         url=qdrant_url,
@@ -80,7 +80,7 @@ async def test_pgvector_basic_flow(pgvector_url: str) -> None:
     """Test basic add/search/delete flow with PGVector."""
     pytest.importorskip("asyncpg")
 
-    from agent_gantry.adapters.vector_stores.remote import PGVectorStore
+    from dotfetch.adapters.vector_stores.remote import PGVectorStore
 
     store = PGVectorStore(
         url=pgvector_url,
@@ -126,7 +126,7 @@ def test_pgvector_meta_table_name_bounded() -> None:
     """
     pytest.importorskip("asyncpg")
 
-    from agent_gantry.adapters.vector_stores.remote import PGVectorStore
+    from dotfetch.adapters.vector_stores.remote import PGVectorStore
 
     short = PGVectorStore(url="postgresql://unused", table_name="tools", dimension=8)
     assert short._meta_table_name == "tools__meta"
@@ -147,8 +147,8 @@ async def test_qdrant_fingerprint_keys_align_with_sync_manager(qdrant_url: str) 
     re-embed every time (the exact bug the in-memory store had)."""
     pytest.importorskip("qdrant_client")
 
-    from agent_gantry.adapters.vector_stores.remote import QdrantVectorStore
-    from agent_gantry.utils.fingerprint import compute_tool_fingerprint
+    from dotfetch.adapters.vector_stores.remote import QdrantVectorStore
+    from dotfetch.utils.fingerprint import compute_tool_fingerprint
 
     store = QdrantVectorStore(
         url=qdrant_url,
@@ -173,8 +173,8 @@ async def test_pgvector_fingerprint_keys_align_with_sync_manager(pgvector_url: s
     """Same contract check as the Qdrant variant, for PGVector."""
     pytest.importorskip("asyncpg")
 
-    from agent_gantry.adapters.vector_stores.remote import PGVectorStore
-    from agent_gantry.utils.fingerprint import compute_tool_fingerprint
+    from dotfetch.adapters.vector_stores.remote import PGVectorStore
+    from dotfetch.utils.fingerprint import compute_tool_fingerprint
 
     store = PGVectorStore(
         url=pgvector_url,
@@ -199,7 +199,7 @@ async def test_qdrant_quantized_search(qdrant_url: str) -> None:
     """Scalar-quantized collections search correctly with exact rescoring."""
     pytest.importorskip("qdrant_client")
 
-    from agent_gantry.adapters.vector_stores.remote import QdrantVectorStore
+    from dotfetch.adapters.vector_stores.remote import QdrantVectorStore
 
     store = QdrantVectorStore(
         url=qdrant_url,
@@ -225,7 +225,7 @@ def test_qdrant_quantization_mode_validated() -> None:
     """Bad quantization modes fail fast at construction."""
     pytest.importorskip("qdrant_client")
 
-    from agent_gantry.adapters.vector_stores.remote import QdrantVectorStore
+    from dotfetch.adapters.vector_stores.remote import QdrantVectorStore
 
     with pytest.raises(ValueError, match="Unsupported quantization mode"):
         QdrantVectorStore(url="http://localhost:6333", quantization="turbo")
@@ -237,7 +237,7 @@ async def test_qdrant_binary_quantized_search(qdrant_url: str) -> None:
     """Binary-quantized collections search correctly with exact rescoring."""
     pytest.importorskip("qdrant_client")
 
-    from agent_gantry.adapters.vector_stores.remote import QdrantVectorStore
+    from dotfetch.adapters.vector_stores.remote import QdrantVectorStore
 
     store = QdrantVectorStore(
         url=qdrant_url,

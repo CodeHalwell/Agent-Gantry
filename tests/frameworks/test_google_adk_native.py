@@ -20,11 +20,11 @@ from google.adk.models.llm_response import LlmResponse  # noqa: E402
 from google.adk.runners import InMemoryRunner  # noqa: E402
 from google.genai import types  # noqa: E402
 
-from agent_gantry import AgentGantry, current_tool_invocation  # noqa: E402
-from agent_gantry.adapters.embedders.simple import SimpleEmbedder  # noqa: E402
-from agent_gantry.core.security import SecurityPolicy  # noqa: E402
-from agent_gantry.google_adk import GoogleADKAdapter, current_tool_context  # noqa: E402
-from agent_gantry.integrations.frameworks.base import ToolExecutionError  # noqa: E402
+from dotfetch import DotFetch, current_tool_invocation  # noqa: E402
+from dotfetch.adapters.embedders.simple import SimpleEmbedder  # noqa: E402
+from dotfetch.core.security import SecurityPolicy  # noqa: E402
+from dotfetch.google_adk import GoogleADKAdapter, current_tool_context  # noqa: E402
+from dotfetch.integrations.frameworks.base import ToolExecutionError  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -70,8 +70,8 @@ def _llm(*steps: list[tuple[str, dict[str, Any]]]) -> ScriptedLlm:
     return ScriptedLlm(script=list(steps), offered=[])
 
 
-async def _build(**kwargs: Any) -> AgentGantry:
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=256), **kwargs)
+async def _build(**kwargs: Any) -> DotFetch:
+    g = DotFetch(embedder=SimpleEmbedder(dimension=256), **kwargs)
     g.sent = []  # type: ignore[attr-defined]
 
     @g.register(examples=["what's the weather in London", "weather forecast for Paris"])
@@ -113,7 +113,7 @@ async def _build(**kwargs: Any) -> AgentGantry:
 
 
 @pytest.fixture
-async def gantry():
+async def fetcher():
     g = await _build()
     try:
         yield g
@@ -162,8 +162,8 @@ class Run:
         return self
 
 
-async def _static(gantry, query, *steps, **adapter_kwargs):
-    tools = await GoogleADKAdapter(gantry, **adapter_kwargs).select(query, limit=6)
+async def _static(fetcher, query, *steps, **adapter_kwargs):
+    tools = await GoogleADKAdapter(fetcher, **adapter_kwargs).select(query, limit=6)
     llm = _llm(*steps)
     return LlmAgent(name="a", model=llm, tools=tools), llm
 
@@ -173,8 +173,8 @@ async def _static(gantry, query, *steps, **adapter_kwargs):
 # --------------------------------------------------------------------------- #
 
 
-async def test_tool_failure_reaches_the_model_as_an_error_response(gantry):
-    agent, llm = await _static(gantry, "divide", [("divide", {"a": 1, "b": 0})])
+async def test_tool_failure_reaches_the_model_as_an_error_response(fetcher):
+    agent, llm = await _static(fetcher, "divide", [("divide", {"a": 1, "b": 0})])
     run = await Run(agent).ask("divide 1 by 0")
     [(name, response)] = run.responses
     assert name == "divide"
@@ -182,9 +182,9 @@ async def test_tool_failure_reaches_the_model_as_an_error_response(gantry):
     assert len(llm.offered) == 2  # the model got a second turn
 
 
-async def test_error_formatter_rewrites_the_text(gantry):
+async def test_error_formatter_rewrites_the_text(fetcher):
     agent, _ = await _static(
-        gantry,
+        fetcher,
         "divide",
         [("divide", {"a": 1, "b": 0})],
         error_formatter=lambda exc: f"{exc.error_type}: [redacted]",
@@ -193,8 +193,8 @@ async def test_error_formatter_rewrites_the_text(gantry):
     assert run.responses[0][1] == {"error": "ZeroDivisionError: [redacted]"}
 
 
-async def test_error_mode_raise_propagates(gantry):
-    agent, _ = await _static(gantry, "divide", [("divide", {"a": 1, "b": 0})], error_mode="raise")
+async def test_error_mode_raise_propagates(fetcher):
+    agent, _ = await _static(fetcher, "divide", [("divide", {"a": 1, "b": 0})], error_mode="raise")
     with pytest.raises(Exception) as info:
         await Run(agent).ask("divide")
     chain = [info.value]
@@ -209,15 +209,15 @@ async def test_error_mode_raise_propagates(gantry):
 
 
 @pytest.mark.parametrize("confirmed", [True, False])
-async def test_confirmation_gate_uses_adk_confirmation(gantry, confirmed):
-    agent, _ = await _static(gantry, "send an email message", [("send_email", {"to": "bob@x"})])
+async def test_confirmation_gate_uses_adk_confirmation(fetcher, confirmed):
+    agent, _ = await _static(fetcher, "send an email message", [("send_email", {"to": "bob@x"})])
     run = await Run(agent).ask("email bob")
     [request] = run.confirmations
     assert request.args["originalFunctionCall"]["name"] == "send_email"
-    assert gantry.sent == []
+    assert fetcher.sent == []
 
     await run.decide(confirmed)
-    assert gantry.sent == (["bob@x"] if confirmed else [])  # exactly once when confirmed
+    assert fetcher.sent == (["bob@x"] if confirmed else [])  # exactly once when confirmed
     name, response = run.responses[-1]
     assert name == "send_email"
     assert (response == {"result": "sent:bob@x"}) is confirmed
@@ -237,13 +237,13 @@ async def test_security_policy_pattern_also_needs_confirmation():
         await g.close()
 
 
-async def test_error_mode_raise_with_a_gated_tool_never_runs_it(gantry):
+async def test_error_mode_raise_with_a_gated_tool_never_runs_it(fetcher):
     agent, _ = await _static(
-        gantry, "send an email message", [("send_email", {"to": "bob@x"})], error_mode="raise"
+        fetcher, "send an email message", [("send_email", {"to": "bob@x"})], error_mode="raise"
     )
     with pytest.raises(Exception):
         await Run(agent).ask("email bob")
-    assert gantry.sent == []
+    assert fetcher.sent == []
 
 
 # --------------------------------------------------------------------------- #
@@ -251,8 +251,8 @@ async def test_error_mode_raise_with_a_gated_tool_never_runs_it(gantry):
 # --------------------------------------------------------------------------- #
 
 
-async def test_tool_context_reaches_gantry_handlers(gantry):
-    agent, _ = await _static(gantry, "who am I signed in as", [("whoami", {})])
+async def test_tool_context_reaches_fetcher_handlers(fetcher):
+    agent, _ = await _static(fetcher, "who am I signed in as", [("whoami", {})])
     run = await Run(agent, state={"user": "dan"}).ask("who am I")
     assert run.responses[0][1] == {"result": "user=dan;call=call_0;fw=google_adk"}
 
@@ -262,53 +262,53 @@ async def test_tool_context_reaches_gantry_handlers(gantry):
 # --------------------------------------------------------------------------- #
 
 
-def _agent(gantry, llm, **kwargs):
-    return GoogleADKAdapter(gantry).agent(model=llm, name="a", **kwargs)
+def _agent(fetcher, llm, **kwargs):
+    return GoogleADKAdapter(fetcher).agent(model=llm, name="a", **kwargs)
 
 
-async def test_callback_reselects_mid_run_from_tool_output(gantry):
+async def test_callback_reselects_mid_run_from_tool_output(fetcher):
     llm = _llm([("lookup_customer", {"name": "Jo"})])
-    await Run(_agent(gantry, llm, limit=1, sticky=False)).ask("look up the customer record for Jo")
+    await Run(_agent(fetcher, llm, limit=1, sticky=False)).ask("look up the customer record for Jo")
     assert llm.offered[0] == ["lookup_customer"]
     assert llm.offered[1] == ["send_email"]  # chosen from the lookup's output
 
 
-async def test_callback_sticky_keeps_earlier_tools(gantry):
+async def test_callback_sticky_keeps_earlier_tools(fetcher):
     llm = _llm([("lookup_customer", {"name": "Jo"})])
-    await Run(_agent(gantry, llm, limit=1)).ask("look up the customer record for Jo")
+    await Run(_agent(fetcher, llm, limit=1)).ask("look up the customer record for Jo")
     assert llm.offered[1] == ["lookup_customer", "send_email"]
 
 
-async def test_callback_sticky_cap(gantry):
+async def test_callback_sticky_cap(fetcher):
     llm = _llm([("lookup_customer", {"name": "Jo"})])
-    await Run(_agent(gantry, llm, limit=1, max_offered=1)).ask("look up the customer record for Jo")
+    await Run(_agent(fetcher, llm, limit=1, max_offered=1)).ask("look up the customer record for Jo")
     assert llm.offered[1] == ["send_email"]
 
 
-async def test_callback_query_from_results_false(gantry):
+async def test_callback_query_from_results_false(fetcher):
     llm = _llm([("lookup_customer", {"name": "Jo"})])
-    await Run(_agent(gantry, llm, limit=1, sticky=False, query_from_results=False)).ask(
+    await Run(_agent(fetcher, llm, limit=1, sticky=False, query_from_results=False)).ask(
         "look up the customer record for Jo"
     )
     assert llm.offered[1] == ["lookup_customer"]
 
 
-async def test_callback_failed_output_never_feeds_retrieval(gantry):
+async def test_callback_failed_output_never_feeds_retrieval(fetcher):
     queries = []
-    original = gantry.retrieve
+    original = fetcher.retrieve
 
     async def spy(query):
         queries.append(query.context.query)
         return await original(query)
 
-    gantry.retrieve = spy
+    fetcher.retrieve = spy
     llm = _llm([("divide", {"a": 1, "b": 0})])
-    await Run(_agent(gantry, llm, limit=1)).ask("divide 1 by 0")
+    await Run(_agent(fetcher, llm, limit=1)).ask("divide 1 by 0")
     assert queries and all("ZeroDivisionError" not in q for q in queries)
 
 
-async def test_callback_retrieval_failure_keeps_earlier_tools_and_pins(gantry, caplog):
-    original = gantry.retrieve
+async def test_callback_retrieval_failure_keeps_earlier_tools_and_pins(fetcher, caplog):
+    original = fetcher.retrieve
     calls = {"n": 0}
 
     async def flaky(query):
@@ -317,33 +317,33 @@ async def test_callback_retrieval_failure_keeps_earlier_tools_and_pins(gantry, c
             raise RuntimeError("vector store down")
         return await original(query)
 
-    gantry.retrieve = flaky
+    fetcher.retrieve = flaky
     llm = _llm([("lookup_customer", {"name": "Jo"})])
     with caplog.at_level("WARNING"):
-        await Run(_agent(gantry, llm, limit=1, sticky=False, always_include=["get_weather"])).ask(
+        await Run(_agent(fetcher, llm, limit=1, sticky=False, always_include=["get_weather"])).ask(
             "look up the customer record for Jo"
         )
     assert llm.offered[1] == ["get_weather", "lookup_customer"]
     assert "semantic retrieval failed" in caplog.text
 
 
-async def test_callback_first_turn_failure_still_offers_pins(gantry):
+async def test_callback_first_turn_failure_still_offers_pins(fetcher):
     async def down(query):
         raise RuntimeError("vector store down")
 
-    gantry.retrieve = down
+    fetcher.retrieve = down
     llm = _llm([("get_weather", {"city": "Leeds"})])
-    run = await Run(_agent(gantry, llm, limit=1, always_include=["get_weather"])).ask(
+    run = await Run(_agent(fetcher, llm, limit=1, always_include=["get_weather"])).ask(
         "weather in Leeds"
     )
     assert llm.offered[0] == ["get_weather"]
     assert run.responses[0][1] == {"result": "sunny in Leeds"}
 
 
-async def test_callback_runs_are_isolated(gantry):
+async def test_callback_runs_are_isolated(fetcher):
     async def run(prompt):
         llm = _llm()
-        await Run(_agent(gantry, llm, limit=1)).ask(prompt)
+        await Run(_agent(fetcher, llm, limit=1)).ask(prompt)
         return llm.offered
 
     weather, crm = await asyncio.gather(
@@ -353,20 +353,20 @@ async def test_callback_runs_are_isolated(gantry):
     assert crm == [["lookup_customer"]]
 
 
-async def test_callback_validates_arguments(gantry):
+async def test_callback_validates_arguments(fetcher):
     with pytest.raises(ValueError, match="max_offered"):
-        GoogleADKAdapter(gantry).before_model_callback(limit=3, max_offered=1)
+        GoogleADKAdapter(fetcher).before_model_callback(limit=3, max_offered=1)
     with pytest.raises(ValueError, match="error_mode"):
-        GoogleADKAdapter(gantry, error_mode="explode")  # type: ignore[arg-type]
+        GoogleADKAdapter(fetcher, error_mode="explode")  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize("confirmed", [True, False])
-async def test_per_turn_agent_resumes_a_confirmed_call(gantry, confirmed):
+async def test_per_turn_agent_resumes_a_confirmed_call(fetcher, confirmed):
     llm = _llm([("send_email", {"to": "bob@x"})])
-    run = await Run(_agent(gantry, llm, limit=1)).ask("send an email message to bob")
+    run = await Run(_agent(fetcher, llm, limit=1)).ask("send an email message to bob")
     assert run.confirmations, "the gated call should ask for confirmation"
     await run.decide(confirmed)
-    assert gantry.sent == (["bob@x"] if confirmed else [])
+    assert fetcher.sent == (["bob@x"] if confirmed else [])
 
 
 async def test_answering_a_confirmation_does_not_advertise_every_gated_tool():
@@ -384,7 +384,7 @@ async def test_answering_a_confirmation_does_not_advertise_every_gated_tool():
 
 
 async def test_confirmed_pin_outside_the_namespace_filter_resumes():
-    g = AgentGantry(embedder=SimpleEmbedder(dimension=256))
+    g = DotFetch(embedder=SimpleEmbedder(dimension=256))
     sent: list[str] = []
 
     @g.register(namespace="public")
@@ -413,7 +413,7 @@ async def test_confirmed_pin_outside_the_namespace_filter_resumes():
 def test_success_payload_with_a_null_error_still_feeds_retrieval():
     from types import SimpleNamespace
 
-    from agent_gantry.integrations.frameworks.google_adk_live import _response_text
+    from dotfetch.integrations.frameworks.google_adk_live import _response_text
 
     assert _response_text(SimpleNamespace(response={"error": None, "data": "ok"})) is not None
     assert _response_text(SimpleNamespace(response={"error": "boom"})) is None

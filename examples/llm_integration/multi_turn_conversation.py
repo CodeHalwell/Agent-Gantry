@@ -4,7 +4,7 @@ Two-turn support conversation with per-turn tool routing.
 Each user turn retrieves the top 2 tools for that message only, so the
 follow-up ("upgrade that order") surfaces a different tool from the first.
 Runs offline with no API key using mocked tool calls; set OPENAI_API_KEY
-(and install ``agent-gantry[openai]``) to drive it with the real model.
+(and install ``dotfetch[openai]``) to drive it with the real model.
 
 Run: python examples/llm_integration/multi_turn_conversation.py
 """
@@ -20,8 +20,8 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from agent_gantry import AgentGantry
-from agent_gantry.schema.execution import ToolCall
+from dotfetch import DotFetch
+from dotfetch.schema.execution import ToolCall
 
 load_dotenv()
 
@@ -50,8 +50,8 @@ def _mock_tool_calls(text: str, tool_schemas: Sequence[dict[str, Any]]) -> list[
     return calls
 
 
-async def _ensure_tools(gantry: AgentGantry) -> None:
-    @gantry.register(
+async def _ensure_tools(fetcher: DotFetch) -> None:
+    @fetcher.register(
         tags=["orders"],
         examples=["where is my order 12345", "has my order shipped yet"],
     )
@@ -59,7 +59,7 @@ async def _ensure_tools(gantry: AgentGantry) -> None:
         """Look up the latest status for an order."""
         return {"order_id": order_id, "status": "shipped", "carrier": "DHL"}
 
-    @gantry.register(
+    @fetcher.register(
         tags=["orders"],
         examples=["upgrade my order to express shipping", "make that delivery faster"],
     )
@@ -67,18 +67,18 @@ async def _ensure_tools(gantry: AgentGantry) -> None:
         """Upgrade shipping speed for an order."""
         return {"order_id": order_id, "speed": speed, "status": "upgraded"}
 
-    await gantry.sync()
+    await fetcher.sync()
 
 
 async def run_turn(
     *,
-    gantry: AgentGantry,
+    fetcher: DotFetch,
     client: AsyncOpenAI | None,
     messages: list[dict[str, Any]],
     user_content: str,
 ) -> None:
     messages.append({"role": "user", "content": user_content})
-    tools = await gantry.retrieve_tools(user_content, limit=2)
+    tools = await fetcher.retrieve_tools(user_content, limit=2)
 
     tool_calls: list[Any] = []
     if client is not None:
@@ -120,7 +120,7 @@ async def run_turn(
 
     for tc in tool_calls:
         args = json.loads(tc.function.arguments)
-        result = await gantry.execute(ToolCall(tool_name=tc.function.name, arguments=args))
+        result = await fetcher.execute(ToolCall(tool_name=tc.function.name, arguments=args))
         messages.append(
             {
                 "role": "tool",
@@ -146,9 +146,9 @@ async def run_turn(
 
 
 async def main() -> None:
-    gantry = AgentGantry()
+    fetcher = DotFetch()
     try:
-        await _ensure_tools(gantry)
+        await _ensure_tools(fetcher)
 
         api_key = os.environ.get("OPENAI_API_KEY")
         client = AsyncOpenAI(api_key=api_key) if OPENAI_AVAILABLE and api_key else None
@@ -160,21 +160,21 @@ async def main() -> None:
             }
         ]
 
-        print("=== Multi-turn LLM + Gantry demo ===")
+        print("=== Multi-turn LLM + dotfetch demo ===")
         await run_turn(
-            gantry=gantry,
+            fetcher=fetcher,
             client=client,
             messages=messages,
             user_content="My order 12345 seems delayed. Can you check the status?",
         )
         await run_turn(
-            gantry=gantry,
+            fetcher=fetcher,
             client=client,
             messages=messages,
             user_content="Please upgrade that order to express shipping.",
         )
     finally:
-        await gantry.close()
+        await fetcher.close()
 
 
 if __name__ == "__main__":
