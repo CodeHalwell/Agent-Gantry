@@ -1,7 +1,7 @@
 """
 A2A Server implementation for dotfetch.
 
-Exposes DotFetch as an A2A agent with tool discovery and execution skills.
+Exposes dotfetch as an A2A agent with tool discovery and execution skills.
 """
 
 from __future__ import annotations
@@ -28,10 +28,10 @@ def generate_agent_card(fetcher: DotFetch, base_url: str) -> AgentCard:
         base_url: Base URL where the A2A server is hosted
 
     Returns:
-        Agent card describing DotFetch's capabilities
+        Agent card describing dotfetch's capabilities
     """
     return AgentCard(
-        name="DotFetch",
+        name="dotfetch",
         description=(
             f"Intelligent tool routing and execution service with "
             f"{fetcher.tool_count} tools available"
@@ -111,8 +111,8 @@ def create_a2a_server(fetcher: DotFetch, base_url: str = "http://localhost:8080"
         ) from e
 
     app = FastAPI(
-        title="DotFetch A2A Server",
-        description="Agent-to-Agent protocol server for DotFetch",
+        title="dotfetch A2A Server",
+        description="Agent-to-Agent protocol server for dotfetch",
         version="1.0.0",
     )
 

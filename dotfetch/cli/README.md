@@ -15,7 +15,7 @@ Without `--module` a three-tool demo registry is used and a note is printed on s
 
 - `dotfetch list [--namespace NS]` — print the registered tools.
 - `dotfetch search "<query>" [--limit N] [--namespace NS]` — semantic retrieval with scores.
-- `dotfetch lint` — flag description cross-references, near-duplicate tools, over-used tags and tools registered without `examples=[...]`. Add `--source PATH` (repeatable) to also scan Python files for non-zero `score_threshold` overrides with no justifying comment (or a comment claiming they *relax* the filter — it is an absolute cosine cutoff, so they only tighten it) and for `__main__` scripts that build an `DotFetch` and never `close()` it. `--source` on its own runs only the file scan and builds no fetcher.
+- `dotfetch lint` — flag description cross-references, near-duplicate tools, over-used tags and tools registered without `examples=[...]`. Add `--source PATH` (repeatable) to also scan Python files for non-zero `score_threshold` overrides with no justifying comment (or a comment claiming they *relax* the filter — it is an absolute cosine cutoff, so they only tighten it) and for `__main__` scripts that build a `DotFetch` and never `close()` it. `--source` on its own runs only the file scan and builds no fetcher.
 - `dotfetch sim tool_a tool_b` — cosine similarity between two tools' searchable text.
 - `dotfetch sync [--dry-run] [--force] [--prune]` — embed changed tools into the vector store;
   `--prune` also removes stored tools that are no longer registered.

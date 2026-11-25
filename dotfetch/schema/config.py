@@ -371,7 +371,7 @@ class DotFetchConfig(BaseModel):
         default=False,
         description=(
             "Delete tools from the vector store that are no longer registered with this "
-            "fetcher when sync() runs. Off by default: several gantries may legitimately "
+            "fetcher when sync() runs. Off by default: several instances may legitimately "
             "share one persistent store and register different subsets."
         ),
     )

@@ -1162,11 +1162,11 @@ def _pin_specs(
     if missing:
         if kind == "required":
             raise MissingRequiredToolError(
-                f"DotFetchToolset.select: required tool(s) not found in fetcher: "
+                f"DotFetchToolset.select: required tool(s) not found in dotfetch: "
                 f"{missing}. Did you forget to register them, or is there a typo?"
             )
         logger.warning(
-            "DotFetchToolset.select: always_include tool(s) not found in fetcher "
+            "DotFetchToolset.select: always_include tool(s) not found in dotfetch "
             "and will be skipped: %s",
             missing,
         )

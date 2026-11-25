@@ -138,7 +138,7 @@ _EMBEDDER_HINT = (
 )
 
 #: Set once the downgrade below has been reported, so a process that builds
-#: many gantries says it once rather than once per fetcher.
+#: many instances says it once rather than once per fetcher.
 _simple_fallback_warned = False
 
 

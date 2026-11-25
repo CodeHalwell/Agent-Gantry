@@ -710,7 +710,7 @@ def _build_impl_class(base: type) -> type:
 
             logger.debug(
                 "DotFetchContextProvider: refreshed tools per-turn "
-                "(%d preserved + %d fetcher, %d stale dropped, %d total)",
+                "(%d preserved + %d dotfetch, %d stale dropped, %d total)",
                 len(preserved),
                 len(fresh),
                 dropped,
@@ -1136,7 +1136,7 @@ class DotFetchContextProvider:
             _, missing = _resolve_tool_names(fetcher, required)
             if missing:
                 raise MissingRequiredToolError(
-                    f"DotFetchContextProvider: required tool(s) not found in fetcher: "
+                    f"DotFetchContextProvider: required tool(s) not found in dotfetch: "
                     f"{missing}. Did you forget to register them, or is there a typo?"
                 )
 

@@ -1,7 +1,7 @@
 """
 Reusable tool catalog for plug-and-play demos.
 
-Expose an DotFetch instance named ``tools`` so other scripts can import and
+Expose a DotFetch instance named ``tools`` so other scripts can import and
 run semantic filtering without redefining tools.
 """
 

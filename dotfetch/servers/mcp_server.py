@@ -1,7 +1,7 @@
 """
 MCP Server implementation for dotfetch.
 
-Exposes DotFetch as an MCP server with dynamic tool discovery.
+Exposes dotfetch as an MCP server with dynamic tool discovery.
 
 Supports both mcp 1.x and mcp 2.x. The wire types (``Tool``, ``TextContent``)
 and the stdio transport (``stdio_server`` + ``Server.run``) are identical
@@ -733,7 +733,7 @@ class MCPServer:
             limit = self._find_limit
         limit = max(_FIND_LIMIT_MIN, min(limit, _FIND_LIMIT_MAX))
 
-        # Use DotFetch's semantic routing. Threshold 0.0, like every other
+        # Use dotfetch's semantic routing. Threshold 0.0, like every other
         # convenience layer: ToolQuery's 0.5 default is an absolute cosine
         # cutoff that silently returns nothing for embedders whose scores sit
         # below it, and an MCP client cannot tell "no match" from "filtered".
@@ -1041,7 +1041,7 @@ def create_mcp_server(
     find_limit: int = 5,
 ) -> MCPServer:
     """
-    Create an MCP server for DotFetch.
+    Create an MCP server for dotfetch.
 
     Args:
         fetcher: DotFetch instance to serve

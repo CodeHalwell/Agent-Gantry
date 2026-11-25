@@ -109,7 +109,7 @@ def _build_retriever_class() -> type:
 @functools.cache
 def _retriever_class(object_retriever: type) -> type:
     class DotFetchToolRetriever(object_retriever):  # type: ignore[valid-type,misc]
-        """Per-turn ``ObjectRetriever`` that re-selects fetcher tools every step.
+        """Per-turn ``ObjectRetriever`` that re-selects dotfetch tools every step.
 
         Drop this into ``FunctionAgent(tool_retriever=...)``. On every reasoning
         step the agent calls :meth:`aretrieve` (or :meth:`retrieve`), which runs
@@ -272,7 +272,7 @@ def _fetcher_function_agent(
     error_formatter: ErrorFormatter | None = None,
     **agent_kwargs: Any,
 ) -> Any:
-    """Build a ``FunctionAgent`` wired to a live per-turn fetcher retriever.
+    """Build a ``FunctionAgent`` wired to a live per-turn dotfetch retriever.
 
     Equivalent to::
 

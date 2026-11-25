@@ -95,7 +95,7 @@ class SourceAnalysis:
         if self.unclosed:
             if lines:
                 lines.append("")
-            lines.append("Gantries constructed in a __main__ script and never closed:")
+            lines.append("Instances constructed in a __main__ script and never closed:")
             for f in self.unclosed:
                 lines.append(f"  - {f.path}:{f.line}")
         return "\n".join(lines)

@@ -558,7 +558,7 @@ class LlamaIndexAdapter(BaseFrameworkAdapter):
         error_mode: ErrorMode | None = None,
         **agent_kwargs: Any,
     ) -> Any:
-        """Build a ``FunctionAgent`` wired to a live per-turn fetcher retriever."""
+        """Build a ``FunctionAgent`` wired to a live per-turn dotfetch retriever."""
         from dotfetch.integrations.frameworks.llamaindex_live import (
             _fetcher_function_agent,
         )

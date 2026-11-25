@@ -28,7 +28,7 @@ class TestWithSemanticToolsDecorator:
     """Tests for the with_semantic_tools decorator."""
 
     def test_decorator_requires_fetcher_or_default(self) -> None:
-        """Test that decorator requires an DotFetch instance or default fetcher."""
+        """Test that decorator requires a DotFetch instance or default fetcher."""
         # When passing a callable without default fetcher set, raises ValueError
         with pytest.raises(ValueError, match="No default fetcher set"):
 

@@ -137,7 +137,7 @@ DB_PATH = pathlib.Path(__file__).parent / ".tool_cache" / "lancedb"
 
 def create_persistent_fetcher(dimension: int = 256) -> DotFetch:
     """
-    Create an DotFetch with persistent LanceDB storage.
+    Create a DotFetch with persistent LanceDB storage.
 
     Embeddings are stored on disk, so tools only need to be embedded once.
     Subsequent runs load from disk instantly.

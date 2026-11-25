@@ -2,7 +2,7 @@
 MCP Integration Demo for dotfetch.
 
 Walks through, without opening any connection:
-1. What an MCP client sees when DotFetch is served in dynamic mode
+1. What an MCP client sees when dotfetch is served in dynamic mode
 2. How an external MCP server is configured for ``add_mcp_server``
 3. The meta-tool flow (``find_relevant_tools`` then ``execute_tool``), run
    directly against the fetcher the server would wrap
@@ -90,7 +90,7 @@ async def demo_mcp_client():
         print("2. Performs MCP handshake (initialize/initialized)")
         print("3. Calls tools/list to discover available tools")
         print("4. Converts each MCP tool to ToolDefinition")
-        print("5. Registers tools in DotFetch's vector store")
+        print("5. Registers tools in dotfetch's vector store")
         print("6. Tools become available for semantic routing!")
     finally:
         await fetcher.close()

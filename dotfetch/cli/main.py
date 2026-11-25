@@ -218,7 +218,7 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="PATH",
         help="Python file or directory to scan for usage mistakes: non-zero "
         "score_threshold overrides without a justifying comment (or with one "
-        "claiming they relax the filter), and __main__ scripts that construct an "
+        "claiming they relax the filter), and __main__ scripts that construct a "
         "DotFetch and never close() it. Repeatable. With no --module/--config "
         "the registry checks are skipped and no fetcher is built.",
     )
@@ -530,7 +530,7 @@ async def _run_sync_command(
     force: bool,
     prune: bool | None = None,
 ) -> int:
-    """Run the ``fetcher sync`` subcommand.
+    """Run the ``dotfetch sync`` subcommand.
 
     In ``--dry-run`` mode, queries the SyncManager for the set of tools
     whose fingerprints don't match what's stored, and reports them

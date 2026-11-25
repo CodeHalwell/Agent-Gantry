@@ -13,7 +13,7 @@ class TestCreateDefaultDotFetch:
     """Tests for create_default_fetcher factory function."""
 
     def test_create_default_fetcher_returns_instance(self) -> None:
-        """Test that create_default_fetcher returns an DotFetch instance."""
+        """Test that create_default_fetcher returns a DotFetch instance."""
         fetcher = create_default_fetcher()
         assert isinstance(fetcher, DotFetch)
         assert fetcher is not None
@@ -57,7 +57,7 @@ class TestDotFetch:
     """Tests for DotFetch class."""
 
     def test_create_instance(self, fetcher: DotFetch) -> None:
-        """Test creating an DotFetch instance."""
+        """Test creating a DotFetch instance."""
         assert fetcher is not None
         assert fetcher.tool_count == 0
 

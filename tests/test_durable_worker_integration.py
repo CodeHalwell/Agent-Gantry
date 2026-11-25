@@ -1,6 +1,6 @@
 """
 End-to-end integration test: real ``agent_framework`` agent driving real
-fetcher-wrapped tools, executed via ``asyncio.run`` per request to mirror
+dotfetch-wrapped tools, executed via ``asyncio.run`` per request to mirror
 the loop topology of ``agent_framework_durabletask.DurableAIAgentWorker``.
 
 ``DurableAIAgentWorker._handle_request`` calls
@@ -12,7 +12,7 @@ lifetime — the exact topology that previously surfaced as
 
 This test does the full thing without mocks of the fetcher surface:
 
-1. Build an ``DotFetch`` at module scope (no running loop).
+1. Build a ``DotFetch`` at module scope (no running loop).
 2. Build a real :class:`agent_framework.RawAgent` driven by a small
    :class:`agent_framework.BaseChatClient` subclass that emits one or
    more ``function_call`` items on the first turn and final text on the

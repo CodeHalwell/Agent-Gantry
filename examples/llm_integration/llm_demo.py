@@ -160,7 +160,7 @@ async def main():
 
                     print(f"   [dotfetch] Executing tool: {fn_name}")
 
-                    # Execute using DotFetch's secure executor
+                    # Execute using dotfetch's secure executor
                     result = await fetcher.execute(ToolCall(tool_name=fn_name, arguments=fn_args))
 
                     print(f"   [Result] {result.result}")

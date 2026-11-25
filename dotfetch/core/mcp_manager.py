@@ -282,7 +282,7 @@ class MCPManager:
         it kept every row under the old name beside the new one. The router
         fetches a bounded candidate window, so such duplicates could crowd
         other servers out. As with ``DotFetch.prune_stale_tools``, a store
-        shared between gantries is pruned to *this* fetcher's servers; a
+        shared between instances is pruned to *this* fetcher's servers; a
         fetcher with no servers never gets here.
         """
         stored: list[ToolDefinition] = []

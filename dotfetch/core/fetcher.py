@@ -367,7 +367,7 @@ class DotFetch:
         Closes the MCP clients, the executor's A2A clients, and every adapter
         with a ``close``/``aclose`` (store, embedder, selector, reranker,
         telemetry), whether injected or built from config. Share one adapter
-        between gantries only if you close the gantries last. Safe to call
+        between instances only if you close the instances last. Safe to call
         more than once. Do not count on using the instance afterwards: an
         adapter that closed a connection (a ``CachedEmbedder``, a Qdrant or
         pgvector store) stays closed, and only the connectionless ones come
@@ -416,7 +416,7 @@ class DotFetch:
     @classmethod
     def from_config(cls, path: str) -> DotFetch:
         """
-        Create an DotFetch instance from a YAML config file.
+        Create a DotFetch instance from a YAML config file.
 
         Args:
             path: Path to the YAML configuration file
@@ -531,7 +531,7 @@ class DotFetch:
 
         Args:
             modules: Iterable of module paths (dot-notation) to import.
-            attr: Attribute on each module that holds an DotFetch instance (default "tools").
+            attr: Attribute on each module that holds a DotFetch instance (default "tools").
             config/vector_store/embedder/reranker/selector/telemetry/security_policy/
             on_selector_fallback:
                 Optional overrides for the constructed fetcher instance.
@@ -695,7 +695,7 @@ class DotFetch:
                 registers, so a tool removed from the code stops being
                 retrievable on a persistent store. ``None`` defers to
                 ``config.prune_on_sync`` (off by default, because several
-                gantries may share one store and register different subsets).
+                instances may share one store and register different subsets).
 
         Returns:
             Number of tools synced (0 if nothing changed)
@@ -834,7 +834,7 @@ class DotFetch:
         "this fetcher does not know what belongs here" far more often than it
         means "the store should be empty" — a lazily-registering or
         not-yet-populated fetcher hits it — and on a store shared between
-        gantries, as the note above contemplates, acting on it would delete
+        instances, as the note above contemplates, acting on it would delete
         every tool the *other* instances registered.
 
         Args:
@@ -850,7 +850,7 @@ class DotFetch:
             logger.warning(
                 "Refusing to prune: this fetcher registers no tools, so pruning "
                 "would delete every stored tool, including any registered by "
-                "other gantries sharing this store. Clear the store directly if "
+                "other instances sharing this store. Clear the store directly if "
                 "that is what you want."
             )
             return 0
@@ -957,7 +957,7 @@ class DotFetch:
             Number of tools imported into this fetcher.
 
         Raises:
-            ValueError: If a module doesn't expose an DotFetch at the specified attribute.
+            ValueError: If a module doesn't expose a DotFetch at the specified attribute.
         """
 
         imported = 0
@@ -973,7 +973,7 @@ class DotFetch:
             other = getattr(module, attr, None)
             if not isinstance(other, DotFetch):
                 raise ValueError(
-                    f"Module '{module_path}' does not expose an DotFetch instance at '{attr}'. "
+                    f"Module '{module_path}' does not expose a DotFetch instance at '{attr}'. "
                     f"Found: {type(other).__name__ if other else 'None'}"
                 )
 
@@ -3732,7 +3732,7 @@ def create_default_fetcher(dimension: int = 256) -> DotFetch:
     """
     Factory function to create a pre-configured DotFetch instance.
 
-    This provides a convenient way to create an DotFetch instance with
+    This provides a convenient way to create a DotFetch instance with
     sensible defaults, automatically selecting the best available embedder:
     - NomicEmbedder (if sentence-transformers is available)
     - SimpleEmbedder (fallback, hash-based)
