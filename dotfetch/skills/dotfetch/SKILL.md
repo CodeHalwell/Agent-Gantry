@@ -318,7 +318,7 @@ Every inspection command works on **your** registry: `--module pkg.tools` (or `p
 uv run dotfetch list --module my_app.tools                     # list registered tools
 uv run dotfetch search "refund order" --module my_app.tools     # semantic search, --limit 3
 uv run dotfetch lint --module my_app.tools                      # detect tool-description authoring mistakes
-uv run dotfetch lint --source src/                              # scan files: inverted score_threshold, unclosed gantries
+uv run dotfetch lint --source src/                              # scan files: inverted score_threshold, unclosed DotFetch instances
 uv run dotfetch sim toolA toolB --module my_app.tools           # cosine similarity between two tools
 uv run dotfetch sync --dry-run --module my_app.tools            # which tools would (re-)embed and why
 uv run dotfetch sync --prune --module my_app.tools              # also drop stored tools no longer registered
@@ -525,7 +525,7 @@ This catches the headline mistakes: a tool description that names another tool (
 | OpenAI embedder can't reach my proxy | Custom base_url not configured | Pass `api_base=...` in `EmbedderConfig` or set `OPENAI_BASE_URL` |
 | No telemetry / INFO logs appear (0.8.0+) | Library no longer configures logging by default | Call `enable_console_logging()` or configure your own handler on the `dotfetch` logger |
 | A tool registered after the first `retrieve()` never shows up (≤0.14.0) | `ensure_synced()` only checked a flag, so late registrations stayed unembedded | Upgrade (late registrations now sync automatically), or call `await fetcher.sync()` after registering |
-| Deleted tool still retrievable from a persistent store | Sync only adds/updates; stale rows are kept for stores shared between gantries | `await fetcher.sync(prune=True)` / `dotfetch sync --prune`, or `prune_on_sync: true` in config |
+| Deleted tool still retrievable from a persistent store | Sync only adds/updates; stale rows are kept for stores shared between instances | `await fetcher.sync(prune=True)` / `dotfetch sync --prune`, or `prune_on_sync: true` in config |
 | Pydantic AI `UserError`: "A deferred tool call was present, but `DeferredToolRequests` is not among output types" | A confirmation-gated tool raised `ApprovalRequired` | Add `DeferredToolRequests` to `output_type` and handle approvals, or use `error_mode="raise"` |
 | Pydantic AI search mode: model "can't see" a tool | Deferred tools are hidden until `search_tools` discovers them | Expected; pin must-have tools with `always_include=[...]` |
 | Pydantic AI `UserError` about a tool name conflict between two dotfetch toolsets | Both toolsets selected the same tool | Give each a distinct `namespaces=` filter or `.prefixed(...)`, and a unique `id=` |

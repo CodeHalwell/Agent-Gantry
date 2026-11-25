@@ -42,6 +42,16 @@ documentation site's address.
   `dotfetch` in scripts and CI;
 - helper functions named `*_gantry` -> `*_fetcher`.
 
+**Stores written by 0.26.0 or earlier are re-embedded once.** The names under
+which a vector store keeps its own bookkeeping changed with the rest: LanceDB's
+metadata table `_gantry_metadata` is now `_fetcher_metadata`, the Qdrant and
+Chroma metadata entry `__gantry_meta__` is now `__fetcher_meta__`, and the
+default LanceDB directory `.agent_gantry/lancedb` is now `.dotfetch/lancedb`.
+A store you point at explicitly keeps its tool rows but no longer recognises
+its bookkeeping, so the first `sync()` re-embeds every tool and the old
+bookkeeping rows can be deleted. A LanceDB store left at the default location
+is not found at all; move the directory or pass its path.
+
 `agent-gantry` 0.27.0 on PyPI is a final release: it installs `dotfetch` and
 raises a clear `ImportError` explaining the move. It receives no further
 releases.

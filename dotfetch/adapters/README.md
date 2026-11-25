@@ -53,7 +53,7 @@ from dotfetch.schema.config import EmbedderConfig, VectorStoreConfig
 # Just change configuration - same code everywhere else
 config = DotFetchConfig(
     embedder=EmbedderConfig(type="nomic", model="nomic-embed-text-v1.5"),
-    vector_store=VectorStoreConfig(type="lancedb", db_path="./fetcher.lance"),
+    vector_store=VectorStoreConfig(type="lancedb", db_path="./dotfetch.lance"),
 )
 
 fetcher = DotFetch(config=config)
@@ -116,7 +116,7 @@ embedder:
 
 vector_store:
   type: lancedb
-  db_path: ./fetcher.lance
+  db_path: ./dotfetch.lance
 
 reranker:
   type: cohere
