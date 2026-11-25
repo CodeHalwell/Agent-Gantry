@@ -23,8 +23,8 @@ Renamed:
   `DotFetchToolset`);
 - the CLI command `agent-gantry` -> `dotfetch`, and the bundled Claude Skill
   `agent-gantry` -> `dotfetch` (`dotfetch install-skill --claude`);
-- environment variables `GANTRY_LOG` and the other `GANTRY_*` /
-  `AGENT_GANTRY_*` variables -> `DOTFETCH_*`;
+- the logger name `agent_gantry` -> `dotfetch` (and its children, such as
+  `dotfetch.core.fetcher`), for anyone filtering logs by name;
 - the helpers named for the instance, such as `set_default_gantry` ->
   `set_default_fetcher`, and `core/gantry.py` -> `core/fetcher.py`.
 
@@ -38,9 +38,13 @@ documentation site's address.
 - `agent_gantry` -> `dotfetch` in imports;
 - `AgentGantry` -> `DotFetch`, and the `Gantry` prefix of any other class ->
   `DotFetch`;
-- `GANTRY_*` -> `DOTFETCH_*` in the environment, and `agent-gantry` ->
-  `dotfetch` in scripts and CI;
+- `agent-gantry` -> `dotfetch` in scripts and CI, and `agent_gantry` ->
+  `dotfetch` in logging configuration;
 - helper functions named `*_gantry` -> `*_fetcher`.
+
+The library reads no environment variables of its own, before or after the
+rename, so there is nothing to change there; the only `GANTRY_*` names were in
+this repository's own CI and tests.
 
 **Stores written by 0.26.0 or earlier are re-embedded once.** The names under
 which a vector store keeps its own bookkeeping changed with the rest: LanceDB's

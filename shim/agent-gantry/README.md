@@ -17,7 +17,7 @@ pip install dotfetch
 - `AgentGantryConfig` becomes `DotFetchConfig`
 - Classes prefixed `Gantry` become `DotFetch`
 - The CLI `agent-gantry` becomes `dotfetch`
-- Environment variables `GANTRY_*` become `DOTFETCH_*`
+- The logger name `agent_gantry` becomes `dotfetch`
 
 For example:
 
