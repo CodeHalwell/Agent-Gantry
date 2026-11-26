@@ -6,7 +6,7 @@ import CodeBlock from '../../../../components/CodeBlock.astro';
   <p class="eyebrow">Advanced framework guide</p>
   <h1>Advanced LlamaIndex</h1>
   <p class="lead">Approval, context injection and how per-step selection behaves.</p>
-  <p><a class="pill" href="/Agent-Gantry/docs/frameworks/llamaindex/">← Basic LlamaIndex usage</a></p>
+  <p><a class="pill" href="/dotfetch/docs/frameworks/llamaindex/">← Basic LlamaIndex usage</a></p>
 
   <h2>Human-in-the-loop approval</h2>
   <p>In a workflow agent, a confirmation-gated call (<code>requires_confirmation=True</code> or a <code>SecurityPolicy(require_confirmation=[...])</code> pattern) waits with <code>ctx.wait_for_event(HumanResponseEvent, waiter_event=InputRequiredEvent(...))</code>. The waiting event carries <code>fetcher_tool</code> and <code>fetcher_arguments</code>.</p>

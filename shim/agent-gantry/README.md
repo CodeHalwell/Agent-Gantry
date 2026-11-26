@@ -29,7 +29,7 @@ from agent_gantry import AgentGantry
 from dotfetch import DotFetch
 ```
 
-The project lives at https://github.com/CodeHalwell/Agent-Gantry.
+The project lives at https://github.com/CodeHalwell/dotfetch.
 
 ## Licence
 

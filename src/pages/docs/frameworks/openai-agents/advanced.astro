@@ -6,7 +6,7 @@ import CodeBlock from '../../../../components/CodeBlock.astro';
   <p class="eyebrow">Advanced framework guide</p>
   <h1>Advanced OpenAI Agents SDK</h1>
   <p class="lead">Human approval, how per-turn selection works inside a run, tracing, and the older per-run helpers.</p>
-  <p><a class="pill" href="/Agent-Gantry/docs/frameworks/openai-agents/">← Basic OpenAI Agents SDK usage</a></p>
+  <p><a class="pill" href="/dotfetch/docs/frameworks/openai-agents/">← Basic OpenAI Agents SDK usage</a></p>
 
   <h2>Human approval</h2>
   <p>A tool registered with <code>requires_confirmation=True</code>, or matched by a <code>SecurityPolicy(require_confirmation=[...])</code> pattern, sets the SDK's <code>needs_approval</code>. The run pauses with <code>result.interruptions</code>; approving replays the call once through <code>fetcher.execute</code> with only the confirmation gate cleared. A rejected call never runs.</p>

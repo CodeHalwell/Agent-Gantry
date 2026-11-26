@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: 📚 Documentation
-    url: https://github.com/CodeHalwell/Agent-Gantry/tree/main/docs
+    url: https://github.com/CodeHalwell/dotfetch/tree/main/docs
     about: Check our documentation for guides and API references
   - name: 💬 Discussions
-    url: https://github.com/CodeHalwell/Agent-Gantry/discussions
+    url: https://github.com/CodeHalwell/dotfetch/discussions
     about: Ask questions and discuss ideas with the community

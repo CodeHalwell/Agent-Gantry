@@ -6,7 +6,7 @@ import CodeBlock from '../../../../components/CodeBlock.astro';
   <p class="eyebrow">Framework guide</p>
   <h1>Microsoft Agent Framework</h1>
   <p class="lead">dotfetch's native integration for Microsoft Agent Framework (AF 1.5+). Attach semantic tool routing as an AF <code>ContextProvider</code> so each <code>agent.run(...)</code> surfaces only the top-k relevant tools — without stuffing the full registry into every model call.</p>
-  <p><a class="pill" href="/Agent-Gantry/docs/frameworks/agent-framework/advanced/">Advanced Agent Framework usage →</a></p>
+  <p><a class="pill" href="/dotfetch/docs/frameworks/agent-framework/advanced/">Advanced Agent Framework usage →</a></p>
 
   <h2>Install</h2>
   <CodeBlock lang="bash" code={`uv add "dotfetch[agent-frameworks]"`} />
@@ -97,5 +97,5 @@ agent = await bridge.as_agent(
   <div class="callout"><strong>Before wiring a live model:</strong> verify tool names and JSON schemas reach the agent, confirm destructive tools carry the right capabilities, and run a happy-path tool call through <code>fetcher.execute</code>.</div>
 
   <h2>Next steps</h2>
-  <p>See the <a href="/Agent-Gantry/docs/frameworks/agent-framework/advanced/">advanced guide</a> for per-turn re-selection, workflow orchestration, approval middleware, observability, and AF 1.6 concurrent-workflow notes.</p>
+  <p>See the <a href="/dotfetch/docs/frameworks/agent-framework/advanced/">advanced guide</a> for per-turn re-selection, workflow orchestration, approval middleware, observability, and AF 1.6 concurrent-workflow notes.</p>
 </DocsLayout>

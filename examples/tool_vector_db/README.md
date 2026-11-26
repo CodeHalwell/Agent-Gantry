@@ -106,4 +106,4 @@ Change the number of tools retrieved:
 
 - See `examples/project_demo/` for persistent storage with LanceDB
 - See `examples/llm_integration/` for more LLM provider examples
-- See [the documentation site](https://codehalwell.github.io/Agent-Gantry/) for full documentation
+- See [the documentation site](https://codehalwell.github.io/dotfetch/) for full documentation

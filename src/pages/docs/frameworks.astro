@@ -3,18 +3,18 @@ import DocsLayout from '../../layouts/DocsLayout.astro';
 import ProviderMatrix from '../../components/ProviderMatrix';
 import CodeBlock from '../../components/CodeBlock.astro';
 const guides = [
-  ['Microsoft Agent Framework', '/Agent-Gantry/docs/frameworks/agent-framework/'],
-  ['LangChain', '/Agent-Gantry/docs/frameworks/langchain/'],
-  ['LangGraph', '/Agent-Gantry/docs/frameworks/langgraph/'],
-  ['LlamaIndex', '/Agent-Gantry/docs/frameworks/llamaindex/'],
-  ['CrewAI', '/Agent-Gantry/docs/frameworks/crewai/'],
-  ['Google ADK', '/Agent-Gantry/docs/frameworks/google-adk/'],
-  ['Pydantic AI', '/Agent-Gantry/docs/frameworks/pydantic-ai/'],
-  ['OpenAI Agents SDK', '/Agent-Gantry/docs/frameworks/openai-agents/'],
-  ['Haystack', '/Agent-Gantry/docs/frameworks/haystack/'],
-  ['Agno', '/Agent-Gantry/docs/frameworks/agno/'],
-  ['Strands Agents', '/Agent-Gantry/docs/frameworks/strands/'],
-  ['DSPy', '/Agent-Gantry/docs/frameworks/dspy/'],
+  ['Microsoft Agent Framework', '/dotfetch/docs/frameworks/agent-framework/'],
+  ['LangChain', '/dotfetch/docs/frameworks/langchain/'],
+  ['LangGraph', '/dotfetch/docs/frameworks/langgraph/'],
+  ['LlamaIndex', '/dotfetch/docs/frameworks/llamaindex/'],
+  ['CrewAI', '/dotfetch/docs/frameworks/crewai/'],
+  ['Google ADK', '/dotfetch/docs/frameworks/google-adk/'],
+  ['Pydantic AI', '/dotfetch/docs/frameworks/pydantic-ai/'],
+  ['OpenAI Agents SDK', '/dotfetch/docs/frameworks/openai-agents/'],
+  ['Haystack', '/dotfetch/docs/frameworks/haystack/'],
+  ['Agno', '/dotfetch/docs/frameworks/agno/'],
+  ['Strands Agents', '/dotfetch/docs/frameworks/strands/'],
+  ['DSPy', '/dotfetch/docs/frameworks/dspy/'],
 ];
 ---
 <DocsLayout title="Frameworks | dotfetch">
@@ -54,8 +54,8 @@ print(supported_frameworks())`} />
   <div class="step"><h3>Add advanced controls last</h3><p>Introduce semantic tool retrieval, reranking, MCP/A2A executors, and tracing after the basic path has stable tests.</p></div>
 
   <h2>Microsoft Agent Framework</h2>
-  <p>The first-class integration path. Use <code>DotFetchContextProvider</code> for per-run or per-turn semantic tool injection, or <code>DotFetchToolBridge</code> when the tool set is fixed at construction. See the <a href="/Agent-Gantry/docs/frameworks/agent-framework/">basic guide</a> and <a href="/Agent-Gantry/docs/frameworks/agent-framework/advanced/">advanced guide</a> for orchestration, middleware, and AF 1.6 concurrent-workflow notes.</p>
+  <p>The first-class integration path. Use <code>DotFetchContextProvider</code> for per-run or per-turn semantic tool injection, or <code>DotFetchToolBridge</code> when the tool set is fixed at construction. See the <a href="/dotfetch/docs/frameworks/agent-framework/">basic guide</a> and <a href="/dotfetch/docs/frameworks/agent-framework/advanced/">advanced guide</a> for orchestration, middleware, and AF 1.6 concurrent-workflow notes.</p>
 
   <h2>Pydantic AI</h2>
-  <p>Also first-class, through Pydantic AI 2.x's own extension points. <code>adapter.capability()</code> re-selects tools every model step (including from tool results mid-run); <code>adapter.capability(mode="search")</code> puts the catalogue behind Pydantic AI's <code>ToolSearch</code>, ranked by dotfetch. Failures surface as <code>ModelRetry</code> / <code>ToolFailed</code>, confirmation-gated tools use Pydantic AI's approval flow, and tools can read the run's <code>deps</code>. Install <code>dotfetch[pydantic-ai]</code>; see the <a href="/Agent-Gantry/docs/frameworks/pydantic-ai/">basic guide</a> and <a href="/Agent-Gantry/docs/frameworks/pydantic-ai/advanced/">advanced guide</a>.</p>
+  <p>Also first-class, through Pydantic AI 2.x's own extension points. <code>adapter.capability()</code> re-selects tools every model step (including from tool results mid-run); <code>adapter.capability(mode="search")</code> puts the catalogue behind Pydantic AI's <code>ToolSearch</code>, ranked by dotfetch. Failures surface as <code>ModelRetry</code> / <code>ToolFailed</code>, confirmation-gated tools use Pydantic AI's approval flow, and tools can read the run's <code>deps</code>. Install <code>dotfetch[pydantic-ai]</code>; see the <a href="/dotfetch/docs/frameworks/pydantic-ai/">basic guide</a> and <a href="/dotfetch/docs/frameworks/pydantic-ai/advanced/">advanced guide</a>.</p>
 </DocsLayout>

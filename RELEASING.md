@@ -67,7 +67,7 @@ published tag rather than `main`.
 For the first `dotfetch` upload, register a "pending publisher" on PyPI (and
 TestPyPI) for the new project name; the project does not exist until then.
 Configure a [PyPI trusted publisher](https://docs.pypi.org/trusted-publishers/)
-for `CodeHalwell/Agent-Gantry`, workflow `publish.yml`, environment `pypi`.
+for `CodeHalwell/dotfetch`, workflow `publish.yml`, environment `pypi`.
 Configure the corresponding TestPyPI publisher for environment `testpypi`.
 Create both environments in **GitHub → Settings → Environments**; any configured
 required reviewers must approve that environment before publication.
@@ -78,7 +78,7 @@ permission; only the production job can write tags and release assets.
 ## Verify the published version
 
 Check [PyPI](https://pypi.org/project/dotfetch/) and
-[GitHub Releases](https://github.com/CodeHalwell/Agent-Gantry/releases). Download
+[GitHub Releases](https://github.com/CodeHalwell/dotfetch/releases). Download
 `SHA256SUMS` and the artifacts to verify their hashes, then install the version
 in a fresh environment:
 

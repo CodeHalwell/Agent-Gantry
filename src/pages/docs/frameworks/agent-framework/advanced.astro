@@ -6,7 +6,7 @@ import CodeBlock from '../../../../components/CodeBlock.astro';
   <p class="eyebrow">Advanced framework guide</p>
   <h1>Advanced Microsoft Agent Framework</h1>
   <p class="lead">Scale from per-run retrieval to multi-step agents that re-select tools every chat round, wire multi-agent workflows, and add governance middleware without leaving AF's native APIs.</p>
-  <p><a class="pill" href="/Agent-Gantry/docs/frameworks/agent-framework/">← Basic Agent Framework usage</a></p>
+  <p><a class="pill" href="/dotfetch/docs/frameworks/agent-framework/">← Basic Agent Framework usage</a></p>
 
   <h2>Per-turn mode: re-select tools every chat round</h2>
   <p>Use <code>query_strategy="per_turn"</code> when the agent chains multiple tool calls in one run and needs a different tool surface at each stage. The paired chat middleware is <strong>required</strong> — without it, per-turn mode silently degrades to per-run and dotfetch logs a one-time warning.</p>

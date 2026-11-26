@@ -6,10 +6,10 @@ import CodeBlock from '../../../../components/CodeBlock.astro';
   <p class="eyebrow">Advanced framework guide</p>
   <h1>Advanced LangChain</h1>
   <p class="lead">Approval, run context and tracing for dotfetch's LangChain tools. Per-turn selection is covered in the LangGraph guide, since <code>create_agent</code> runs on LangGraph.</p>
-  <p><a class="pill" href="/Agent-Gantry/docs/frameworks/langchain/">← Basic LangChain usage</a></p>
+  <p><a class="pill" href="/dotfetch/docs/frameworks/langchain/">← Basic LangChain usage</a></p>
 
   <h2>Human approval</h2>
-  <p>A confirmation-gated tool (<code>requires_confirmation=True</code> or a <code>SecurityPolicy</code> pattern) pauses a LangGraph-backed run, which includes every <code>create_agent</code> agent, with <code>interrupt()</code>. Resume with <code>Command(resume=True)</code> to run it once. The run needs a checkpointer. Outside a graph, for example when you call <code>model.bind_tools(tools)</code> and invoke tools yourself, the model is told the call needs approval and it is not run. See <a href="/Agent-Gantry/docs/frameworks/langgraph/advanced/">Advanced LangGraph</a> for the full flow.</p>
+  <p>A confirmation-gated tool (<code>requires_confirmation=True</code> or a <code>SecurityPolicy</code> pattern) pauses a LangGraph-backed run, which includes every <code>create_agent</code> agent, with <code>interrupt()</code>. Resume with <code>Command(resume=True)</code> to run it once. The run needs a checkpointer. Outside a graph, for example when you call <code>model.bind_tools(tools)</code> and invoke tools yourself, the model is told the call needs approval and it is not run. See <a href="/dotfetch/docs/frameworks/langgraph/advanced/">Advanced LangGraph</a> for the full flow.</p>
 
   <h2>Run context</h2>
   <p><code>current_tool_runtime()</code> returns the run a dotfetch tool is executing in: <code>.config</code> (the <code>RunnableConfig</code>), <code>.tool_call_id</code>, and inside LangGraph <code>.context</code> and <code>.store</code>.</p>

@@ -11,5 +11,5 @@ raise ImportError(
     "alongside this package. Update your code: replace 'import agent_gantry' "
     "with 'import dotfetch', and 'from agent_gantry import AgentGantry' with "
     "'from dotfetch import DotFetch'. See "
-    "https://github.com/CodeHalwell/Agent-Gantry for the migration notes."
+    "https://github.com/CodeHalwell/dotfetch for the migration notes."
 )

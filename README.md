@@ -19,7 +19,7 @@ npm run build    # type-check and static build
 npm run preview  # verify the generated site styling
 ```
 
-Start with the rich docs in [`src/pages/index.astro`](src/pages/index.astro). The published site lives at [codehalwell.github.io/Agent-Gantry](https://codehalwell.github.io/Agent-Gantry).
+Start with the rich docs in [`src/pages/index.astro`](src/pages/index.astro). The published site lives at [codehalwell.github.io/dotfetch](https://codehalwell.github.io/dotfetch).
 
 ## Install
 
