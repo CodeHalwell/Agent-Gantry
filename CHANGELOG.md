@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+**Fixed.** Printing or logging an `EmbedderConfig`, `VectorStoreConfig` or
+`LLMConfig` (or a `DotFetchConfig` holding one), for instance in an f-string, a
+log line or a traceback, showed its `api_key` in full. The key is now kept out
+of `repr()` and `str()`, as `MCPServerConfig` already keeps its `env` and
+`headers`. `.api_key` still returns the key, and `model_dump()` still includes
+it, so redact a dump before logging it. The library itself never logged these
+objects.
+
 The GitHub repository has been renamed too, to
 [`CodeHalwell/dotfetch`](https://github.com/CodeHalwell/dotfetch), and the
 documentation moved with it to <https://codehalwell.github.io/dotfetch/>. This
