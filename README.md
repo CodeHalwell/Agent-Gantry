@@ -1,5 +1,7 @@
 # dotfetch
 
+![DotFetch: Tool discovery for AI agents](marketing/dotfetch-readme-banner.png)
+
 **Universal Tool Orchestration Platform for LLM-Based Agent Systems**
 
 *Context is precious. Execution is sacred. Trust is earned.*
